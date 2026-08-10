@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { loadConfig } from "./config.js";
 import { SQLiteBackend } from "./storage/sqlite.js";
@@ -13,12 +13,19 @@ import { installSkill } from "./install-skill.js";
 import { exportData } from "./export.js";
 import { importData } from "./import.js";
 import { stats } from "./stats.js";
+import { startViewer } from "./viewer.js";
+import { backup } from "./backup.js";
+import { installHooks } from "./hooks.js";
 
 async function main(): Promise<void> {
   // Check for CLI subcommands
   const arg = process.argv[2];
   if (arg === "install-skill") {
     await installSkill();
+    return;
+  }
+  if (arg === "install-hooks") {
+    await installHooks();
     return;
   }
   if (arg === "export") {
@@ -56,6 +63,19 @@ async function main(): Promise<void> {
     stats(dbPath);
     return;
   }
+  if (arg === "viewer") {
+    const dbPath = process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "tdai-memory-mcp", "memory.db");
+    const port = Number(process.argv[4] ?? process.env.TDAI_VIEWER_PORT ?? 7331);
+    startViewer(dbPath, port);
+    return;
+  }
+  if (arg === "backup") {
+    const dbPath = process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "tdai-memory-mcp", "memory.db");
+    const auditPath = process.env.TDAI_AUDIT_LOG_PATH ?? join(dirname(dbPath), "audit.jsonl");
+    const outputDir = process.argv[3] ?? "-";
+    backup(dbPath, auditPath, outputDir);
+    return;
+  }
   if (arg === "version" || arg === "--version" || arg === "-v") {
     console.log("tdai-memory-mcp v0.1.2");
     return;
@@ -66,9 +86,12 @@ async function main(): Promise<void> {
 Usage:
   tdai-memory-mcp                Start the MCP server (stdio)
   tdai-memory-mcp install-skill  Install the agent skill for Devin CLI
+  tdai-memory-mcp install-hooks  Install auto-capture hooks for agents
   tdai-memory-mcp export [file]  Export captures to JSON (default: stdout)
   tdai-memory-mcp import <file>  Import captures from JSON
   tdai-memory-mcp stats          Print memory statistics
+  tdai-memory-mcp viewer [port]  Start web viewer (default port: 7331)
+  tdai-memory-mcp backup [dir]   Backup database and audit log
   tdai-memory-mcp version        Print the version
   tdai-memory-mcp help           Print this help
 

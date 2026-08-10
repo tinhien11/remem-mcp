@@ -13,14 +13,15 @@ CREATE TABLE IF NOT EXISTS schema_version (
 
 -- L0: Raw captures (always populated)
 CREATE TABLE IF NOT EXISTS captures (
-  id          TEXT PRIMARY KEY,
-  session_key TEXT NOT NULL,
-  agent_id    TEXT NOT NULL,
-  type        TEXT NOT NULL,
-  content     TEXT NOT NULL,
-  tags        TEXT,
-  created_at  INTEGER NOT NULL,
-  metadata    TEXT
+  id           TEXT PRIMARY KEY,
+  session_key  TEXT NOT NULL,
+  agent_id     TEXT NOT NULL,
+  type         TEXT NOT NULL,
+  content      TEXT NOT NULL,
+  content_hash TEXT,
+  tags         TEXT,
+  created_at   INTEGER NOT NULL,
+  metadata     TEXT
 );
 
 -- L1: Atomic facts (populated by atom-extract pipeline, phase 2)
@@ -89,5 +90,6 @@ END;
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_captures_session ON captures (session_key, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_captures_agent ON captures (agent_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_captures_hash ON captures (content_hash);
 CREATE INDEX IF NOT EXISTS idx_atoms_capture ON atoms (capture_id);
 CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log (ts DESC);

@@ -68,6 +68,9 @@ export interface StorageBackend {
   /** Hybrid search: BM25 + vector + RRF fusion. */
   search(query: string, queryEmbedding: number[] | null, opts: QueryOptions): Promise<SearchResult[]>;
 
+  /** Find captures with content hash matching the given content. Used for dedup. */
+  findByContentHash(contentHash: string, sessionKey?: string): Promise<CaptureEntry[]>;
+
   /** Delete a capture by ID. Also deletes children (atoms, scenarios). */
   delete(id: string): Promise<DeleteResult>;
 

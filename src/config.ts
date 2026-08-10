@@ -118,6 +118,8 @@ export function loadConfig(): Config {
       }
     : undefined;
 
+  const fileSecurity = (file?.security as Record<string, unknown>) ?? {};
+
   return {
     storage: (env.TDAI_STORAGE ?? (file?.storage as string) ?? "sqlite") as Config["storage"],
     pipeline: (env.TDAI_PIPELINE ?? (file?.pipeline as string) ?? "noop") as Config["pipeline"],
@@ -125,11 +127,11 @@ export function loadConfig(): Config {
     auditLogPath: env.TDAI_AUDIT_LOG_PATH ?? (file?.auditLogPath as string) ?? defaultAuditPath,
     llm,
     security: {
-      redactSecrets: parseBool(env.TDAI_REDACT_SECRETS, true),
-      maxTokensRecall: parseInt(env.TDAI_MAX_TOKENS_RECALL, 4000),
-      maxTokensSearch: parseInt(env.TDAI_MAX_TOKENS_SEARCH, 8000),
-      maxContentLength: parseInt(env.TDAI_MAX_CONTENT_LENGTH, 50000),
-      auditLog: parseBool(env.TDAI_AUDIT_LOG, true),
+      redactSecrets: parseBool(env.TDAI_REDACT_SECRETS, fileSecurity.redactSecrets as boolean ?? true),
+      maxTokensRecall: parseInt(env.TDAI_MAX_TOKENS_RECALL, fileSecurity.maxTokensRecall as number ?? 4000),
+      maxTokensSearch: parseInt(env.TDAI_MAX_TOKENS_SEARCH, fileSecurity.maxTokensSearch as number ?? 8000),
+      maxContentLength: parseInt(env.TDAI_MAX_CONTENT_LENGTH, fileSecurity.maxContentLength as number ?? 50000),
+      auditLog: parseBool(env.TDAI_AUDIT_LOG, fileSecurity.auditLog as boolean ?? true),
     },
   };
 }

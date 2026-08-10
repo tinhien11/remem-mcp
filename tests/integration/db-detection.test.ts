@@ -83,6 +83,7 @@ describe("Integration: database detection and migration", () => {
         agent_id TEXT NOT NULL,
         type TEXT NOT NULL,
         content TEXT NOT NULL,
+        content_hash TEXT,
         tags TEXT,
         created_at INTEGER NOT NULL,
         metadata TEXT
@@ -135,6 +136,7 @@ describe("Integration: database detection and migration", () => {
         agent_id TEXT NOT NULL,
         type TEXT NOT NULL,
         content TEXT NOT NULL,
+        content_hash TEXT,
         tags TEXT,
         created_at INTEGER NOT NULL,
         metadata TEXT

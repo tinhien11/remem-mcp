@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import type {
   CaptureEntry,
   DeleteFilter,
@@ -32,6 +33,7 @@ export class SQLiteBackend implements StorageBackend {
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("synchronous = NORMAL");
+    this.db.pragma("busy_timeout = 5000");
 
     // Load the sqlite-vec extension
     sqliteVec.load(this.db);
@@ -132,9 +134,10 @@ export class SQLiteBackend implements StorageBackend {
   }
 
   async put(entry: CaptureEntry): Promise<void> {
+    const contentHash = createHash("sha256").update(entry.content).digest("hex");
     const stmt = this.db.prepare(`
-      INSERT INTO captures (id, session_key, agent_id, type, content, tags, created_at, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
       entry.id,
@@ -142,6 +145,7 @@ export class SQLiteBackend implements StorageBackend {
       entry.agentId,
       entry.type,
       entry.content,
+      contentHash,
       JSON.stringify(entry.tags),
       entry.createdAt,
       entry.metadata ? JSON.stringify(entry.metadata) : null,
@@ -160,6 +164,17 @@ export class SQLiteBackend implements StorageBackend {
       | undefined;
     if (!row) return null;
     return rowToEntry(row);
+  }
+
+  async findByContentHash(contentHash: string, sessionKey?: string): Promise<CaptureEntry[]> {
+    let sql = "SELECT * FROM captures WHERE content_hash = ?";
+    const params: unknown[] = [contentHash];
+    if (sessionKey) {
+      sql += " AND session_key = ?";
+      params.push(sessionKey);
+    }
+    const rows = this.db.prepare(sql).all(...params) as DbRow[];
+    return rows.map(rowToEntry);
   }
 
   async search(
@@ -297,7 +312,7 @@ export class SQLiteBackend implements StorageBackend {
     return this.fetchEntriesById(paged);
   }
 
-  /** Fetch capture entries by ID, preserving the order of the input list. */
+  /** Fetch capture entries by ID, preserving the order of the input list. Applies memory decay. */
   private async fetchEntriesById(results: { id: string; score: number }[]): Promise<SearchResult[]> {
     if (results.length === 0) return [];
     const ids = results.map((r) => r.id);
@@ -306,11 +321,17 @@ export class SQLiteBackend implements StorageBackend {
       .prepare(`SELECT * FROM captures WHERE id IN (${placeholders})`)
       .all(...ids) as DbRow[];
     const rowMap = new Map(rows.map((r) => [r.id, r]));
+    const now = Date.now();
+    const HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
     return results
       .map((r) => {
         const row = rowMap.get(r.id);
         if (!row) return null;
-        return { entry: rowToEntry(row), score: r.score };
+        // Memory decay: reduce score for old captures.
+        // A capture from 30 days ago gets 0.5x weight, 60 days gets 0.25x, etc.
+        const ageMs = now - row.created_at;
+        const decay = Math.pow(0.5, ageMs / HALF_LIFE_MS);
+        return { entry: rowToEntry(row), score: r.score * decay };
       })
       .filter((r): r is SearchResult => r !== null);
   }

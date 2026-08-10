@@ -1,6 +1,6 @@
 {
   "name": "tdai-memory-mcp",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "description": "Local-first MCP memory server with TDAI-style layering. No Gateway. No API key required.",
   "type": "module",
   "license": "MIT",
@@ -24,6 +24,11 @@
   ],
   "bin": {
     "tdai-memory-mcp": "dist/index.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/sdk.js"
+    }
   },
   "files": [
     "dist",

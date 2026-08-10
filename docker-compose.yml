@@ -1,0 +1,32 @@
+services:
+  tdai-memory:
+    build: .
+    container_name: tdai-memory-mcp
+    volumes:
+      - tdai-data:/data
+    environment:
+      - TDAI_DB_PATH=/data/memory.db
+      - TDAI_AUDIT_LOG_PATH=/data/audit.jsonl
+      # Uncomment to enable LLM pipeline features
+      # - TDAI_LLM_API_KEY=sk-...
+      # - TDAI_LLM_BASE_URL=https://api.openai.com/v1
+      # - TDAI_LLM_MODEL=gpt-4o-mini
+      # - TDAI_PIPELINE=atom
+    # For MCP stdio: stdin_open + tty
+    stdin_open: true
+    tty: true
+
+  # Optional: web viewer
+  tdai-memory-viewer:
+    build: .
+    container_name: tdai-memory-viewer
+    command: ["viewer"]
+    ports:
+      - "7331:7331"
+    volumes:
+      - tdai-data:/data
+    depends_on:
+      - tdai-memory
+
+volumes:
+  tdai-data:

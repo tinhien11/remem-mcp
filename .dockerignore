@@ -1,0 +1,10 @@
+node_modules
+dist
+*.tgz
+.git
+.gitignore
+*.md
+!README.md
+tests
+docs
+skills

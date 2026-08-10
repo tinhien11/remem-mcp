@@ -97,26 +97,87 @@ Print memory statistics: total captures, breakdown by type, top tags, sessions, 
 npx tdai-memory-mcp stats
 ```
 
-Output:
+## Web viewer
 
+Start a local web viewer to browse your memory in the browser.
+
+```bash
+npx tdai-memory-mcp viewer
+# Open http://localhost:7331
 ```
-Memory statistics
-=================
-Total captures: 8
 
-By type:
-  learning          5  ████████████████████
-  decision          2  ████████
-  task              1  ████
+The viewer shows all captures with search, type filters, and tags. It runs locally and reads the database in read-only mode.
 
-Top tags:
-  arch                    1  ███
-  storage                 1  ███
-  search                  1  ███
+## Backup
 
-Sessions: 2
-Date range: 2026-08-10 to 2026-08-10
+Backup the database and audit log to a timestamped directory.
+
+```bash
+# Backup to default location (backups/<timestamp> next to the DB)
+npx tdai-memory-mcp backup
+
+# Backup to a specific directory
+npx tdai-memory-mcp backup /path/to/backups
 ```
+
+## Config file
+
+All settings can be configured via environment variables or a JSON config file at `~/.config/tdai-memory-mcp/config.json`:
+
+```json
+{
+  "storage": "sqlite",
+  "pipeline": "noop",
+  "dbPath": "~/.local/share/tdai-memory-mcp/memory.db",
+  "security": {
+    "redactSecrets": true,
+    "maxTokensRecall": 4000,
+    "maxTokensSearch": 8000,
+    "maxContentLength": 50000,
+    "auditLog": true
+  },
+  "llm": {
+    "apiKey": "sk-...",
+    "baseUrl": "https://api.openai.com/v1",
+    "model": "gpt-4o-mini"
+  }
+}
+```
+
+Environment variables override config file values.
+
+## TypeScript SDK
+
+Use the memory server programmatically in your own application:
+
+```ts
+import { Memory } from "tdai-memory-mcp";
+
+const memory = new Memory();
+await memory.capture("We chose SQLite for storage.", "decision", ["arch"]);
+const results = await memory.recall("storage decision");
+```
+
+## Docker
+
+```bash
+# Build and run with docker compose
+docker compose up -d
+
+# Or build manually
+docker build -t tdai-memory-mcp .
+docker run -v tdai-data:/data tdai-memory-mcp
+```
+
+## Auto-capture hooks
+
+Install hooks that capture session summaries automatically:
+
+```bash
+npx tdai-memory-mcp install-hooks
+```
+
+This installs hook scripts for Claude Code and Devin CLI. The hooks write session summaries to a file that the agent skill reads on the next session start.
 
 ## Database detection
 

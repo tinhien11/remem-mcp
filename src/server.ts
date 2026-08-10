@@ -2,6 +2,8 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { StorageBackend, CaptureType, CaptureEntry, SearchMode, DeleteFilter } from "./storage/types.js";
@@ -191,6 +193,7 @@ export function createServer(opts: ServerOptions): Server {
     {
       capabilities: {
         tools: {},
+        resources: {},
       },
     },
   );
@@ -198,6 +201,77 @@ export function createServer(opts: ServerOptions): Server {
   // Single list-tools handler: returns all 4 tools.
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return { tools: TOOLS };
+  });
+
+  // List resources: expose recent captures as readable resources.
+  server.setRequestHandler(ListResourcesRequestSchema, async () => {
+    // Return a single resource template for captures
+    return {
+      resources: [
+        {
+          uri: "tdai-memory://recent",
+          name: "Recent captures",
+          description: "The 20 most recent memory captures.",
+          mimeType: "text/plain",
+        },
+        {
+          uri: "tdai-memory://stats",
+          name: "Memory statistics",
+          description: "Summary statistics for the memory database.",
+          mimeType: "application/json",
+        },
+      ],
+    };
+  });
+
+  // Read resource: return the content for a given URI.
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const uri = request.params.uri;
+
+    if (uri === "tdai-memory://recent") {
+      // Get the 20 most recent captures
+      const results = await opts.storage.search("", null, {
+        limit: 20,
+        offset: 0,
+        mode: "keyword",
+      });
+      const text = formatResults(results);
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: "text/plain",
+            text: text || "No captures found.",
+          },
+        ],
+      };
+    }
+
+    if (uri === "tdai-memory://stats") {
+      // Return basic stats as JSON
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: "application/json",
+            text: JSON.stringify({
+              message: "Use the stats CLI command for full statistics.",
+              hint: "Run: npx tdai-memory-mcp stats",
+            }),
+          },
+        ],
+      };
+    }
+
+    return {
+      contents: [
+        {
+          uri,
+          mimeType: "text/plain",
+          text: `Unknown resource: ${uri}`,
+        },
+      ],
+    };
   });
 
   // Single call-tool handler: dispatches to the correct tool logic.
@@ -293,6 +367,27 @@ async function handleCapture(
   const { text: redactedContent, redacted: wasRedacted } = opts.redactSecrets
     ? redact(content)
     : { text: content, redacted: false };
+
+  // Dedup: check if content with the same hash already exists in this session.
+  const contentHash = createHash("sha256").update(redactedContent).digest("hex");
+  const existing = await opts.storage.findByContentHash(contentHash, sessionKey);
+  if (existing.length > 0) {
+    opts.audit.log({
+      tool: "capture",
+      argsHash: AuditLogger.hashArgs({ type, tags, sessionKey }),
+      resultLen: existing[0].id.length,
+      quotaHit: false,
+      redacted: wasRedacted,
+    });
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Duplicate: ${existing[0].id} (content already captured)`,
+        },
+      ],
+    };
+  }
 
   const id = generateId();
   const agentId = detectAgentId();
