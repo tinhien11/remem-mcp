@@ -1,0 +1,73 @@
+{
+  "manifest_version": "0.3",
+  "name": "tdai-memory-mcp",
+  "display_name": "TDAI Memory — Local-first MCP Memory Server",
+  "version": "0.2.0",
+  "description": "Local-first MCP memory server for coding agents. No API key, no cloud — just SQLite + FTS5 + sqlite-vec on your machine.",
+  "long_description": "tdai-memory-mcp gives coding agents persistent memory across sessions.\n\n**6 MCP tools:**\n- `recall` — hybrid search (BM25 + vector) across past captures\n- `capture` — store decisions, learnings, errors, fixes\n- `search` — filtered search by type, tags, date range\n- `forget` — delete captures (requires confirm)\n- `handoff` — structured context packet for the next session\n- `adr` — Architecture Decision Records with context, alternatives, consequences\n\n**Key features:**\n- Content-hash dedup — no duplicate captures\n- Memory decay — 30-day half-life scoring\n- Team-shared memory — commit `.tdai-memory/memory-export.json` to your repo\n- Lifecycle hooks — SessionStart auto-recalls, Stop reminds to handoff\n- Web viewer on port 7331\n- Works with Claude Code, Cursor, Devin CLI, and any MCP-compatible agent\n- All data stays local",
+  "author": {
+    "name": "tin",
+    "url": "https://github.com/tinhien11"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tinhien11/tdai-memory-mcp.git"
+  },
+  "homepage": "https://github.com/tinhien11/tdai-memory-mcp#readme",
+  "documentation": "https://github.com/tinhien11/tdai-memory-mcp#readme",
+  "support": "https://github.com/tinhien11/tdai-memory-mcp/issues",
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "npx",
+      "args": ["-y", "tdai-memory-mcp@latest"],
+      "env": {}
+    }
+  },
+  "tools": [
+    {
+      "name": "recall",
+      "description": "Hybrid search (BM25 + vector) across past captures"
+    },
+    {
+      "name": "capture",
+      "description": "Store decisions, learnings, errors, fixes as memory"
+    },
+    {
+      "name": "search",
+      "description": "Filtered search by type, tags, date range"
+    },
+    {
+      "name": "forget",
+      "description": "Delete captures (requires confirmation)"
+    },
+    {
+      "name": "handoff",
+      "description": "Structured context packet for the next session"
+    },
+    {
+      "name": "adr",
+      "description": "Architecture Decision Records with context, alternatives, consequences"
+    }
+  ],
+  "tools_generated": false,
+  "keywords": [
+    "mcp",
+    "memory",
+    "ai-agent",
+    "sqlite",
+    "local-first",
+    "claude-code",
+    "cursor",
+    "devin",
+    "model-context-protocol"
+  ],
+  "license": "MIT",
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=22.0.0"
+    }
+  }
+}
