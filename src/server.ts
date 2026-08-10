@@ -103,7 +103,7 @@ const TOOLS: Tool[] = [
         },
         type: {
           type: "string",
-          enum: ["conversation", "decision", "learning", "task", "error"],
+          enum: ["conversation", "decision", "learning", "task", "error", "atom"],
           description: "The type of the memory.",
         },
         tags: { type: "array", items: { type: "string" }, description: "Optional tags." },

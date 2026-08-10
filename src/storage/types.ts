@@ -7,7 +7,7 @@
  * https://github.com/TencentCloud/TencentDB-Agent-Memory
  */
 
-export type CaptureType = "conversation" | "decision" | "learning" | "task" | "error";
+export type CaptureType = "conversation" | "decision" | "learning" | "task" | "error" | "atom";
 
 export interface CaptureEntry {
   id: string;
