@@ -194,6 +194,15 @@ The server auto-imports on startup, so you only need `sync-export` before commit
 
 Call `forget` ONLY when the user explicitly asks to delete memory. Always require `confirm: true`. Never auto-forget.
 
+## Lifecycle hooks (automatic)
+
+If hooks are installed (`npx tdai-memory-mcp install-hooks`), memory works automatically:
+
+- **SessionStart**: Recent captures are injected into your context. You do not need to call `recall` manually.
+- **Stop**: You will be reminded to call `handoff` before stopping. Do so unless the task was trivial.
+
+You can still call `recall`, `capture`, `search`, `forget`, `handoff`, and `adr` manually at any time.
+
 ## Rules
 
 1. Never fabricate memory. If recall returns nothing, say nothing about memory.

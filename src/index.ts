@@ -15,8 +15,9 @@ import { importData } from "./import.js";
 import { stats } from "./stats.js";
 import { startViewer } from "./viewer.js";
 import { backup } from "./backup.js";
-import { installHooks } from "./hooks.js";
+import { installHooks, uninstallHooks } from "./hooks.js";
 import { exportArtifact, importArtifact, hasArtifact } from "./artifact.js";
+import { hookRecall, hookStop } from "./hook-handlers.js";
 
 async function main(): Promise<void> {
   // Check for CLI subcommands
@@ -27,6 +28,10 @@ async function main(): Promise<void> {
   }
   if (arg === "install-hooks") {
     await installHooks();
+    return;
+  }
+  if (arg === "uninstall-hooks") {
+    await uninstallHooks();
     return;
   }
   if (arg === "export") {
@@ -93,6 +98,15 @@ async function main(): Promise<void> {
     }
     return;
   }
+  if (arg === "hook-recall") {
+    const dbPath = process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "tdai-memory-mcp", "memory.db");
+    hookRecall(dbPath);
+    return;
+  }
+  if (arg === "hook-stop") {
+    hookStop();
+    return;
+  }
   if (arg === "version" || arg === "--version" || arg === "-v") {
     console.log("tdai-memory-mcp v0.1.2");
     return;
@@ -103,7 +117,8 @@ async function main(): Promise<void> {
 Usage:
   tdai-memory-mcp                Start the MCP server (stdio)
   tdai-memory-mcp install-skill  Install the agent skill for Devin CLI
-  tdai-memory-mcp install-hooks  Install auto-capture hooks for agents
+  tdai-memory-mcp install-hooks  Install lifecycle hooks (SessionStart, Stop)
+  tdai-memory-mcp uninstall-hooks  Remove lifecycle hooks
   tdai-memory-mcp export [file]  Export captures to JSON (default: stdout)
   tdai-memory-mcp import <file>  Import captures from JSON
   tdai-memory-mcp stats          Print memory statistics

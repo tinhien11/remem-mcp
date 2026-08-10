@@ -308,6 +308,38 @@ git commit -m "Share team memory"
 
 To ignore team sharing, add `.tdai-memory/` to `.gitignore`.
 
+## Lifecycle hooks
+
+Auto-capture memory without the agent needing to call tools manually.
+
+### Install hooks
+
+```bash
+npx tdai-memory-mcp install-hooks
+```
+
+This wires two hooks into your agent config:
+
+| Hook | Event | What it does |
+|---|---|---|
+| `hook-recall` | `SessionStart` | Queries recent captures and injects them into the agent's context automatically |
+| `hook-stop` | `Stop` | Reminds the agent to call `handoff` before stopping |
+
+### Supported agents
+
+- **Devin CLI** — `~/.config/devin/config.json`
+- **Claude Code** — `~/.claude/settings.json`
+
+### Uninstall
+
+```bash
+npx tdai-memory-mcp uninstall-hooks
+```
+
+### Verify
+
+Run `/hooks` in your agent to see the installed hooks.
+
 ## Database detection
 
 On startup, the server checks if the database file exists at the configured path. The behavior depends on the result.
