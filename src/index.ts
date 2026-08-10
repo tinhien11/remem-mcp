@@ -7,8 +7,39 @@ import { LocalEmbedder } from "./embedding/local.js";
 import { NoopPipeline } from "./pipeline/noop.js";
 import { AuditLogger } from "./security/audit.js";
 import { createServer } from "./server.js";
+import { installSkill } from "./install-skill.js";
 
 async function main(): Promise<void> {
+  // Check for CLI subcommands
+  const arg = process.argv[2];
+  if (arg === "install-skill") {
+    await installSkill();
+    return;
+  }
+  if (arg === "version" || arg === "--version" || arg === "-v") {
+    console.log("tdai-memory-mcp v0.1.1");
+    return;
+  }
+  if (arg === "help" || arg === "--help" || arg === "-h") {
+    console.log(`tdai-memory-mcp - Local-first MCP memory server
+
+Usage:
+  tdai-memory-mcp                Start the MCP server (stdio)
+  tdai-memory-mcp install-skill  Install the agent skill for Devin CLI
+  tdai-memory-mcp version        Print the version
+  tdai-memory-mcp help           Print this help
+
+The server runs as a stdio process. Add it to your MCP client configuration:
+  Claude Code: ~/.claude.json
+  Cursor:      ~/.cursor/mcp.json
+  Devin CLI:   devin mcp add tdai-memory -- npx -y tdai-memory-mcp
+
+To install the skill (Devin CLI only):
+  npx tdai-memory-mcp install-skill
+`);
+    return;
+  }
+
   // Load the configuration
   const config = loadConfig();
 

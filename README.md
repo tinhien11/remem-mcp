@@ -31,7 +31,29 @@ Add this block to the configuration file of your MCP client. For Claude Code, ed
 }
 ```
 
+For Devin CLI, use the built-in command:
+
+```bash
+devin mcp add tdai-memory --scope user -- npx -y tdai-memory-mcp
+```
+
 The first run creates the database at `~/.local/share/tdai-memory-mcp/memory.db`. The server creates the schema automatically.
+
+## Install the agent skill
+
+The skill teaches your agent to use memory automatically. It tells the agent when to recall, when to capture, and when to forget. Without the skill, the agent has the tools but does not know when to use them.
+
+```bash
+npx tdai-memory-mcp install-skill
+```
+
+This command copies the skill file to all supported agent directories:
+
+- `~/.config/devin/skills/tdai-memory/SKILL.md` (Devin CLI)
+- `~/.claude/skills/tdai-memory/SKILL.md` (Claude Code)
+- `~/.agents/skills/tdai-memory/SKILL.md` (Generic)
+
+After you install the skill, restart your agent. The agent will then recall past context before it answers, and capture decisions and learnings after it completes a task.
 
 ## Database detection
 
