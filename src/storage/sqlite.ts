@@ -84,7 +84,12 @@ export class SQLiteBackend implements StorageBackend {
       this.runSchema();
       this.writeSchemaVersion(1);
     }
-    // If currentVersion >= 1, the schema is current. Do nothing.
+    if (currentVersion < 2) {
+      this.backupDatabase(dbPath);
+      this.migrateV1ToV2();
+      this.writeSchemaVersion(2);
+    }
+    // If currentVersion >= 2, the schema is current. Do nothing.
   }
 
   /** Backup the database to a .bak file. */
@@ -131,6 +136,34 @@ export class SQLiteBackend implements StorageBackend {
       version,
       Date.now(),
     );
+  }
+
+  /** Migrate schema v1 → v2: add content_hash column + index. */
+  private migrateV1ToV2(): void {
+    const cols = this.db.prepare("PRAGMA table_info(captures)").all() as { name: string }[];
+    const hasContentHash = cols.some((c) => c.name === "content_hash");
+    if (!hasContentHash) {
+      this.db.exec("ALTER TABLE captures ADD COLUMN content_hash TEXT");
+      console.error("[tdai-memory] Added content_hash column to captures");
+    }
+    const idxs = this.db
+      .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_captures_hash'")
+      .get() as { name: string } | undefined;
+    if (!idxs) {
+      this.db.exec("CREATE INDEX IF NOT EXISTS idx_captures_hash ON captures (content_hash)");
+    }
+    // Backfill content_hash for existing rows
+    const rows = this.db
+      .prepare("SELECT id, content FROM captures WHERE content_hash IS NULL")
+      .all() as { id: string; content: string }[];
+    const stmt = this.db.prepare("UPDATE captures SET content_hash = ? WHERE id = ?");
+    for (const row of rows) {
+      const hash = createHash("sha256").update(row.content).digest("hex");
+      stmt.run(hash, row.id);
+    }
+    if (rows.length > 0) {
+      console.error(`[tdai-memory] Backfilled content_hash for ${rows.length} existing captures`);
+    }
   }
 
   async put(entry: CaptureEntry): Promise<void> {

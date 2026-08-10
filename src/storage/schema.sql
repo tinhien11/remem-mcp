@@ -1,5 +1,5 @@
 -- Schema for tdai-memory-mcp
--- Version: 1
+-- Version: 2
 --
 -- This file runs on the first start. It creates all tables, triggers, and indexes.
 -- It uses CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS.
