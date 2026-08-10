@@ -12,6 +12,7 @@ import { createServer } from "./server.js";
 import { installSkill } from "./install-skill.js";
 import { exportData } from "./export.js";
 import { importData } from "./import.js";
+import { stats } from "./stats.js";
 
 async function main(): Promise<void> {
   // Check for CLI subcommands
@@ -50,6 +51,11 @@ async function main(): Promise<void> {
     importData(dbPath, input);
     return;
   }
+  if (arg === "stats") {
+    const dbPath = process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "tdai-memory-mcp", "memory.db");
+    stats(dbPath);
+    return;
+  }
   if (arg === "version" || arg === "--version" || arg === "-v") {
     console.log("tdai-memory-mcp v0.1.2");
     return;
@@ -62,6 +68,7 @@ Usage:
   tdai-memory-mcp install-skill  Install the agent skill for Devin CLI
   tdai-memory-mcp export [file]  Export captures to JSON (default: stdout)
   tdai-memory-mcp import <file>  Import captures from JSON
+  tdai-memory-mcp stats          Print memory statistics
   tdai-memory-mcp version        Print the version
   tdai-memory-mcp help           Print this help
 

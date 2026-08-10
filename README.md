@@ -89,6 +89,35 @@ If you omit the file path, the export command writes to stdout:
 npx tdai-memory-mcp export > memory-backup.json
 ```
 
+## Stats
+
+Print memory statistics: total captures, breakdown by type, top tags, sessions, agents, and date range.
+
+```bash
+npx tdai-memory-mcp stats
+```
+
+Output:
+
+```
+Memory statistics
+=================
+Total captures: 8
+
+By type:
+  learning          5  ████████████████████
+  decision          2  ████████
+  task              1  ████
+
+Top tags:
+  arch                    1  ███
+  storage                 1  ███
+  search                  1  ███
+
+Sessions: 2
+Date range: 2026-08-10 to 2026-08-10
+```
+
 ## Database detection
 
 On startup, the server checks if the database file exists at the configured path. The behavior depends on the result.
