@@ -4,7 +4,7 @@ description: Long-term memory for coding agents. Automatically recall project co
 user-invocable: false
 ---
 
-You have access to a long-term memory server via MCP. It has 4 tools: `recall`, `capture`, `search`, and `forget`. Use them automatically as described below. Do not ask the user for permission to use memory.
+You have access to a long-term memory server via MCP. It has 6 tools: `recall`, `capture`, `search`, `forget`, `handoff`, and `adr`. Use them automatically as described below. Do not ask the user for permission to use memory.
 
 ## When to recall
 
@@ -136,6 +136,59 @@ handoff({
 ### How the next agent loads the handoff
 
 The next agent calls `recall` at the start of a new session. The handoff packet appears in the results because it is stored as a capture with type `task` and tag `handoff`. The next agent reads the packet and continues without re-reading files.
+
+## When to record an ADR
+
+Call `adr` when you make a technical decision that future agents should know about. This is more structured than a regular `capture` with type `decision`.
+
+```
+adr({
+  "title": "Use SQLite for local storage",
+  "context": "We need a storage backend that requires zero setup and works offline. The MVP must not depend on a running database server.",
+  "decision": "Use SQLite with FTS5 for full-text search and sqlite-vec for vector search.",
+  "alternatives": [
+    "Postgres with pgvector — rejected because it requires a running server",
+    "DuckDB — rejected because it lacks mature vector search extensions"
+  ],
+  "consequences": "Single-writer limitation. No remote access. But zero setup and zero cost.",
+  "tags": ["arch", "storage"]
+})
+```
+
+### When to call adr vs capture
+
+- Use `adr` for architectural decisions with context, alternatives, and consequences.
+- Use `capture({type: "decision"})` for simpler decisions that do not need the full ADR structure.
+- Use `adr` when the decision will affect future work across multiple sessions.
+
+### When to call adr
+
+- You choose a library, framework, or tool for the project
+- You decide on an architectural pattern (e.g., monolith vs microservices)
+- You make a data model decision that is hard to reverse
+- The user says "let's go with X" after comparing options
+
+### When NOT to call adr
+
+- The decision is trivial (variable naming, file location)
+- The decision is easily reversible
+- You are just implementing what was already decided
+
+## Team-shared memory
+
+If the project has a `.tdai-memory/memory-export.json` file, it is automatically imported on server startup. This means teammates can share memory by committing this file to the repo.
+
+To export your memory for the team:
+```bash
+npx tdai-memory-mcp sync-export
+```
+
+To import a teammate's memory:
+```bash
+npx tdai-memory-mcp sync-import
+```
+
+The server auto-imports on startup, so you only need `sync-export` before committing.
 
 ## When to forget
 

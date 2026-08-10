@@ -243,6 +243,71 @@ const id = await memory.handoff({
 const results = await memory.recall("auth bug handoff");
 ```
 
+## ADR: Architecture Decision Records
+
+The `adr` tool records structured architectural decisions that future agents should know about.
+
+### Example
+
+```
+adr({
+  "title": "Use SQLite for local storage",
+  "context": "We need zero-setup storage that works offline.",
+  "decision": "Use SQLite with FTS5 and sqlite-vec.",
+  "alternatives": [
+    "Postgres with pgvector — rejected: requires running server",
+    "DuckDB — rejected: lacks mature vector search"
+  ],
+  "consequences": "Single-writer limitation, but zero setup and zero cost.",
+  "tags": ["arch", "storage"]
+})
+```
+
+### When to use adr vs capture
+
+- `adr`: architectural decisions with context, alternatives, consequences
+- `capture({type: "decision"})`: simpler decisions that don't need full ADR structure
+
+### Programmatic API
+
+```ts
+const id = await memory.adr({
+  title: "Use SQLite for local storage",
+  context: "We need zero-setup storage.",
+  decision: "Use SQLite with FTS5 and sqlite-vec.",
+  alternatives: ["Postgres — rejected: requires server"],
+  consequences: "Single-writer, but zero setup.",
+  tags: ["arch"],
+});
+```
+
+## Team-shared memory
+
+Share memory with your team by committing a `.tdai-memory/memory-export.json` file to your repo.
+
+### How it works
+
+1. **You** run `sync-export` before committing
+2. **Teammates** get the artifact when they clone/pull
+3. **Server** auto-imports the artifact on startup
+
+```bash
+# Export your memory to .tdai-memory/memory-export.json
+npx tdai-memory-mcp sync-export
+
+# Import a teammate's memory (also happens automatically on server startup)
+npx tdai-memory-mcp sync-import
+```
+
+Add `.tdai-memory/memory-export.json` to git and commit it. When teammates start their agent, the server auto-imports the file.
+
+```bash
+git add .tdai-memory/memory-export.json
+git commit -m "Share team memory"
+```
+
+To ignore team sharing, add `.tdai-memory/` to `.gitignore`.
+
 ## Database detection
 
 On startup, the server checks if the database file exists at the configured path. The behavior depends on the result.

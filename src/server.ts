@@ -224,9 +224,49 @@ const TOOLS: Tool[] = [
       required: ["task", "status", "progress"],
     },
   },
+  {
+    name: "adr",
+    description:
+      "Record an Architecture Decision Record (ADR). Use this tool when you make a technical decision " +
+      "that future agents should know about. The ADR is stored as a structured capture and can be " +
+      "recalled by any agent working on the same project.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: {
+          type: "string",
+          description: "A short title for the decision. Example: 'Use SQLite for local storage'.",
+        },
+        context: {
+          type: "string",
+          description: "The problem or situation that requires a decision. Why is this decision needed?",
+        },
+        decision: {
+          type: "string",
+          description: "The decision that was made. What was chosen?",
+        },
+        alternatives: {
+          type: "array",
+          items: { type: "string" },
+          description: "Other options that were considered but rejected. Include why each was rejected.",
+        },
+        consequences: {
+          type: "string",
+          description: "The consequences of this decision. What are the trade-offs, risks, and benefits?",
+        },
+        tags: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional tags for filtering. Example: ['arch', 'storage'].",
+        },
+        session_key: { type: "string", description: "The session key. The default is hash(cwd)." },
+      },
+      required: ["title", "context", "decision"],
+    },
+  },
 ];
 
-/** Create the MCP server with all 4 tools registered. */
+/** Create the MCP server with all 6 tools registered. */
 export function createServer(opts: ServerOptions): Server {
   const server = new Server(
     {
@@ -333,6 +373,8 @@ export function createServer(opts: ServerOptions): Server {
         return handleForget(args, opts);
       case "handoff":
         return handleHandoff(args, opts);
+      case "adr":
+        return handleAdr(args, opts);
       default:
         return {
           content: [{ type: "text", text: `Error: Unknown tool "${name}".` }],
@@ -707,6 +749,124 @@ async function handleHandoff(
       {
         type: "text",
         text: `Handoff saved: ${id}\nStatus: ${status}\nNext agent: call recall with query "${task}" to load this packet.`,
+      },
+    ],
+  };
+}
+
+/** Handle the adr tool. Records an Architecture Decision Record as a structured capture. */
+async function handleAdr(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  const title = args.title as string;
+  const context = args.context as string;
+  const decision = args.decision as string;
+  const alternatives = (args.alternatives as string[]) ?? [];
+  const consequences = (args.consequences as string) ?? "";
+  const tags = (args.tags as string[]) ?? [];
+  const sessionKey = (args.session_key as string) ?? defaultSessionKey();
+
+  // Build ADR content in markdown format
+  const lines: string[] = [];
+  lines.push(`# ADR: ${title}`);
+  lines.push(`Date: ${new Date().toISOString()}`);
+  lines.push("");
+  lines.push("## Context");
+  lines.push(context);
+  lines.push("");
+  lines.push("## Decision");
+  lines.push(decision);
+  lines.push("");
+
+  if (alternatives.length > 0) {
+    lines.push("## Alternatives considered");
+    for (const alt of alternatives) {
+      lines.push(`- ${alt}`);
+    }
+    lines.push("");
+  }
+
+  if (consequences) {
+    lines.push("## Consequences");
+    lines.push(consequences);
+    lines.push("");
+  }
+
+  const content = lines.join("\n");
+
+  if (!checkContentLength(content, opts.maxContentLength)) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Error: The ADR exceeds the maximum length of ${opts.maxContentLength} characters.`,
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  // Dedup: hash the structured data (excluding the timestamp)
+  const dedupPayload = JSON.stringify({ title, context, decision, alternatives, consequences });
+  const contentHash = createHash("sha256").update(dedupPayload).digest("hex");
+  const existing = await opts.storage.findByContentHash(contentHash, sessionKey);
+  if (existing.length > 0) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Duplicate ADR: ${existing[0].id} (same decision already recorded)`,
+        },
+      ],
+    };
+  }
+
+  const id = generateId();
+  const agentId = detectAgentId();
+  const allTags = ["adr", ...tags];
+
+  const entry: CaptureEntry = {
+    id,
+    sessionKey,
+    agentId,
+    type: "decision",
+    content,
+    tags: allTags,
+    createdAt: Date.now(),
+    metadata: {
+      adr: true,
+      title,
+      context,
+      decision,
+      alternatives,
+      consequences,
+    },
+    contentHash,
+  };
+
+  await opts.storage.put(entry);
+
+  try {
+    const embedding = await opts.embedder.embed(content);
+    await opts.storage.putVector(id, embedding);
+  } catch (err) {
+    console.error(`[tdai-memory] Embedding failed: ${err}`);
+  }
+
+  opts.audit.log({
+    tool: "adr",
+    argsHash: AuditLogger.hashArgs({ title, decision }),
+    resultLen: id.length,
+    quotaHit: false,
+    redacted: false,
+  });
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: `ADR saved: ${id}\nTitle: ${title}\nRecall with: recall({ query: "${title}" })`,
       },
     ],
   };

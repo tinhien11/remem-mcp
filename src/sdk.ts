@@ -197,6 +197,81 @@ export class Memory {
     return id;
   }
 
+  /** Record an Architecture Decision Record (ADR). */
+  async adr(opts: {
+    title: string;
+    context: string;
+    decision: string;
+    alternatives?: string[];
+    consequences?: string;
+    tags?: string[];
+  }): Promise<string | null> {
+    const lines: string[] = [];
+    lines.push(`# ADR: ${opts.title}`);
+    lines.push(`Date: ${new Date().toISOString()}`);
+    lines.push("");
+    lines.push("## Context");
+    lines.push(opts.context);
+    lines.push("");
+    lines.push("## Decision");
+    lines.push(opts.decision);
+    lines.push("");
+
+    if (opts.alternatives && opts.alternatives.length > 0) {
+      lines.push("## Alternatives considered");
+      for (const alt of opts.alternatives) lines.push(`- ${alt}`);
+      lines.push("");
+    }
+    if (opts.consequences) {
+      lines.push("## Consequences");
+      lines.push(opts.consequences);
+      lines.push("");
+    }
+
+    const content = lines.join("\n");
+    const dedupPayload = JSON.stringify({
+      title: opts.title,
+      context: opts.context,
+      decision: opts.decision,
+      alternatives: opts.alternatives ?? [],
+      consequences: opts.consequences ?? "",
+    });
+    const contentHash = createHash("sha256").update(dedupPayload).digest("hex");
+    const existing = await this.storage.findByContentHash(contentHash, this.sessionKey);
+    if (existing.length > 0) return null;
+
+    const id = generateId();
+    const entry: CaptureEntry = {
+      id,
+      sessionKey: this.sessionKey,
+      agentId: "sdk",
+      type: "decision",
+      content,
+      tags: ["adr", ...(opts.tags ?? [])],
+      createdAt: Date.now(),
+      metadata: {
+        adr: true,
+        title: opts.title,
+        context: opts.context,
+        decision: opts.decision,
+        alternatives: opts.alternatives ?? [],
+        consequences: opts.consequences ?? "",
+      },
+      contentHash,
+    };
+
+    await this.storage.put(entry);
+
+    try {
+      const embedding = await this.embedder.embed(content);
+      await this.storage.putVector(id, embedding);
+    } catch {
+      // Embedding is optional
+    }
+
+    return id;
+  }
+
   /** Close the database connection. */
   close(): void {
     this.storage.close();

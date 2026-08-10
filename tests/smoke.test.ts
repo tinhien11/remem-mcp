@@ -109,7 +109,7 @@ describe("Smoke test: full server over stdio", () => {
     if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
   });
 
-  it("lists all 5 tools", async () => {
+  it("lists all 6 tools", async () => {
     const response = await send("tools/list", {});
     const toolNames = response.result.tools.map((t: any) => t.name);
 
@@ -117,7 +117,7 @@ describe("Smoke test: full server over stdio", () => {
     expect(toolNames).toContain("capture");
     expect(toolNames).toContain("search");
     expect(toolNames).toContain("forget");
-    expect(toolNames.length).toBe(5);
+    expect(toolNames.length).toBe(6);
   });
 
   it("captures a decision", async () => {

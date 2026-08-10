@@ -16,6 +16,7 @@ import { stats } from "./stats.js";
 import { startViewer } from "./viewer.js";
 import { backup } from "./backup.js";
 import { installHooks } from "./hooks.js";
+import { exportArtifact, importArtifact, hasArtifact } from "./artifact.js";
 
 async function main(): Promise<void> {
   // Check for CLI subcommands
@@ -76,6 +77,22 @@ async function main(): Promise<void> {
     backup(dbPath, auditPath, outputDir);
     return;
   }
+  if (arg === "sync-export") {
+    const dbPath = process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "tdai-memory-mcp", "memory.db");
+    const projectRoot = process.cwd();
+    const sessionKey = process.argv[4] ?? undefined;
+    exportArtifact(dbPath, projectRoot, sessionKey);
+    return;
+  }
+  if (arg === "sync-import") {
+    const dbPath = process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "tdai-memory-mcp", "memory.db");
+    const projectRoot = process.cwd();
+    const count = importArtifact(dbPath, projectRoot);
+    if (count === 0) {
+      console.log("No team artifact found. Run 'tdai-memory-mcp sync-export' to create one.");
+    }
+    return;
+  }
   if (arg === "version" || arg === "--version" || arg === "-v") {
     console.log("tdai-memory-mcp v0.1.2");
     return;
@@ -92,6 +109,8 @@ Usage:
   tdai-memory-mcp stats          Print memory statistics
   tdai-memory-mcp viewer [port]  Start web viewer (default port: 7331)
   tdai-memory-mcp backup [dir]   Backup database and audit log
+  tdai-memory-mcp sync-export    Export memory to .tdai-memory/ in the project root
+  tdai-memory-mcp sync-import    Import memory from .tdai-memory/ (auto on startup)
   tdai-memory-mcp version        Print the version
   tdai-memory-mcp help           Print this help
 
@@ -112,6 +131,13 @@ To install the skill (Devin CLI only):
 
   // Load the configuration
   const config = loadConfig();
+
+  // Auto-import team artifact if it exists in the project root
+  try {
+    importArtifact(config.dbPath, process.cwd());
+  } catch (err) {
+    console.error(`[tdai-memory] Auto-import failed: ${err}`);
+  }
 
   // Initialize the storage backend
   if (config.storage !== "sqlite") {
