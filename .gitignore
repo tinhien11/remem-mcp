@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.db
+*.db.bak
+*.db-journal
+*.db-wal
+*.db-shm
+audit.jsonl
+.env
+.env.local
+.DS_Store
+*.log
+coverage/
+.vscode/
+.idea/
