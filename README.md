@@ -55,6 +55,40 @@ This command copies the skill file to all supported agent directories:
 
 After you install the skill, restart your agent. The agent will then recall past context before it answers, and capture decisions and learnings after it completes a task.
 
+## Export and import
+
+The server stores data in a local SQLite file. To move memory between machines, use the export and import commands.
+
+```bash
+# Export all captures to a JSON file
+npx tdai-memory-mcp export memory-backup.json
+
+# Import captures on another machine
+npx tdai-memory-mcp import memory-backup.json
+```
+
+The import command skips captures that already exist. It does not overwrite or duplicate data.
+
+### Filters
+
+You can export a subset of your memory:
+
+```bash
+# Export only captures from one project
+npx tdai-memory-mcp export project.json --session-key <key>
+
+# Export only decisions
+npx tdai-memory-mcp export decisions.json --type decision
+```
+
+### Pipe to stdout
+
+If you omit the file path, the export command writes to stdout:
+
+```bash
+npx tdai-memory-mcp export > memory-backup.json
+```
+
 ## Database detection
 
 On startup, the server checks if the database file exists at the configured path. The behavior depends on the result.
@@ -156,7 +190,7 @@ The search fuses BM25 (FTS5) and vector (sqlite-vec) results. It uses Reciprocal
 
 ## Status
 
-The project is in the specification and design phase. The implementation has not started.
+The project is in active development. The MVP is complete: 4 MCP tools, SQLite + sqlite-vec + FTS5 hybrid search, local ONNX embeddings, secret redaction, audit log, database migration, export/import, and 56 tests.
 
 ## License
 
