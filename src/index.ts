@@ -3,6 +3,8 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.js";
 import { SQLiteBackend } from "./storage/sqlite.js";
 import { LocalEmbedder } from "./embedding/local.js";
@@ -108,7 +110,13 @@ async function main(): Promise<void> {
     return;
   }
   if (arg === "version" || arg === "--version" || arg === "-v") {
-    console.log("tdai-memory-mcp v0.1.2");
+    try {
+      const pkgPath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+      console.log(`tdai-memory-mcp v${pkg.version}`);
+    } catch {
+      console.log("tdai-memory-mcp (version unknown)");
+    }
     return;
   }
   if (arg === "help" || arg === "--help" || arg === "-h") {
