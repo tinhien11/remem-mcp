@@ -134,7 +134,7 @@ export class SQLiteBackend implements StorageBackend {
   }
 
   async put(entry: CaptureEntry): Promise<void> {
-    const contentHash = createHash("sha256").update(entry.content).digest("hex");
+    const contentHash = entry.contentHash ?? createHash("sha256").update(entry.content).digest("hex");
     const stmt = this.db.prepare(`
       INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)

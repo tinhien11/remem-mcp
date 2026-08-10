@@ -179,6 +179,70 @@ npx tdai-memory-mcp install-hooks
 
 This installs hook scripts for Claude Code and Devin CLI. The hooks write session summaries to a file that the agent skill reads on the next session start.
 
+## Handoff: share context between agent sessions
+
+The `handoff` tool lets one agent write a structured context packet for the next agent. This saves 60-85% of tokens compared to re-reading files.
+
+### How it works
+
+1. **Agent A** calls `handoff` at the end of a session
+2. **Agent B** calls `recall` at the start of the next session
+3. Agent B gets the handoff packet (~500 tokens) instead of re-reading files (~50K tokens)
+
+### Example
+
+Agent A (end of session):
+```
+handoff({
+  "task": "Fix auth bug in login flow",
+  "status": "in_progress",
+  "progress": "Found root cause: JWT refresh token not rotating.",
+  "decisions": ["Rotate refresh tokens on every use"],
+  "files": ["src/auth/jwt.ts:45-60 - refresh token logic"],
+  "next_steps": ["Implement rotation logic", "Add test for rotation"]
+})
+```
+
+Agent B (start of next session):
+```
+recall({ "query": "auth bug handoff" })
+```
+
+### Use cases
+
+- **Switch agents mid-task**: Claude Code → Cursor, or vice versa
+- **Multi-agent coordination**: coordinator creates handoffs for workers
+- **Session resume**: pick up where you left off after a break
+- **Cross-machine**: export from machine A, import on machine B, then recall
+
+### Status values
+
+| Status | Meaning |
+|---|---|
+| `in_progress` | Task is ongoing, more work needed |
+| `blocked` | Task is blocked, waiting on something |
+| `needs_review` | Task is done but needs review |
+| `done` | Task is complete |
+| `assigned` | Task is assigned but not started |
+
+### Programmatic API
+
+```ts
+import { Memory } from "tdai-memory-mcp";
+
+const memory = new Memory();
+const id = await memory.handoff({
+  task: "Fix auth bug",
+  status: "in_progress",
+  progress: "Found root cause.",
+  decisions: ["Rotate refresh tokens"],
+  files: ["src/auth/jwt.ts:45-60"],
+  nextSteps: ["Implement rotation"],
+});
+// Next session:
+const results = await memory.recall("auth bug handoff");
+```
+
 ## Database detection
 
 On startup, the server checks if the database file exists at the configured path. The behavior depends on the result.

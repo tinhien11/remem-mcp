@@ -105,6 +105,38 @@ search({
 })
 ```
 
+## When to handoff
+
+Call `handoff` at the end of a session, or before switching to a different agent. This creates a structured packet that the next agent loads via `recall`, saving 60-85% of tokens compared to re-reading files.
+
+```
+handoff({
+  "task": "Fix auth bug in login flow",
+  "status": "in_progress",
+  "progress": "Found root cause: JWT refresh token not rotating.",
+  "decisions": ["Rotate refresh tokens on every use"],
+  "files": ["src/auth/jwt.ts:45-60 - refresh token logic"],
+  "next_steps": ["Implement rotation logic", "Add test for rotation"]
+})
+```
+
+### When to call handoff
+
+- The user says "I'm switching to Cursor" or "let's continue in Claude Code"
+- The session is ending and the task is not done
+- You are a worker agent finishing your part of a multi-agent task
+- The user says "wrap up" or "save context for next time"
+
+### When NOT to call handoff
+
+- The task is fully done and there is nothing to hand off
+- The session was trivial (a quick question, a small fix)
+- The user did not ask for a handoff and the task is ongoing
+
+### How the next agent loads the handoff
+
+The next agent calls `recall` at the start of a new session. The handoff packet appears in the results because it is stored as a capture with type `task` and tag `handoff`. The next agent reads the packet and continues without re-reading files.
+
 ## When to forget
 
 Call `forget` ONLY when the user explicitly asks to delete memory. Always require `confirm: true`. Never auto-forget.

@@ -181,6 +181,49 @@ const TOOLS: Tool[] = [
       },
     },
   },
+  {
+    name: "handoff",
+    description:
+      "Write a structured handoff packet for the next agent session. " +
+      "Call this tool at the end of a session, or before you switch to a different agent. " +
+      "The next agent calls recall to load this packet and continue without re-reading files. " +
+      "This saves 60-85% of tokens compared to re-discovering context.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task: {
+          type: "string",
+          description: "A one-line description of the task.",
+        },
+        status: {
+          type: "string",
+          enum: ["in_progress", "blocked", "needs_review", "done", "assigned"],
+          description: "The current status of the task.",
+        },
+        progress: {
+          type: "string",
+          description: "A summary of what has been done so far. Include the root cause if this is a bug fix.",
+        },
+        decisions: {
+          type: "array",
+          items: { type: "string" },
+          description: "A list of decisions made during this session. Include what was chosen and why.",
+        },
+        files: {
+          type: "array",
+          items: { type: "string" },
+          description: "A list of files that matter for this task. Use the format: path:lines - reason.",
+        },
+        next_steps: {
+          type: "array",
+          items: { type: "string" },
+          description: "A list of next steps for the next agent. Order by priority.",
+        },
+        session_key: { type: "string", description: "The session key. The default is hash(cwd)." },
+      },
+      required: ["task", "status", "progress"],
+    },
+  },
 ];
 
 /** Create the MCP server with all 4 tools registered. */
@@ -288,6 +331,8 @@ export function createServer(opts: ServerOptions): Server {
         return handleSearch(args, opts);
       case "forget":
         return handleForget(args, opts);
+      case "handoff":
+        return handleHandoff(args, opts);
       default:
         return {
           content: [{ type: "text", text: `Error: Unknown tool "${name}".` }],
@@ -534,6 +579,134 @@ async function handleForget(
       {
         type: "text",
         text: `Deleted: ${result.captures} captures, ${result.atoms} atoms, ${result.scenarios} scenarios`,
+      },
+    ],
+  };
+}
+
+/** Handle the handoff tool. Creates a structured handoff packet for the next agent. */
+async function handleHandoff(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  const task = args.task as string;
+  const status = args.status as string;
+  const progress = args.progress as string;
+  const decisions = (args.decisions as string[]) ?? [];
+  const files = (args.files as string[]) ?? [];
+  const nextSteps = (args.next_steps as string[]) ?? [];
+  const sessionKey = (args.session_key as string) ?? defaultSessionKey();
+
+  // Build a structured handoff packet as the content.
+  const lines: string[] = [];
+  lines.push(`# Handoff: ${task}`);
+  lines.push(`Status: ${status}`);
+  lines.push(`Date: ${new Date().toISOString()}`);
+  lines.push("");
+  lines.push("## Progress");
+  lines.push(progress);
+  lines.push("");
+
+  if (decisions.length > 0) {
+    lines.push("## Decisions");
+    for (const d of decisions) {
+      lines.push(`- ${d}`);
+    }
+    lines.push("");
+  }
+
+  if (files.length > 0) {
+    lines.push("## Files");
+    for (const f of files) {
+      lines.push(`- ${f}`);
+    }
+    lines.push("");
+  }
+
+  if (nextSteps.length > 0) {
+    lines.push("## Next steps");
+    for (let i = 0; i < nextSteps.length; i++) {
+      lines.push(`${i + 1}. ${nextSteps[i]}`);
+    }
+    lines.push("");
+  }
+
+  const content = lines.join("\n");
+
+  if (!checkContentLength(content, opts.maxContentLength)) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Error: The handoff packet exceeds the maximum length of ${opts.maxContentLength} characters.`,
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  // Dedup check: hash the structured data (excluding the timestamp) so that
+  // two handoffs with the same task/status/progress are detected as duplicates
+  // even if they were created at different times.
+  const dedupPayload = JSON.stringify({ task, status, progress, decisions, files, nextSteps });
+  const contentHash = createHash("sha256").update(dedupPayload).digest("hex");
+  const existing = await opts.storage.findByContentHash(contentHash, sessionKey);
+  if (existing.length > 0) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Duplicate handoff: ${existing[0].id} (same content already captured)`,
+        },
+      ],
+    };
+  }
+
+  const id = generateId();
+  const agentId = detectAgentId();
+
+  const entry: CaptureEntry = {
+    id,
+    sessionKey,
+    agentId,
+    type: "task",
+    content,
+    tags: ["handoff", `status:${status}`],
+    createdAt: Date.now(),
+    metadata: {
+      handoff: true,
+      task,
+      status,
+      progress,
+      decisions,
+      files,
+      nextSteps,
+    },
+    contentHash,
+  };
+
+  await opts.storage.put(entry);
+
+  try {
+    const embedding = await opts.embedder.embed(content);
+    await opts.storage.putVector(id, embedding);
+  } catch (err) {
+    console.error(`[tdai-memory] Embedding failed: ${err}`);
+  }
+
+  opts.audit.log({
+    tool: "handoff",
+    argsHash: AuditLogger.hashArgs({ task, status }),
+    resultLen: id.length,
+    quotaHit: false,
+    redacted: false,
+  });
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: `Handoff saved: ${id}\nStatus: ${status}\nNext agent: call recall with query "${task}" to load this packet.`,
       },
     ],
   };

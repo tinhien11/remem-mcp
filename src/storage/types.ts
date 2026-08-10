@@ -18,6 +18,8 @@ export interface CaptureEntry {
   tags: string[];
   createdAt: number;
   metadata?: Record<string, unknown>;
+  /** Optional pre-computed content hash for dedup. If not set, it is computed from content. */
+  contentHash?: string;
 }
 
 export interface SearchFilters {

@@ -116,6 +116,87 @@ export class Memory {
     return this.storage.delete(id);
   }
 
+  /** Create a handoff packet for the next agent session. */
+  async handoff(opts: {
+    task: string;
+    status: "in_progress" | "blocked" | "needs_review" | "done" | "assigned";
+    progress: string;
+    decisions?: string[];
+    files?: string[];
+    nextSteps?: string[];
+  }): Promise<string | null> {
+    const lines: string[] = [];
+    lines.push(`# Handoff: ${opts.task}`);
+    lines.push(`Status: ${opts.status}`);
+    lines.push(`Date: ${new Date().toISOString()}`);
+    lines.push("");
+    lines.push("## Progress");
+    lines.push(opts.progress);
+    lines.push("");
+
+    if (opts.decisions && opts.decisions.length > 0) {
+      lines.push("## Decisions");
+      for (const d of opts.decisions) lines.push(`- ${d}`);
+      lines.push("");
+    }
+    if (opts.files && opts.files.length > 0) {
+      lines.push("## Files");
+      for (const f of opts.files) lines.push(`- ${f}`);
+      lines.push("");
+    }
+    if (opts.nextSteps && opts.nextSteps.length > 0) {
+      lines.push("## Next steps");
+      opts.nextSteps.forEach((s, i) => lines.push(`${i + 1}. ${s}`));
+      lines.push("");
+    }
+
+    const content = lines.join("\n");
+    // Dedup: hash the structured data (excluding the timestamp)
+    const dedupPayload = JSON.stringify({
+      task: opts.task,
+      status: opts.status,
+      progress: opts.progress,
+      decisions: opts.decisions ?? [],
+      files: opts.files ?? [],
+      nextSteps: opts.nextSteps ?? [],
+    });
+    const contentHash = createHash("sha256").update(dedupPayload).digest("hex");
+    const existing = await this.storage.findByContentHash(contentHash, this.sessionKey);
+    if (existing.length > 0) return null;
+
+    const id = generateId();
+    const entry: CaptureEntry = {
+      id,
+      sessionKey: this.sessionKey,
+      agentId: "sdk",
+      type: "task",
+      content,
+      tags: ["handoff", `status:${opts.status}`],
+      createdAt: Date.now(),
+      metadata: {
+        handoff: true,
+        task: opts.task,
+        status: opts.status,
+        progress: opts.progress,
+        decisions: opts.decisions ?? [],
+        files: opts.files ?? [],
+        nextSteps: opts.nextSteps ?? [],
+      },
+      contentHash,
+    };
+
+    await this.storage.put(entry);
+
+    try {
+      const embedding = await this.embedder.embed(content);
+      await this.storage.putVector(id, embedding);
+    } catch {
+      // Embedding is optional
+    }
+
+    return id;
+  }
+
   /** Close the database connection. */
   close(): void {
     this.storage.close();
