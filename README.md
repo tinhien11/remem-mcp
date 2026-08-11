@@ -5,7 +5,7 @@
 
 > Local-first MCP memory server for AI coding agents. No API key. No daemon. No external database.
 
-![Demo: indexing React's codebase — Memory + CodeGraph + Wiki in one viewer](docs/screenshots/demo.gif)
+![Demo: React codebase — Memory + CodeGraph + Wiki](docs/screenshots/demo.gif)
 
 Core based on [TencentDB Agent Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) (MIT, Tencent 2026). Replaces the cloud backend with embedded SQLite + sqlite-vec + FTS5. Adds CodeGraph, Wiki, and lifecycle hooks.
 
