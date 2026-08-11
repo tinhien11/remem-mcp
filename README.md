@@ -185,10 +185,26 @@ Default mode is `noop` — stores L0 captures and runs hybrid search. Set an LLM
 ## CLI commands
 
 ```bash
+# MCP server
 npx tdai-memory-mcp                    # Start MCP server (stdio)
 npx tdai-memory-mcp install-skill      # Install agent skill
 npx tdai-memory-mcp install-hooks      # Install lifecycle hooks
 npx tdai-memory-mcp uninstall-hooks    # Remove hooks
+
+# CodeGraph — index and trace code symbols
+npx tdai-memory-mcp index --path src --repo .          # Index code (Tree-sitter, 9 languages)
+npx tdai-memory-mcp search-code --query <name>         # Search symbols by name
+npx tdai-memory-mcp callers <symbol_id>                # Find who calls a symbol
+npx tdai-memory-mcp callees <symbol_id>                # Find what a symbol calls
+npx tdai-memory-mcp impact <symbol_id>                 # Impact analysis (what breaks if changed)
+npx tdai-memory-mcp list-code <file_path>              # List symbols in a file
+
+# Wiki — index and search markdown docs
+npx tdai-memory-mcp wiki ingest --path docs --repo .   # Index markdown documentation
+npx tdai-memory-mcp wiki search <query>                # Search wiki pages
+npx tdai-memory-mcp wiki outdated --repo .             # Find outdated wiki pages
+
+# Memory management
 npx tdai-memory-mcp stats              # Memory statistics
 npx tdai-memory-mcp token-stats        # Token savings report
 npx tdai-memory-mcp viewer             # Web viewer at http://localhost:7331
@@ -203,6 +219,25 @@ npx tdai-memory-mcp scenarios          # List L2 scenarios
 npx tdai-memory-mcp persona            # Read or write L3 persona
 npx tdai-memory-mcp knowledge          # List knowledge assets for a team
 npx tdai-memory-mcp skills             # List skills for a team
+```
+
+### Quick start: index a project
+
+```bash
+cd /your/project
+
+# Index backend code (Go, Python, Java, etc.)
+npx tdai-memory-mcp index --path internal --repo .
+
+# Index frontend code (TypeScript, JavaScript)
+npx tdai-memory-mcp index --path frontend/src --repo .
+
+# Index documentation (Markdown)
+npx tdai-memory-mcp wiki ingest --path docs --repo .
+
+# Search and trace
+npx tdai-memory-mcp search-code --query HandleVerify
+npx tdai-memory-mcp impact <symbol_id>
 ```
 
 ## Showcase: Token savings
