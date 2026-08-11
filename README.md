@@ -2,6 +2,8 @@
 
 > Local-first MCP memory server for AI coding agents. No API key. No daemon. No external database.
 
+Core based on [TencentDB Agent Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) (MIT, Tencent 2026). Replaces the cloud backend with embedded SQLite + sqlite-vec + FTS5. Adds CodeGraph, Wiki, and lifecycle hooks.
+
 Memory, CodeGraph, and Wiki in one SQLite file. Lifecycle hooks auto-recall and auto-capture without agent involvement.
 
 ## Install
@@ -120,10 +122,3 @@ const results = await memory.recall("storage decision");
 ## License
 
 MIT. See [LICENSE](./LICENSE).
-
-## Acknowledgments
-
-Inherits architectural patterns from [TencentDB Agent Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) (MIT, Tencent 2026):
-- L0-L3 memory layering (raw → atoms → scenarios → persona)
-- Reciprocal Rank Fusion for hybrid BM25 + vector search
-- Pluggable storage factory pattern
