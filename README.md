@@ -17,7 +17,7 @@ Inherits the L0-L3 layering, RRF fusion, and pluggable storage factory from [Ten
 - **Team-shared memory** — commit `.tdai-memory/memory-export.jsonl` to share memory via git. Uses append-only JSONL so parallel branches auto-merge without conflicts
 - **Lifecycle hooks** — `SessionStart` auto-injects recent memory into agent context. `SessionEnd` silently captures session summary to memory DB by reading the transcript. No Stop hook, no agent involvement — capture runs automatically on session exit. Writes activity to `~/.local/share/tdai-memory-mcp/session.log`. Supports Claude Code (`~/.claude/settings.json`) and Devin CLI (`~/.config/devin/config.json`).
 - **Token savings tracker** — `npx tdai-memory-mcp token-stats` prints a report of estimated tokens saved by memory recall and capture preservation.
-- **189 tests** — unit + integration + E2E with real Claude CLI
+- **191 tests** — unit + integration + E2E with real Claude CLI
 
 ## Install
 

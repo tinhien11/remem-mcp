@@ -104,6 +104,11 @@ export class SQLiteBackend implements StorageBackend {
       this.migrateV2ToV3();
       this.writeSchemaVersion(3);
     }
+    if (currentVersion < 4) {
+      this.backupDatabase(dbPath);
+      this.migrateV3ToV4();
+      this.writeSchemaVersion(4);
+    }
   }
 
   /** Backup the database to a .bak file. */
@@ -255,6 +260,17 @@ export class SQLiteBackend implements StorageBackend {
     );
   }
 
+  /** Migrate schema v3 → v4: add deleted_at column for soft delete (tombstone). */
+  private migrateV3ToV4(): void {
+    const cols = this.db.prepare("PRAGMA table_info(captures)").all() as { name: string }[];
+    const hasDeletedAt = cols.some((c) => c.name === "deleted_at");
+    if (!hasDeletedAt) {
+      this.db.exec("ALTER TABLE captures ADD COLUMN deleted_at INTEGER");
+      console.error("[tdai-memory] Added deleted_at column to captures (tombstone support)");
+    }
+    console.error("[tdai-memory] Migrated schema v3 → v4 (tombstone / soft delete)");
+  }
+
   async put(entry: CaptureEntry): Promise<void> {
     const contentHash =
       entry.contentHash ?? createHash("sha256").update(entry.content).digest("hex");
@@ -296,7 +312,9 @@ export class SQLiteBackend implements StorageBackend {
   }
 
   async get(id: string): Promise<CaptureEntry | null> {
-    const row = this.db.prepare("SELECT * FROM captures WHERE id = ?").get(id) as DbRow | undefined;
+    const row = this.db
+      .prepare("SELECT * FROM captures WHERE id = ? AND deleted_at IS NULL")
+      .get(id) as DbRow | undefined;
     if (!row) return null;
     return rowToEntry(row);
   }
@@ -373,7 +391,7 @@ export class SQLiteBackend implements StorageBackend {
       SELECT fts.id as id, bm25(captures_fts) as score
       FROM captures_fts fts
       JOIN captures c ON c.id = fts.id
-      WHERE captures_fts MATCH ?
+      WHERE captures_fts MATCH ? AND c.deleted_at IS NULL
     `;
     const params: unknown[] = [ftsQuery];
 
@@ -429,7 +447,7 @@ export class SQLiteBackend implements StorageBackend {
       SELECT vec.id as id, vec.distance as score
       FROM captures_vec vec
       JOIN captures c ON c.id = vec.id
-      WHERE vec.embedding MATCH ? AND vec.k = ?
+      WHERE vec.embedding MATCH ? AND vec.k = ? AND c.deleted_at IS NULL
     `;
     const params: unknown[] = [Buffer.from(buffer.buffer), limit];
 
@@ -515,22 +533,37 @@ export class SQLiteBackend implements StorageBackend {
   }
 
   async delete(id: string): Promise<DeleteResult> {
-    const atomCount = this.db.prepare("DELETE FROM atoms WHERE capture_id = ?").run(id).changes;
-    const scenarioCount = this.db
-      .prepare("DELETE FROM scenarios WHERE atom_ids LIKE ?")
-      .run(`%${id}%`).changes;
-    this.db.prepare("DELETE FROM messages WHERE capture_id = ?").run(id);
-    const captureCount = this.db.prepare("DELETE FROM captures WHERE id = ?").run(id).changes;
-    this.db.prepare("DELETE FROM captures_vec WHERE id = ?").run(id);
+    // Soft delete: set deleted_at instead of hard delete
+    const now = Date.now();
+    const captureCount = this.db
+      .prepare("UPDATE captures SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL")
+      .run(now, id).changes;
+
+    if (captureCount > 0) {
+      // Remove from search indexes (FTS + vector) so tombstoned captures are not retrievable
+      this.db.prepare("DELETE FROM captures_vec WHERE id = ?").run(id);
+      // FTS5 external content: use the 'delete' command to remove from index
+      const rowid = this.db.prepare("SELECT rowid FROM captures WHERE id = ?").get(id) as
+        | { rowid: number }
+        | undefined;
+      if (rowid) {
+        this.db
+          .prepare(
+            "INSERT INTO captures_fts(captures_fts, rowid, content, tags, type) VALUES('delete', ?, '', '', '')",
+          )
+          .run(rowid.rowid);
+      }
+    }
+
     return {
       captures: captureCount,
-      atoms: atomCount,
-      scenarios: scenarioCount,
+      atoms: 0,
+      scenarios: 0,
     };
   }
 
   async deleteByFilter(filter: DeleteFilter): Promise<DeleteResult> {
-    let sql = "SELECT id FROM captures WHERE 1=1";
+    let sql = "SELECT id FROM captures WHERE deleted_at IS NULL";
     const params: unknown[] = [];
 
     if (filter.type) {

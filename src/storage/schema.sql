@@ -1,5 +1,5 @@
 -- Schema for tdai-memory-mcp
--- Version: 3
+-- Version: 4
 --
 -- This file runs on the first start. It creates all tables, triggers, and indexes.
 -- It uses CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS.
@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS captures (
   metadata     TEXT,
   team_id      TEXT,
   user_id      TEXT,
-  task_id      TEXT
+  task_id      TEXT,
+  deleted_at   INTEGER
 );
 
 -- L0 messages: role-based conversation messages linked to a capture.

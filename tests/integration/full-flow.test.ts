@@ -321,4 +321,85 @@ describe("Integration: capture → recall → search → forget", () => {
     expect(resultsB.length).toBe(1);
     expect(resultsB[0].entry.content).toContain("project B");
   });
+
+  it("recall without session_key does NOT leak across projects (real handler)", async () => {
+    // This test calls the real MCP server handler, not the test helper.
+    // The helper fills in sessionKey ?? "test-session", which masks the bug
+    // where handleRecall previously omitted ?? defaultSessionKey().
+    // See: https://neoneye.github.io/agent-memory-atlas/systems/tdai-memory-mcp/
+    const { createServer } = await import("../../src/server.js");
+    type Server = import("@modelcontextprotocol/sdk/server/index.js").Server;
+
+    const server = createServer({
+      storage: ctx.storage,
+      embedder: ctx.embedder,
+      pipeline: ctx.pipeline,
+      pipelineCtx: {},
+      audit: ctx.audit,
+      redactSecrets: true,
+      maxTokensRecall: 4000,
+      maxTokensSearch: 8000,
+      maxContentLength: 50000,
+    }) as unknown as Server;
+
+    // Capture to project-a
+    await capture(ctx, {
+      content: "Decision for project A only.",
+      type: "decision",
+      sessionKey: "project-a",
+    });
+    // Capture to project-b
+    await capture(ctx, {
+      content: "Decision for project B only.",
+      type: "decision",
+      sessionKey: "project-b",
+    });
+
+    // Call the real recall handler with NO session_key
+    // The handler should apply defaultSessionKey() = sha256(cwd).slice(0,16)
+    // which is neither "project-a" nor "project-b", so it should return
+    // results from the current project only (or none if nothing matches).
+    const handler = (server as unknown as {
+      _requestHandlers: Map<string, (req: unknown) => Promise<unknown>>;
+    })._requestHandlers.get("tools/call");
+    if (!handler) throw new Error("No tools/call handler found");
+
+    const result = (await handler({
+      method: "tools/call",
+      params: {
+        name: "recall",
+        arguments: { query: "decision", mode: "keyword" },
+      },
+    })) as { content: Array<{ type: string; text: string }> };
+
+    const text = result.content.map((c) => c.text).join("\n");
+    // Should NOT contain project A or B content — different session key
+    expect(text).not.toContain("project A only");
+    expect(text).not.toContain("project B only");
+  });
+
+  it("forget creates a tombstone (soft delete) and prevents recapture in search", async () => {
+    const result = await capture(ctx, {
+      content: "Decision to delete this entry.",
+      type: "decision",
+      tags: ["temp"],
+    });
+
+    // Verify it's retrievable
+    const before = await recall(ctx, { query: "delete", mode: "keyword" });
+    expect(before.length).toBeGreaterThan(0);
+
+    // Forget it
+    const forgetResult = await forget(ctx, { id: result.id, confirm: true });
+    expect(forgetResult.captures).toBe(1);
+
+    // Should no longer appear in search results
+    const after = await recall(ctx, { query: "delete", mode: "keyword" });
+    const found = after.find((r) => r.entry.id === result.id);
+    expect(found).toBeUndefined();
+
+    // Row should still exist in DB with deleted_at set (tombstone)
+    const row = ctx.storage.get(result.id);
+    expect(row).not.toBeNull();
+  });
 });

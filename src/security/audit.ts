@@ -10,6 +10,8 @@ export interface AuditEntry {
   resultLen: number | null;
   quotaHit: boolean;
   redacted: boolean;
+  /** For mutation tools (forget): records what was changed. */
+  mutation?: { id?: string; filter?: unknown; captures: number };
 }
 
 /** Append-only JSONL audit logger. */

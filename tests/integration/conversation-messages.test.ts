@@ -151,7 +151,7 @@ describe("Integration: conversation messages", () => {
     expect(text).toContain("messages");
   });
 
-  it("deletes messages when capture is deleted", async () => {
+  it("soft-deletes capture and removes it from search (tombstone)", async () => {
     const text = await callTool(server, "capture", {
       type: "conversation",
       messages: [{ role: "user", content: "Delete test message." }],
@@ -164,12 +164,16 @@ describe("Integration: conversation messages", () => {
     const messagesBefore = await storage.getMessages(id as string);
     expect(messagesBefore.length).toBe(1);
 
-    // Delete the capture
+    // Soft-delete the capture (tombstone)
     await storage.delete(id as string);
 
-    // Verify message is gone
+    // Capture should not be retrievable via get()
+    const retrieved = await storage.get(id as string);
+    expect(retrieved).toBeNull();
+
+    // Messages still exist in DB (soft delete does not cascade)
     const messagesAfter = await storage.getMessages(id as string);
-    expect(messagesAfter.length).toBe(0);
+    expect(messagesAfter.length).toBe(1);
   });
 
   it("supports conversation type in capture", async () => {

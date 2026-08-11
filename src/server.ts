@@ -605,7 +605,7 @@ async function handleRecall(
   opts: ServerOptions,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
   const query = args.query as string;
-  const sessionKey = args.session_key as string | undefined;
+  const sessionKey = (args.session_key as string) ?? defaultSessionKey();
   const limit = Math.min((args.limit as number) ?? 10, 50);
   const offset = (args.offset as number) ?? 0;
   const tokenCap = Math.min((args.max_tokens as number) ?? opts.maxTokensRecall, 8000);
@@ -614,11 +614,13 @@ async function handleRecall(
   const agentId = (args.agent_id as string) ?? undefined;
 
   let queryEmbedding: number[] | null = null;
+  let vectorDegraded = false;
   if (mode === "hybrid" || mode === "vector") {
     try {
       queryEmbedding = await opts.embedder.embed(query);
     } catch (err) {
       console.error(`[tdai-memory] Embedding failed: ${err}`);
+      vectorDegraded = true;
     }
   }
 
@@ -630,7 +632,10 @@ async function handleRecall(
     filters: { teamId, userId, taskId, agentId },
   });
 
-  const text = formatResults(results);
+  let text = formatResults(results);
+  if (vectorDegraded) {
+    text = `[note: vector search unavailable, results are keyword-only]\n${text}`;
+  }
   const { text: finalText, quotaHit } = enforceQuota(text, tokenCap);
 
   opts.audit.log({
@@ -789,15 +794,18 @@ async function handleSearch(
   const limit = Math.min((args.limit as number) ?? 20, 100);
 
   let queryEmbedding: number[] | null = null;
+  let vectorDegraded = false;
   if (mode === "hybrid" || mode === "vector") {
     try {
       queryEmbedding = await opts.embedder.embed(query);
     } catch (err) {
       console.error(`[tdai-memory] Embedding failed: ${err}`);
+      vectorDegraded = true;
     }
   }
 
   const results = await opts.storage.search(query, queryEmbedding, {
+    sessionKey: (args.session_key as string) ?? defaultSessionKey(),
     limit,
     offset: 0,
     mode,
@@ -815,7 +823,10 @@ async function handleSearch(
       : undefined,
   });
 
-  const text = formatResults(results);
+  let text = formatResults(results);
+  if (vectorDegraded) {
+    text = `[note: vector search unavailable, results are keyword-only]\n${text}`;
+  }
   const { text: finalText, quotaHit } = enforceQuota(text, opts.maxTokensSearch);
 
   opts.audit.log({
@@ -873,6 +884,7 @@ async function handleForget(
     resultLen: null,
     quotaHit: false,
     redacted: false,
+    mutation: { id, filter, captures: result.captures },
   });
 
   return {
