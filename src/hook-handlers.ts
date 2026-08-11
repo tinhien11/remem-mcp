@@ -259,7 +259,7 @@ export function hookSessionEnd(dbPath: string): void {
               userMessages.push(step.message);
             }
           }
-          if (step.source === "assistant" && typeof step.message === "string") {
+          if ((step.source === "assistant" || step.source === "agent") && typeof step.message === "string") {
             assistantMessages.push(step.message);
           }
         }

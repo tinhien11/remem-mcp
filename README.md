@@ -17,9 +17,11 @@ Inherits the L0-L3 layering, RRF fusion, and pluggable storage factory from [Ten
 - **Team-shared memory** — commit `.tdai-memory/memory-export.json` to share memory via git
 - **Lifecycle hooks** — `SessionStart` auto-injects recent memory into agent context. `SessionEnd` silently captures session summary to memory DB by reading the transcript. No Stop hook, no agent involvement — capture runs automatically on session exit. Writes activity to `~/.local/share/tdai-memory-mcp/session.log`. Supports Claude Code (`~/.claude/settings.json`) and Devin CLI (`~/.config/devin/config.json`).
 - **Token savings tracker** — `npx tdai-memory-mcp token-stats` prints a report of estimated tokens saved by memory recall and capture preservation.
-- **179 tests** — unit + integration, full stdio smoke test
+- **184 tests** — unit + integration + E2E with real Claude CLI
 
 ## Install
+
+### 1. Install the package
 
 ```bash
 npm install -g tdai-memory-mcp
@@ -31,7 +33,7 @@ Or run without install:
 npx tdai-memory-mcp
 ```
 
-## Configure your MCP client
+### 2. Add the MCP server to your agent
 
 Claude Code (`~/.claude.json`):
 
@@ -56,16 +58,23 @@ devin mcp add tdai-memory --scope user -- npx -y tdai-memory-mcp
 
 First run creates the database at `~/.local/share/tdai-memory-mcp/memory.db`. Schema is created automatically.
 
-## One-command setup
+### 3. Install the skill + lifecycle hooks
 
-Install the agent skill + lifecycle hooks in one go:
+This is the key step. Without it, the agent has memory tools but will not use them automatically.
 
 ```bash
 npx tdai-memory-mcp install-skill && npx tdai-memory-mcp install-hooks
 ```
 
-- **Skill** — teaches the agent when to recall, capture, and hand off. Copies to `~/.claude/skills/`, `~/.agents/skills/`, `~/.config/devin/skills/`.
-- **Hooks** — `SessionStart` auto-injects recent memory into agent context. `SessionEnd` silently captures session summary to memory DB by reading the transcript. No Stop hook, no agent involvement — capture runs automatically on session exit. Writes activity to `~/.local/share/tdai-memory-mcp/session.log`. Supports Claude Code (`~/.claude/settings.json`) and Devin CLI (`~/.config/devin/config.json`).
+What this does:
+
+| Component | What | Where |
+|---|---|---|
+| **Skill** | Teaches the agent when to recall, capture, and hand off | `~/.claude/skills/`, `~/.agents/skills/`, `~/.config/devin/skills/` |
+| **SessionStart hook** | Auto-injects recent memory into agent context on every new session | `~/.claude/settings.json`, `~/.config/devin/config.json` |
+| **SessionEnd hook** | Silently captures session summary to memory DB by reading the transcript — no agent involvement, runs on session exit | same config files |
+
+Without hooks: agent has tools but must be told to use them. With hooks: every session starts with relevant memory and ends with an auto-capture.
 
 Restart your agent after install.
 
