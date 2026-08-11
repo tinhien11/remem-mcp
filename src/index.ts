@@ -27,8 +27,8 @@ import type { PipelineStage } from "./pipeline/types.js";
 import { AuditLogger } from "./security/audit.js";
 import { createServer } from "./server.js";
 import { stats } from "./stats.js";
-import { tokenStats } from "./token-stats.js";
 import { SQLiteBackend } from "./storage/sqlite.js";
+import { tokenStats } from "./token-stats.js";
 import { startViewer } from "./viewer.js";
 
 /** Default DB path. */

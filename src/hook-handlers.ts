@@ -1,8 +1,8 @@
-import Database from "better-sqlite3";
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import Database from "better-sqlite3";
 
 /**
  * Hook handler for SessionStart event.
@@ -255,11 +255,17 @@ export function hookSessionEnd(dbPath: string): void {
         const steps: Array<{ source: string; message: string }> = transcript.steps ?? [];
         for (const step of steps) {
           if (step.source === "user" && typeof step.message === "string") {
-            if (!step.message.startsWith("[tdai-memory]") && !step.message.startsWith("Code was changed")) {
+            if (
+              !step.message.startsWith("[tdai-memory]") &&
+              !step.message.startsWith("Code was changed")
+            ) {
               userMessages.push(step.message);
             }
           }
-          if ((step.source === "assistant" || step.source === "agent") && typeof step.message === "string") {
+          if (
+            (step.source === "assistant" || step.source === "agent") &&
+            typeof step.message === "string"
+          ) {
             assistantMessages.push(step.message);
           }
         }
@@ -282,7 +288,10 @@ export function hookSessionEnd(dbPath: string): void {
               text = content;
             } else if (Array.isArray(content)) {
               text = content
-                .filter((c: unknown) => typeof c === "object" && c !== null && (c as { type?: string }).type === "text")
+                .filter(
+                  (c: unknown) =>
+                    typeof c === "object" && c !== null && (c as { type?: string }).type === "text",
+                )
                 .map((c: unknown) => (c as { text?: string }).text ?? "")
                 .join(" ");
             }
@@ -305,7 +314,9 @@ export function hookSessionEnd(dbPath: string): void {
 
       // Skip trivial sessions (1 or fewer user messages)
       if (userMessages.length <= 1 && assistantMessages.length === 0) {
-        logToFile(`SessionEnd: trivial session (${userMessages.length} user msgs), skipping capture`);
+        logToFile(
+          `SessionEnd: trivial session (${userMessages.length} user msgs), skipping capture`,
+        );
         process.stdout.write(JSON.stringify({}));
         return;
       }
@@ -328,9 +339,9 @@ export function hookSessionEnd(dbPath: string): void {
       const id = generateId();
 
       // Check for duplicate
-      const existing = db.prepare("SELECT id FROM captures WHERE content_hash = ?").get(contentHash) as
-        | { id: string }
-        | undefined;
+      const existing = db
+        .prepare("SELECT id FROM captures WHERE content_hash = ?")
+        .get(contentHash) as { id: string } | undefined;
 
       if (existing) {
         db.close();
@@ -352,12 +363,18 @@ export function hookSessionEnd(dbPath: string): void {
         contentHash,
         JSON.stringify(["auto-capture", "session-end"]),
         now,
-        JSON.stringify({ session_id: sessionId, user_messages: userMessages.length, assistant_messages: assistantMessages.length }),
+        JSON.stringify({
+          session_id: sessionId,
+          user_messages: userMessages.length,
+          assistant_messages: assistantMessages.length,
+        }),
       );
 
       db.close();
 
-      logToFile(`SessionEnd: captured session ${sessionId} (${userMessages.length} user msgs, ${assistantMessages.length} assistant msgs). id=${id}`);
+      logToFile(
+        `SessionEnd: captured session ${sessionId} (${userMessages.length} user msgs, ${assistantMessages.length} assistant msgs). id=${id}`,
+      );
       process.stdout.write(JSON.stringify({}));
     } catch (err) {
       process.stderr.write(`[tdai-memory hook-session-end] Error: ${err}\n`);

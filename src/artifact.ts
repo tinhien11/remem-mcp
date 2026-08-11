@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, appendFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
@@ -126,7 +126,7 @@ export function exportArtifact(dbPath: string, projectRoot: string, sessionKey?:
     return;
   }
 
-  const lines = newRows.map((r) => JSON.stringify(r)).join("\n") + "\n";
+  const lines = `${newRows.map((r) => JSON.stringify(r)).join("\n")}\n`;
   appendFileSync(outPath, lines, "utf-8");
 
   console.log(

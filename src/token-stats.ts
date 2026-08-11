@@ -1,7 +1,7 @@
-import Database from "better-sqlite3";
-import { readFileSync, existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { encode } from "gpt-tokenizer";
 
 /**
@@ -36,13 +36,23 @@ export function tokenStats(dbPath: string): void {
   // ─── Read DB for capture stats ────────────────────────────────
   const db = new Database(dbPath, { readonly: true });
 
-  const totalCaptures = db.prepare("SELECT COUNT(*) as count FROM captures").get() as { count: number };
+  const totalCaptures = db.prepare("SELECT COUNT(*) as count FROM captures").get() as {
+    count: number;
+  };
 
   const captures = db
     .prepare("SELECT id, type, content, tags, created_at FROM captures ORDER BY created_at ASC")
-    .all() as { id: string; type: string; content: string; tags: string | null; created_at: number }[];
+    .all() as {
+    id: string;
+    type: string;
+    content: string;
+    tags: string | null;
+    created_at: number;
+  }[];
 
-  const sessions = db.prepare("SELECT COUNT(DISTINCT session_key) as count FROM captures").get() as {
+  const sessions = db
+    .prepare("SELECT COUNT(DISTINCT session_key) as count FROM captures")
+    .get() as {
     count: number;
   };
 
@@ -57,7 +67,7 @@ export function tokenStats(dbPath: string): void {
 
   // ─── Read log for recall injection events ─────────────────────
   let recallCount = 0;
-  let noMemoryCount = 0;
+  let _noMemoryCount = 0;
   let captureCount = 0;
   const recallBlocks: { tokens: number; text: string }[] = [];
 
@@ -74,7 +84,7 @@ export function tokenStats(dbPath: string): void {
         inBlock = true;
         blockText = [];
       } else if (line.includes("SessionStart: no recent memory")) {
-        noMemoryCount++;
+        _noMemoryCount++;
         inBlock = false;
       } else if (line.includes("SessionEnd: captured")) {
         captureCount++;
@@ -91,7 +101,8 @@ export function tokenStats(dbPath: string): void {
   }
 
   const totalInjected = recallBlocks.reduce((sum, r) => sum + r.tokens, 0);
-  const avgInjection = recallBlocks.length > 0 ? Math.round(totalInjected / recallBlocks.length) : 0;
+  const avgInjection =
+    recallBlocks.length > 0 ? Math.round(totalInjected / recallBlocks.length) : 0;
 
   // ─── Helpers ──────────────────────────────────────────────────
   function fmt(n: number): string {
@@ -102,10 +113,9 @@ export function tokenStats(dbPath: string): void {
 
   function firstLine(text: string, maxLen = 72): string {
     const line =
-      text
-        .split("\n")
-        .find((l) => l.trim() && !l.startsWith("#") && !l.startsWith("Session:")) ?? "";
-    return line.length > maxLen ? line.slice(0, maxLen) + "..." : line;
+      text.split("\n").find((l) => l.trim() && !l.startsWith("#") && !l.startsWith("Session:")) ??
+      "";
+    return line.length > maxLen ? `${line.slice(0, maxLen)}...` : line;
   }
 
   // ─── Print report ─────────────────────────────────────────────
@@ -114,7 +124,9 @@ export function tokenStats(dbPath: string): void {
   console.log("  ===================");
   console.log("  (all numbers measured with gpt-tokenizer cl100k_base)");
   console.log("");
-  console.log(`  Sessions: ${sessions.count}    Captures: ${totalCaptures.count}    Recalls: ${recallCount}`);
+  console.log(
+    `  Sessions: ${sessions.count}    Captures: ${totalCaptures.count}    Recalls: ${recallCount}`,
+  );
   console.log("");
 
   // ─── Captures ─────────────────────────────────────────────────
@@ -122,7 +134,9 @@ export function tokenStats(dbPath: string): void {
     console.log("  Captures (stored in DB):");
     console.log("");
     for (const c of captureData) {
-      console.log(`  [${c.type.padEnd(12)}] ${String(c.tokens).padStart(5)} tok  ${firstLine(c.content)}`);
+      console.log(
+        `  [${c.type.padEnd(12)}] ${String(c.tokens).padStart(5)} tok  ${firstLine(c.content)}`,
+      );
     }
     console.log(`  ${"─".repeat(50)}`);
     console.log(`  ${String(totalStored).padStart(5)} tok  TOTAL stored`);
@@ -163,7 +177,7 @@ export function tokenStats(dbPath: string): void {
  */
 function printReactExample(
   fmt: (n: number) => string,
-  countTok: (text: string) => number,
+  _countTok: (text: string) => number,
 ): void {
   // File tokens measured from /data/tools/ardupilot
   const fileTokens: Record<string, number> = {
@@ -227,9 +241,13 @@ function printReactExample(
   console.log("  Measured savings (gpt-tokenizer cl100k_base):");
   console.log("");
   console.log(`    Re-reads avoided:  ${recallCount} × ${fmt(totalReRead)} = ${fmt(avoided)} tok`);
-  console.log(`    Memory cost:       ${captureTotal} stored + ${fmt(totalInjected)} injected = ${fmt(captureTotal + totalInjected)} tok`);
+  console.log(
+    `    Memory cost:       ${captureTotal} stored + ${fmt(totalInjected)} injected = ${fmt(captureTotal + totalInjected)} tok`,
+  );
   console.log(`    Net saved:         ${fmt(netSaved)} tok`);
   console.log(`    ROI:               ${roi.toFixed(1)}x`);
-  console.log(`    Cost saved:        $${(netSaved / 1000 * 0.003).toFixed(2)} (at $0.003/1K tok)`);
+  console.log(
+    `    Cost saved:        $${((netSaved / 1000) * 0.003).toFixed(2)} (at $0.003/1K tok)`,
+  );
   console.log("");
 }
