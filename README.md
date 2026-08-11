@@ -7,7 +7,7 @@
 
 ![Handoff Demo](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/handoff-demo.gif)
 
-*Real handoff: Session 1 (Claude Code) captures → Session 2 (Devin) recalls. No CLAUDE.md, no copy-paste.*
+*3 sessions, 3 agents, 1 memory: Claude Code captures + Stop hook auto-saves → Devin recalls → Codex recalls. No CLAUDE.md, no copy-paste.*
 
 ![Demo](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/demo.gif)
 
