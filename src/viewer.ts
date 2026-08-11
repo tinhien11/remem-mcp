@@ -256,7 +256,7 @@ export function startViewer(dbPath: string, port: number): Server {
         sql += " WHERE title LIKE ? OR content LIKE ?";
         params.push(`%${search}%`, `%${search}%`);
       }
-      sql += " ORDER BY ingested_at DESC LIMIT ? OFFSET ?";
+      sql += " ORDER BY updated_at DESC LIMIT ? OFFSET ?";
       params.push(limit, offset);
       try {
         const rows = db.prepare(sql).all(...params);
