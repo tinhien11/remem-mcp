@@ -36,6 +36,12 @@ if (!hasAgent) {
 // Run setup silently
 // postinstall.js is in scripts/, dist/index.js is the built binary
 const distIndex = join(new URL(".", import.meta.url).pathname, "..", "dist", "index.js");
+
+// Don't run if dist/ doesn't exist yet (e.g. during npm ci in CI/Docker before build)
+if (!existsSync(distIndex)) {
+  process.exit(0);
+}
+
 const child = spawn(process.execPath, [distIndex, "setup"], {
   stdio: "inherit",
   env: { ...process.env, TDAI_QUIET: "1" },
