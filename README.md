@@ -54,8 +54,8 @@ Memory, CodeGraph, and Wiki share one SQLite file. A `recall` call returns match
 Lifecycle hooks run memory operations without agent involvement:
 
 - **SessionStart** — injects recent memories into agent context before the first message
-- **Stop** — prompts the agent to save a handoff packet before the session ends
-- **SessionEnd** — captures the session summary by reading the transcript
+- **Stop** — prompts the agent to save a handoff packet, then auto-captures the session transcript (only keeps the latest snapshot per session)
+- **SessionEnd** — captures the session summary by reading the transcript (Claude Code only; Devin CLI uses Stop for auto-capture)
 
 ![Hook system](docs/screenshots/showcase-hook-system.png)
 
