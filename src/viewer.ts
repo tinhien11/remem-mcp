@@ -538,7 +538,7 @@ function renderPage(): string {
 
   /* ─── Global stats bar ─── */
   .stats-bar {
-    background: var(--surface);
+    background: var(--bg);
     padding: 0.625rem 1.5rem;
     display: flex;
     gap: 1.5rem;
