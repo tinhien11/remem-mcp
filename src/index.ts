@@ -5,6 +5,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import Database from "better-sqlite3";
+import * as sqliteVec from "sqlite-vec";
 import { exportArtifact, importArtifact } from "./artifact.js";
 import { backup } from "./backup.js";
 import { atomsCommand } from "./cli/atoms.js";
@@ -13,6 +15,14 @@ import { knowledgeCommand } from "./cli/knowledge.js";
 import { personaCommand } from "./cli/persona.js";
 import { scenariosCommand } from "./cli/scenarios.js";
 import { skillsCommand } from "./cli/skills.js";
+import {
+  findCallees,
+  findCallers,
+  impactAnalysis,
+  indexDirectory,
+  listSymbols,
+  searchSymbols,
+} from "./codegraph/engine.js";
 import { loadConfig } from "./config.js";
 import { LocalEmbedder } from "./embedding/local.js";
 import { exportData } from "./export.js";
@@ -30,12 +40,39 @@ import { stats } from "./stats.js";
 import { SQLiteBackend } from "./storage/sqlite.js";
 import { tokenStats } from "./token-stats.js";
 import { startViewer } from "./viewer.js";
+import { findOutdatedPages, ingestDirectory, searchWiki } from "./wiki/engine.js";
 
 /** Default DB path. */
 function defaultDbPath(): string {
   return (
     process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "tdai-memory-mcp", "memory.db")
   );
+}
+
+/** Open a DB with schema loaded (for CLI commands that need CodeGraph/Wiki tables). */
+function openDbWithSchema(dbPath: string): Database.Database {
+  const db = new Database(dbPath);
+  db.pragma("journal_mode = WAL");
+  sqliteVec.load(db);
+  // Load schema if tables don't exist
+  const hasSymbols = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='symbols'")
+    .get();
+  if (!hasSymbols) {
+    const schemaPath = join(dirname(fileURLToPath(import.meta.url)), "schema.sql");
+    try {
+      db.exec(readFileSync(schemaPath, "utf-8"));
+    } catch {
+      // schema.sql not bundled — try src path for dev
+      const devSchema = join(process.cwd(), "src", "storage", "schema.sql");
+      try {
+        db.exec(readFileSync(devSchema, "utf-8"));
+      } catch {
+        // Tables may already exist from SQLiteBackend
+      }
+    }
+  }
+  return db;
 }
 
 /** Parse --flag value pairs from argv after the subcommand. */
@@ -146,6 +183,195 @@ async function main(): Promise<void> {
     return;
   }
 
+  // ─── CodeGraph CLI commands ──────────────────────────────────
+  if (arg === "index") {
+    const flags = parseFlags(process.argv.slice(3));
+    const path = flags.path ?? flags.p ?? process.cwd();
+    const repoPath = flags.repo ?? flags.r ?? path;
+    const teamId = flags.team ?? flags.t ?? null;
+    const maxFiles = Number(flags["max-files"] ?? 500);
+    const db = openDbWithSchema(defaultDbPath());
+    console.log(`Indexing ${path} ...`);
+    const results = await indexDirectory(db, path, repoPath, teamId, maxFiles);
+    const indexed = results.filter((r) => !r.skipped);
+    const totalSyms = indexed.reduce((s, r) => s + r.symbols, 0);
+    const totalCalls = indexed.reduce((s, r) => s + r.calls, 0);
+    console.log(`Done: ${indexed.length} files, ${totalSyms} symbols, ${totalCalls} calls`);
+    for (const r of indexed.slice(0, 20)) {
+      console.log(`  ${r.language.padEnd(12)} ${r.symbols} sym  ${r.calls} calls  ${r.file}`);
+    }
+    if (indexed.length > 20) console.log(`  ... and ${indexed.length - 20} more`);
+    db.close();
+    return;
+  }
+  if (arg === "search-code") {
+    const flags = parseFlags(process.argv.slice(3));
+    const query = flags.query ?? flags.q ?? process.argv[3];
+    const teamId = flags.team ?? flags.t ?? undefined;
+    const limit = Number(flags.limit ?? 20);
+    if (!query) {
+      console.error("Usage: search-code --query <name> [--limit N]");
+      return;
+    }
+    const db = openDbWithSchema(defaultDbPath());
+    const syms = searchSymbols(db, query, { teamId, limit });
+    if (syms.length === 0) {
+      console.log("No symbols found.");
+      db.close();
+      return;
+    }
+    for (const s of syms) {
+      console.log(`${s.id}  ${s.kind.padEnd(10)}  ${s.name}  at  ${s.filePath}:${s.lineStart}`);
+    }
+    db.close();
+    return;
+  }
+  if (arg === "callers") {
+    const symbolId = process.argv[3];
+    if (!symbolId) {
+      console.error("Usage: callers <symbol_id>");
+      return;
+    }
+    const db = openDbWithSchema(defaultDbPath());
+    const callers = findCallers(db, symbolId);
+    if (callers.length === 0) {
+      console.log("No callers found.");
+      db.close();
+      return;
+    }
+    for (const c of callers) {
+      console.log(`${c.caller.kind} ${c.caller.name}  at  ${c.caller.filePath}:${c.line}`);
+    }
+    db.close();
+    return;
+  }
+  if (arg === "callees") {
+    const symbolId = process.argv[3];
+    if (!symbolId) {
+      console.error("Usage: callees <symbol_id>");
+      return;
+    }
+    const db = openDbWithSchema(defaultDbPath());
+    const callees = findCallees(db, symbolId);
+    if (callees.length === 0) {
+      console.log("No callees found.");
+      db.close();
+      return;
+    }
+    for (const c of callees) {
+      if (c.callee) {
+        console.log(
+          `${c.callee.kind} ${c.callee.name}  at  ${c.callee.filePath}:${c.callee.lineStart}`,
+        );
+      } else {
+        console.log(`${c.calleeName}  (unresolved)`);
+      }
+    }
+    db.close();
+    return;
+  }
+  if (arg === "impact") {
+    const symbolId = process.argv[3];
+    if (!symbolId) {
+      console.error("Usage: impact <symbol_id> [--max-depth N]");
+      return;
+    }
+    const flags = parseFlags(process.argv.slice(4));
+    const maxDepth = Number(flags["max-depth"] ?? 5);
+    const db = openDbWithSchema(defaultDbPath());
+    const impact = impactAnalysis(db, symbolId, { maxDepth });
+    console.log(
+      `Root: ${impact.rootSymbol.kind} ${impact.rootSymbol.name}  at  ${impact.rootSymbol.filePath}:${impact.rootSymbol.lineStart}`,
+    );
+    console.log(`Affected: ${impact.affected.length} symbol(s)`);
+    for (const a of impact.affected) {
+      console.log(
+        `${"  ".repeat(a.depth)}-> ${a.symbol.kind} ${a.symbol.name}  at  ${a.symbol.filePath}:${a.symbol.lineStart}  (depth ${a.depth})`,
+      );
+    }
+    db.close();
+    return;
+  }
+  if (arg === "list-code") {
+    const filePath = process.argv[3];
+    if (!filePath) {
+      console.error("Usage: list-code <file_path>");
+      return;
+    }
+    const db = openDbWithSchema(defaultDbPath());
+    const syms = listSymbols(db, filePath);
+    if (syms.length === 0) {
+      console.log("No symbols found.");
+      db.close();
+      return;
+    }
+    for (const s of syms) {
+      console.log(`${s.kind.padEnd(10)}  L${s.lineStart}-${s.lineEnd}  ${s.name}`);
+    }
+    db.close();
+    return;
+  }
+
+  // ─── Wiki CLI commands ───────────────────────────────────────
+  if (arg === "wiki") {
+    const sub = process.argv[3];
+    if (sub === "ingest") {
+      const flags = parseFlags(process.argv.slice(4));
+      const path = flags.path ?? flags.p ?? process.cwd();
+      const repoPath = flags.repo ?? flags.r ?? path;
+      const teamId = flags.team ?? flags.t ?? null;
+      const db = openDbWithSchema(defaultDbPath());
+      console.log(`Ingesting markdown from ${path} ...`);
+      const results = ingestDirectory(db, path, repoPath, teamId, 200);
+      const ingested = results.filter((r) => !r.skipped);
+      const totalPages = ingested.reduce((s, r) => s + r.pages, 0);
+      const totalLinks = ingested.reduce((s, r) => s + r.links, 0);
+      console.log(`Done: ${totalPages} pages, ${totalLinks} links from ${ingested.length} files`);
+      for (const r of ingested.slice(0, 20)) {
+        console.log(`  ${r.pages} page  ${r.links} links  ${r.file}`);
+      }
+      db.close();
+      return;
+    }
+    if (sub === "search") {
+      const query = process.argv[4];
+      if (!query) {
+        console.error("Usage: wiki search <query>");
+        return;
+      }
+      const db = openDbWithSchema(defaultDbPath());
+      const results = searchWiki(db, query);
+      if (results.length === 0) {
+        console.log("No pages found.");
+        db.close();
+        return;
+      }
+      for (const r of results) {
+        console.log(`${r.id}  ${r.title}  (${r.sourceFile})`);
+        console.log(`  ${r.snippet}`);
+      }
+      db.close();
+      return;
+    }
+    if (sub === "outdated") {
+      const repoPath = process.argv[4] ?? process.cwd();
+      const db = openDbWithSchema(defaultDbPath());
+      const outdated = findOutdatedPages(db, repoPath, {});
+      if (outdated.length === 0) {
+        console.log("All pages up to date.");
+        db.close();
+        return;
+      }
+      for (const o of outdated) {
+        console.log(`${o.title}  (${o.sourceFile})  — ${o.reason}`);
+      }
+      db.close();
+      return;
+    }
+    console.error("Usage: wiki <ingest|search|outdated> [args]");
+    return;
+  }
+
   // ─── L1-L3 CLI commands ──────────────────────────────────────
   if (arg === "atoms") {
     const flags = parseFlags(process.argv.slice(3));
@@ -197,6 +423,20 @@ Usage:
   tdai-memory-mcp install-hooks  Install lifecycle hooks (SessionStart, SessionEnd)
   tdai-memory-mcp uninstall-hooks  Remove lifecycle hooks
   tdai-memory-mcp hook-post-commit  Auto-index changed files (git post-commit hook)
+
+CodeGraph commands:
+  tdai-memory-mcp index [--path src] [--repo .]  Index code symbols (Tree-sitter)
+  tdai-memory-mcp search-code --query <name>     Search symbols by name
+  tdai-memory-mcp callers <symbol_id>            Find who calls a symbol
+  tdai-memory-mcp callees <symbol_id>            Find what a symbol calls
+  tdai-memory-mcp impact <symbol_id>             Impact analysis (what breaks if changed)
+  tdai-memory-mcp list-code <file_path>          List symbols in a file
+
+Wiki commands:
+  tdai-memory-mcp wiki ingest [--path docs]      Index markdown documentation
+  tdai-memory-mcp wiki search <query>            Search wiki pages
+  tdai-memory-mcp wiki outdated [--repo .]       Find outdated wiki pages
+
   tdai-memory-mcp export [file]  Export captures to JSON (default: stdout)
   tdai-memory-mcp import <file>  Import captures from JSON
   tdai-memory-mcp stats          Print memory statistics
