@@ -132,7 +132,7 @@ function installCodexHooks(): boolean {
   let content = readFileSync(configPath, "utf-8");
 
   // Check if tdai-memory hooks are already installed
-  if (content.includes("tdai-memory SessionStart")) {
+  if (content.includes(">>> tdai-memory SessionStart >>>")) {
     console.log(`  Codex CLI: Hooks already installed in ${configPath}`);
     return true;
   }

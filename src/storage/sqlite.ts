@@ -49,25 +49,35 @@ export class SQLiteBackend implements StorageBackend {
 
     // Try read-write first; fall back to read-only if the directory is not writable
     // (e.g. Codex CLI sandbox blocks writes outside the workdir)
+    let readonly = false;
     try {
       this.db = new Database(dbPath);
       this.db.pragma("journal_mode = WAL");
     } catch {
       // Read-only fallback — recall/search still work, captures will fail gracefully
+      readonly = true;
       this.db = new Database(dbPath, { readonly: true });
     }
-    this.db.pragma("synchronous = NORMAL");
-    this.db.pragma("busy_timeout = 5000");
-    this.db.pragma("foreign_keys = OFF");
+
+    // Pragmas that are safe for both read-write and read-only
+    try {
+      this.db.pragma("busy_timeout = 5000");
+    } catch { /* read-only */ }
+    if (!readonly) {
+      this.db.pragma("synchronous = NORMAL");
+      this.db.pragma("foreign_keys = OFF");
+    }
 
     // Load the sqlite-vec extension
     sqliteVec.load(this.db);
 
     // Detect the database state and run the migration (skipped in read-only mode)
-    try {
-      this.detectAndMigrate(dbPath);
-    } catch {
-      // Read-only mode — schema is already migrated, skip
+    if (!readonly) {
+      try {
+        this.detectAndMigrate(dbPath);
+      } catch {
+        // Migration failed — non-fatal, schema might already be correct
+      }
     }
   }
 

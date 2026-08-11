@@ -51,7 +51,13 @@ export function hookRecall(dbPath: string): void {
       const sessionKey = input.session_id ? input.session_id.slice(0, 16) : undefined;
 
       // Query recent captures from the DB
-      const db = new Database(dbPath, { readonly: true });
+      // Try immutable mode first (no WAL writes needed), fall back to readonly
+      let db: Database.Database;
+      try {
+        db = new Database(dbPath, { readonly: true, immutable: true });
+      } catch {
+        db = new Database(dbPath, { readonly: true });
+      }
 
       // Try with session_key first, then fall back to all captures
       const baseSql = `
