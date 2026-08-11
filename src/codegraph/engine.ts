@@ -340,7 +340,7 @@ export async function indexDirectory(
   dirPath: string,
   repoPath: string,
   teamId: string | null,
-  maxFiles = 500,
+  maxFiles = 10000,
 ): Promise<IndexResult[]> {
   const results: IndexResult[] = [];
   const files: string[] = [];

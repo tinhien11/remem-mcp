@@ -60,16 +60,18 @@ function openDbWithSchema(dbPath: string): Database.Database {
     .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='symbols'")
     .get();
   if (!hasSymbols) {
-    const schemaPath = join(dirname(fileURLToPath(import.meta.url)), "schema.sql");
-    try {
-      db.exec(readFileSync(schemaPath, "utf-8"));
-    } catch {
-      // schema.sql not bundled — try src path for dev
-      const devSchema = join(process.cwd(), "src", "storage", "schema.sql");
+    const distDir = dirname(fileURLToPath(import.meta.url));
+    const candidates = [
+      join(distDir, "storage", "schema.sql"),
+      join(distDir, "schema.sql"),
+      join(process.cwd(), "src", "storage", "schema.sql"),
+    ];
+    for (const p of candidates) {
       try {
-        db.exec(readFileSync(devSchema, "utf-8"));
+        db.exec(readFileSync(p, "utf-8"));
+        break;
       } catch {
-        // Tables may already exist from SQLiteBackend
+        // try next candidate
       }
     }
   }
@@ -190,7 +192,7 @@ async function main(): Promise<void> {
     const path = flags.path ?? flags.p ?? process.cwd();
     const repoPath = flags.repo ?? flags.r ?? path;
     const teamId = flags.team ?? flags.t ?? null;
-    const maxFiles = Number(flags["max-files"] ?? 500);
+    const maxFiles = Number(flags["max-files"] ?? 10000);
     const db = openDbWithSchema(defaultDbPath());
     console.log(`Indexing ${path} ...`);
     const results = await indexDirectory(db, path, repoPath, teamId, maxFiles);
