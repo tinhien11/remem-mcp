@@ -488,46 +488,46 @@ export class SQLiteBackend implements StorageBackend {
       JOIN captures c ON c.id = fts.id
       WHERE captures_fts MATCH ? AND c.deleted_at IS NULL AND c.trust_state != 'rejected'
     `;
-    const params: unknown[] = [ftsQuery];
+      const params: unknown[] = [ftsQuery];
 
-    if (sessionKey) {
-      sql += " AND c.session_key = ?";
-      params.push(sessionKey);
-    }
-    if (filters?.type) {
-      sql += " AND c.type = ?";
-      params.push(filters.type);
-    }
-    if (filters?.agentId) {
-      sql += " AND c.agent_id = ?";
-      params.push(filters.agentId);
-    }
-    if (filters?.teamId) {
-      sql += " AND c.team_id = ?";
-      params.push(filters.teamId);
-    }
-    if (filters?.userId) {
-      sql += " AND c.user_id = ?";
-      params.push(filters.userId);
-    }
-    if (filters?.taskId) {
-      sql += " AND c.task_id = ?";
-      params.push(filters.taskId);
-    }
-    if (filters?.dateFrom) {
-      sql += " AND c.created_at >= ?";
-      params.push(new Date(filters.dateFrom).getTime());
-    }
-    if (filters?.dateTo) {
-      sql += " AND c.created_at <= ?";
-      params.push(new Date(filters.dateTo).getTime());
-    }
+      if (sessionKey) {
+        sql += " AND c.session_key = ?";
+        params.push(sessionKey);
+      }
+      if (filters?.type) {
+        sql += " AND c.type = ?";
+        params.push(filters.type);
+      }
+      if (filters?.agentId) {
+        sql += " AND c.agent_id = ?";
+        params.push(filters.agentId);
+      }
+      if (filters?.teamId) {
+        sql += " AND c.team_id = ?";
+        params.push(filters.teamId);
+      }
+      if (filters?.userId) {
+        sql += " AND c.user_id = ?";
+        params.push(filters.userId);
+      }
+      if (filters?.taskId) {
+        sql += " AND c.task_id = ?";
+        params.push(filters.taskId);
+      }
+      if (filters?.dateFrom) {
+        sql += " AND c.created_at >= ?";
+        params.push(new Date(filters.dateFrom).getTime());
+      }
+      if (filters?.dateTo) {
+        sql += " AND c.created_at <= ?";
+        params.push(new Date(filters.dateTo).getTime());
+      }
 
-    sql += " ORDER BY score LIMIT ?";
-    params.push(limit);
+      sql += " ORDER BY score LIMIT ?";
+      params.push(limit);
 
-    const rows = this.db.prepare(sql).all(...params) as { id: string; score: number }[];
-    return rows.map((r) => ({ id: r.id, score: r.score }));
+      const rows = this.db.prepare(sql).all(...params) as { id: string; score: number }[];
+      return rows.map((r) => ({ id: r.id, score: r.score }));
     } catch (err: unknown) {
       // FTS5 external content tables can get out of sync after schema changes
       // or crashes. Rebuild the index and retry once.

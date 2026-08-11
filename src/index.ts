@@ -109,7 +109,9 @@ async function main(): Promise<void> {
   }
   if (arg === "setup") {
     console.log("tdai-memory-mcp setup\n");
-    console.log("This will register the MCP server, install the skill, hooks, and run a test capture.\n");
+    console.log(
+      "This will register the MCP server, install the skill, hooks, and run a test capture.\n",
+    );
     await installMcpServer();
     console.log("");
     await installSkill();
