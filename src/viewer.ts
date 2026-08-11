@@ -1,4 +1,7 @@
 import { createServer as createHttpServer, type Server } from "node:http";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import Database from "better-sqlite3";
 
 /** Start a local web viewer for the memory database. */
@@ -283,6 +286,84 @@ export function startViewer(dbPath: string, port: number): Server {
       return;
     }
 
+    if (url.pathname === "/api/token-stats") {
+      try {
+        const logPath =
+          process.env.TDAI_HOOK_LOG_PATH ??
+          join(homedir(), ".local", "share", "tdai-memory-mcp", "session.log");
+
+        const captures = db
+          .prepare("SELECT content FROM captures ORDER BY created_at ASC")
+          .all() as { content: string }[];
+        const sessions = db
+          .prepare("SELECT COUNT(DISTINCT session_key) as count FROM captures")
+          .get() as { count: number };
+
+        // Estimate stored tokens (rough: 1 token ~ 4 chars)
+        const totalStored = captures.reduce(
+          (sum, c) => sum + Math.ceil((c.content?.length ?? 0) / 4),
+          0,
+        );
+
+        let recallCount = 0;
+        let totalInjected = 0;
+        let captureCount = 0;
+
+        if (existsSync(logPath)) {
+          const log = readFileSync(logPath, "utf-8");
+          const lines = log.split("\n");
+          let inBlock = false;
+          let blockChars = 0;
+
+          for (const line of lines) {
+            if (line.includes("SessionStart: loaded")) {
+              recallCount++;
+              inBlock = true;
+              blockChars = 0;
+            } else if (line.includes("SessionStart: no recent memory")) {
+              inBlock = false;
+            } else if (line.includes("SessionEnd: captured")) {
+              captureCount++;
+              inBlock = false;
+            } else if (inBlock && line.startsWith("[2026")) {
+              totalInjected += Math.ceil(blockChars / 4);
+              inBlock = false;
+            } else if (inBlock) {
+              blockChars += line.length + 1;
+            }
+          }
+        }
+
+        const avgInjection =
+          recallCount > 0 ? Math.round(totalInjected / recallCount) : 0;
+
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            stored: totalStored,
+            recalls: recallCount,
+            injected: totalInjected,
+            avgInjection,
+            autoCaptured: captureCount,
+            sessions: sessions.count,
+          }),
+        );
+      } catch {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            stored: 0,
+            recalls: 0,
+            injected: 0,
+            avgInjection: 0,
+            autoCaptured: 0,
+            sessions: 0,
+          }),
+        );
+      }
+      return;
+    }
+
     res.writeHead(404, { "Content-Type": "text/plain" });
     res.end("Not found");
   });
@@ -311,7 +392,8 @@ function renderPage(): string {
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  :root {
+  :root,
+  [data-theme="dark"] {
     --bg: #0a0a0b;
     --surface: #111113;
     --surface-hover: #161618;
@@ -326,7 +408,28 @@ function renderPage(): string {
     --rose: #fb7185;
     --amber: #fbbf24;
     --sky: #38bdf8;
+    --btn-text: #0a0a0b;
+    --modal-scrim: rgba(0,0,0,0.6);
     --bezier: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  [data-theme="light"] {
+    --bg: #f4f1ec;
+    --surface: #ebe7e0;
+    --surface-hover: #e0dbd3;
+    --hairline: rgba(60,50,40,0.10);
+    --hairline-strong: rgba(60,50,40,0.18);
+    --text: rgba(40,35,30,0.88);
+    --text-dim: rgba(60,50,40,0.55);
+    --text-faint: rgba(60,50,40,0.32);
+    --accent: #6d28d9;
+    --accent-dim: rgba(109,40,217,0.08);
+    --emerald: #047857;
+    --rose: #be123c;
+    --amber: #b45309;
+    --sky: #0369a1;
+    --btn-text: #f4f1ec;
+    --modal-scrim: rgba(40,35,30,0.35);
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -400,7 +503,7 @@ function renderPage(): string {
   .nav-btn {
     padding: 0.5rem 1rem;
     background: var(--text);
-    color: #0a0a0b;
+    color: var(--btn-text);
     border: none;
     border-radius: 8px;
     font-size: 0.8125rem;
@@ -412,6 +515,69 @@ function renderPage(): string {
   }
   .nav-btn:hover { opacity: 0.9; }
   .nav-btn:active { transform: scale(0.97); }
+
+  .theme-toggle {
+    width: 34px; height: 34px;
+    background: transparent;
+    border: 1px solid var(--hairline);
+    border-radius: 8px;
+    color: var(--text-dim);
+    font-size: 1rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s var(--bezier);
+    flex-shrink: 0;
+  }
+  .theme-toggle:hover {
+    border-color: var(--hairline-strong);
+    color: var(--text);
+  }
+  .theme-toggle:active { transform: scale(0.95); }
+
+  /* ─── Global stats bar ─── */
+  .stats-bar {
+    background: var(--surface);
+    padding: 0.625rem 1.5rem;
+    display: flex;
+    gap: 1.5rem;
+    align-items: center;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .stats-bar-group {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+  }
+  .stats-bar-divider {
+    width: 1px;
+    height: 18px;
+    background: var(--hairline);
+    flex-shrink: 0;
+  }
+  .stats-bar-label {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-faint);
+  }
+  .stats-bar-item {
+    display: flex;
+    gap: 0.3rem;
+    align-items: baseline;
+    font-size: 0.8125rem;
+  }
+  .stats-bar-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .stats-bar-key {
+    color: var(--text-dim);
+  }
 
   /* ─── Page header ─── */
   .hero {
@@ -534,7 +700,7 @@ function renderPage(): string {
   .filter-btn {
     padding: 0.5rem 1.125rem;
     background: var(--text);
-    color: #0a0a0b;
+    color: var(--btn-text);
     border: none;
     border-radius: 8px;
     font-size: 0.8125rem;
@@ -817,7 +983,7 @@ function renderPage(): string {
     position: fixed;
     inset: 0;
     z-index: 200;
-    background: rgba(0,0,0,0.6);
+    background: var(--modal-scrim);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -969,7 +1135,11 @@ function renderPage(): string {
   </div>
   <input class="nav-search" id="search" placeholder="Search captures..." autocomplete="off" />
   <button class="nav-btn" onclick="doSearch()">Search</button>
+  <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle theme">&#9680;</button>
 </nav>
+
+<!-- ─── Global stats bar ─── -->
+<div class="stats-bar" id="statsBar"></div>
 
 <!-- ─── Memory tab ─── -->
 <div id="tab-memory" class="tab-content">
@@ -1106,6 +1276,54 @@ function renderPage(): string {
         + '<div class="stat-label">' + c.label + '</div>'
         + '</div>';
     }).join('');
+  }
+
+  // ─── Global stats bar ───
+  function fmtTok(n) {
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+    return String(n);
+  }
+  async function loadStatsBar() {
+    try {
+      var [memR, cgR, wikiR, tokR] = await Promise.all([
+        fetch('/api/stats').then(function(r) { return r.json(); }),
+        fetch('/api/codegraph/stats').then(function(r) { return r.json(); }),
+        fetch('/api/wiki/stats').then(function(r) { return r.json(); }),
+        fetch('/api/token-stats').then(function(r) { return r.json(); })
+      ]);
+      var bar = document.getElementById('statsBar');
+      var html = ''
+        + '<div class="stats-bar-group">'
+        +   '<span class="stats-bar-label">Memory</span>'
+        +   '<span class="stats-bar-item"><span class="stats-bar-value">' + memR.total.count + '</span><span class="stats-bar-key">captures</span></span>'
+        +   '<span class="stats-bar-item"><span class="stats-bar-value">' + memR.sessions.count + '</span><span class="stats-bar-key">sessions</span></span>'
+        + '</div>'
+        + '<div class="stats-bar-divider"></div>'
+        + '<div class="stats-bar-group">'
+        +   '<span class="stats-bar-label">CodeGraph</span>'
+        +   '<span class="stats-bar-item"><span class="stats-bar-value">' + cgR.symbols.count + '</span><span class="stats-bar-key">symbols</span></span>'
+        +   '<span class="stats-bar-item"><span class="stats-bar-value">' + cgR.calls.count + '</span><span class="stats-bar-key">calls</span></span>'
+        +   '<span class="stats-bar-item"><span class="stats-bar-value">' + cgR.imports.count + '</span><span class="stats-bar-key">imports</span></span>'
+        + '</div>'
+        + '<div class="stats-bar-divider"></div>'
+        + '<div class="stats-bar-group">'
+        +   '<span class="stats-bar-label">Wiki</span>'
+        +   '<span class="stats-bar-item"><span class="stats-bar-value">' + wikiR.pages.count + '</span><span class="stats-bar-key">pages</span></span>'
+        +   '<span class="stats-bar-item"><span class="stats-bar-value">' + wikiR.links.count + '</span><span class="stats-bar-key">links</span></span>'
+        + '</div>'
+        + '<div class="stats-bar-divider"></div>'
+        + '<div class="stats-bar-group">'
+        +   '<span class="stats-bar-label">Tokens</span>'
+        +   '<span class="stats-bar-item"><span class="stats-bar-value">' + fmtTok(tokR.stored) + '</span><span class="stats-bar-key">stored</span></span>'
+        +   '<span class="stats-bar-item"><span class="stats-bar-value">' + fmtTok(tokR.injected) + '</span><span class="stats-bar-key">injected</span></span>'
+        +   '<span class="stats-bar-item"><span class="stats-bar-value">' + tokR.recalls + '</span><span class="stats-bar-key">recalls</span></span>'
+        +   '<span class="stats-bar-item"><span class="stats-bar-value">' + tokR.autoCaptured + '</span><span class="stats-bar-key">auto-captured</span></span>'
+        + '</div>';
+      bar.innerHTML = html;
+    } catch(e) {
+      document.getElementById('statsBar').innerHTML = '';
+    }
   }
 
   // ─── Tab switching ───
@@ -1370,13 +1588,44 @@ function renderPage(): string {
     );
   }
 
+  // ─── Theme ───
+  function getStoredTheme() {
+    try { return localStorage.getItem('tdai-theme'); } catch(e) { return null; }
+  }
+  function setStoredTheme(t) {
+    try { localStorage.setItem('tdai-theme', t); } catch(e) {}
+  }
+  function applyTheme(t) {
+    document.documentElement.setAttribute('data-theme', t);
+    var btn = document.getElementById('themeToggle');
+    if (btn) btn.innerHTML = t === 'dark' ? '&#9728;' : '&#9680;';
+  }
+  function toggleTheme() {
+    var cur = document.documentElement.getAttribute('data-theme') || 'dark';
+    applyTheme(cur === 'dark' ? 'light' : 'dark');
+  }
+  (function() {
+    var stored = getStoredTheme();
+    if (stored) {
+      applyTheme(stored);
+    } else {
+      var prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+      applyTheme(prefersLight ? 'light' : 'dark');
+    }
+  })();
+
   // ─── Init ───
   document.getElementById('search').addEventListener('keydown', function(e) {
     if (e.key === 'Enter') doSearch();
   });
 
+  loadStatsBar();
   loadStats();
   loadCaptures();
+  loadCgStats();
+  loadSymbols();
+  loadWikiStats();
+  loadWiki();
 </script>
 </body>
 </html>`;
