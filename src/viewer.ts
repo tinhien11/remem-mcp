@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
+import { impactAnalysis } from "./codegraph/engine.js";
 
 /** Start a local web viewer for the memory database. */
 export function startViewer(dbPath: string, port: number): Server {
@@ -244,6 +245,48 @@ export function startViewer(dbPath: string, port: number): Server {
       } catch {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify([]));
+      }
+      return;
+    }
+
+    // CodeGraph: impact analysis
+    if (url.pathname === "/api/codegraph/impact") {
+      const symbolId = url.searchParams.get("id");
+      if (!symbolId) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing 'id'" }));
+        return;
+      }
+      try {
+        const result = impactAnalysis(db, symbolId, { maxDepth: 5 });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            root: {
+              id: result.rootSymbol.id,
+              name: result.rootSymbol.name,
+              kind: result.rootSymbol.kind,
+              file_path: result.rootSymbol.filePath,
+              line: result.rootSymbol.lineStart,
+              language: result.rootSymbol.language,
+            },
+            affected: result.affected.map(function (a) {
+              return {
+                id: a.symbol.id,
+                name: a.symbol.name,
+                kind: a.symbol.kind,
+                file_path: a.symbol.filePath,
+                line: a.symbol.lineStart,
+                language: a.symbol.language,
+                depth: a.depth,
+                path: a.path,
+              };
+            }),
+          }),
+        );
+      } catch (e) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(e) }));
       }
       return;
     }
@@ -880,16 +923,6 @@ function renderPage(): string {
   }
   .capture-content.expanded { max-height: none; }
 
-  .capture-content-fade {
-    position: absolute;
-    bottom: 0; left: 0; right: 0;
-    height: 40px;
-    background: linear-gradient(transparent, var(--surface));
-    pointer-events: none;
-    transition: opacity 0.2s var(--bezier);
-  }
-  .capture-content.expanded + .capture-content-fade { opacity: 0; }
-
   .capture-tags {
     display: flex;
     gap: 0.375rem;
@@ -1098,6 +1131,88 @@ function renderPage(): string {
   .symbol-detail .row { color: var(--text-dim); }
   .symbol-detail .row b { color: var(--text); font-weight: 600; }
   .symbol-detail .none { color: var(--text-faint); }
+
+  .impact-btn {
+    display: block;
+    width: 100%;
+    padding: 0.625rem 1rem;
+    margin-top: 1rem;
+    background: var(--accent-dim);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    color: var(--accent);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s var(--bezier);
+  }
+  .impact-btn:hover { background: var(--accent); color: var(--btn-text); }
+
+  .impact-tree {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+    line-height: 1.8;
+    margin-top: 0.75rem;
+    max-height: 400px;
+    overflow-y: auto;
+  }
+  .impact-tree-root {
+    padding: 0.5rem 0.75rem;
+    background: var(--accent-dim);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    margin-bottom: 0.75rem;
+    color: var(--text);
+    font-weight: 600;
+  }
+  .impact-tree-root small {
+    color: var(--accent);
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    display: block;
+    margin-bottom: 0.2rem;
+  }
+  .impact-node {
+    padding: 0.25rem 0;
+    padding-left: calc(var(--depth) * 1.25rem + 0.5rem);
+    color: var(--text-dim);
+    position: relative;
+    border-left: 1px solid var(--hairline);
+    margin-left: 0.5rem;
+  }
+  .impact-node::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.9rem;
+    width: 0.75rem;
+    height: 1px;
+    background: var(--hairline);
+  }
+  .impact-node:last-child { border-left-color: transparent; }
+  .impact-node b { color: var(--text); font-weight: 600; }
+  .impact-node .impact-depth {
+    display: inline-block;
+    min-width: 1.5rem;
+    color: var(--text-faint);
+    font-size: 0.6875rem;
+  }
+  .impact-node .impact-file {
+    color: var(--text-faint);
+    font-size: 0.6875rem;
+  }
+  .impact-summary {
+    padding: 0.5rem 0.75rem;
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 8px;
+    margin-bottom: 0.75rem;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+  }
+  .impact-summary b { color: var(--accent); font-weight: 600; }
 
   /* ─── Reduced motion ─── */
   @media (prefers-reduced-motion: reduce) {
@@ -1400,12 +1515,59 @@ function renderPage(): string {
             ? '<div class="row">' + c.kind + ' <b>' + escapeHtml(c.name) + '</b> ' + escapeHtml(c.file_path) + ':' + c.line + '</div>'
             : '<div class="row"><b>' + escapeHtml(c.callee_name) + '</b> <span class="none">unresolved</span></div>';
         }).join('') : '<div class="none">None</div>')
-      + '</div>';
+      + '</div>'
+      + '<button class="impact-btn" onclick="loadImpact(\\'' + id + '\\')">Show Impact Analysis</button>';
     document.getElementById('modalTitle').textContent = 'Symbol Details';
     document.getElementById('modalBody').innerHTML = html;
     document.getElementById('modalConfirm').style.display = 'none';
     document.getElementById('modalOverlay').classList.add('active');
   }
+
+  async function loadImpact(id) {
+    var r = await fetch('/api/codegraph/impact?id=' + id);
+    var data = await r.json();
+    if (data.error) {
+      document.getElementById('modalBody').innerHTML = '<div class="symbol-detail"><div class="none">' + escapeHtml(data.error) + '</div></div>';
+      return;
+    }
+    var root = data.root;
+    var affected = data.affected;
+    var maxDepth = 0;
+    affected.forEach(function(a) { if (a.depth > maxDepth) maxDepth = a.depth; });
+    var fileCount = {};
+    affected.forEach(function(a) { fileCount[a.file_path] = (fileCount[a.file_path] || 0) + 1; });
+    var uniqueFiles = Object.keys(fileCount).length;
+
+    var html = '<div class="symbol-detail">'
+      + '<div class="impact-tree-root">'
+      +   '<small>Root: if you change this</small>'
+      +   escapeHtml(root.kind) + ' <b>' + escapeHtml(root.name) + '</b>'
+      +   '<div class="impact-file">' + escapeHtml(root.file_path) + ':' + root.line + '</div>'
+      + '</div>'
+      + '<div class="impact-summary">'
+      +   '<b>' + affected.length + '</b> symbols affected across <b>' + uniqueFiles + '</b> files, max depth <b>' + maxDepth + '</b>'
+      + '</div>'
+      + '<div class="impact-tree">';
+
+    if (affected.length === 0) {
+      html += '<div class="none">No affected symbols. This symbol has no callers.</div>';
+    } else {
+      affected.forEach(function(a) {
+        html += '<div class="impact-node" style="--depth:' + a.depth + '">'
+          + '<span class="impact-depth">d' + a.depth + '</span>'
+          + a.kind + ' <b>' + escapeHtml(a.name) + '</b> '
+          + '<span class="impact-file">' + escapeHtml(a.file_path) + ':' + a.line + '</span>'
+          + '</div>';
+      });
+    }
+
+    html += '</div></div>'
+      + '<button class="impact-btn" onclick="showSymbolDetails(\\'' + id + '\\')">Back to Details</button>';
+
+    document.getElementById('modalTitle').textContent = 'Impact Analysis';
+    document.getElementById('modalBody').innerHTML = html;
+  }
+  window.loadImpact = loadImpact;
 
   // ─── Wiki ───
   async function loadWikiStats() {
@@ -1489,7 +1651,6 @@ function renderPage(): string {
         + '<span class="capture-date">' + date + '</span>'
         + '</div>'
         + '<div class="capture-content" id="content-' + r.id + '">' + escapeHtml(r.content) + '</div>'
-        + (needsExpand ? '<div class="capture-content-fade" id="fade-' + r.id + '"></div>' : '')
         + (tags.length > 0 ? '<div class="capture-tags">' + tags.map(function(t) {
           return '<span class="tag">' + escapeHtml(t) + '</span>';
         }).join('') + '</div>' : '')
