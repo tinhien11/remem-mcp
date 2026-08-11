@@ -62,7 +62,9 @@ export class SQLiteBackend implements StorageBackend {
     // Pragmas that are safe for both read-write and read-only
     try {
       this.db.pragma("busy_timeout = 5000");
-    } catch { /* read-only */ }
+    } catch {
+      /* read-only */
+    }
     if (!readonly) {
       this.db.pragma("synchronous = NORMAL");
       this.db.pragma("foreign_keys = OFF");

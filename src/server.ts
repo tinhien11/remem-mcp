@@ -1128,7 +1128,7 @@ async function handleCapture(
 
   try {
     await opts.storage.put(entry);
-  } catch (err) {
+  } catch {
     return {
       content: [
         {
