@@ -24,6 +24,7 @@ import {
   searchSymbols,
 } from "./codegraph/engine.js";
 import { loadConfig } from "./config.js";
+import { doctor } from "./doctor.js";
 import { LocalEmbedder } from "./embedding/local.js";
 import { exportData } from "./export.js";
 import {
@@ -133,6 +134,10 @@ async function main(): Promise<void> {
   }
   if (arg === "uninstall-hooks") {
     await uninstallHooks();
+    return;
+  }
+  if (arg === "doctor") {
+    await doctor();
     return;
   }
   if (arg === "export") {

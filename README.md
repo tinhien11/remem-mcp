@@ -30,10 +30,10 @@ npx tdai-memory-mcp setup
 That's it. Your agent now:
 
 - **Remembers** decisions, bugs, learnings — across sessions, automatically
-- **Knows your codebase** — Tree-sitter symbol index, callers/callees, impact analysis
-- **Reads your docs** — markdown wiki indexed and searchable
-- **Auto-captures** — session transcripts saved on exit, zero agent involvement
 - **Auto-recalls** — relevant memory injected before the first message
+- **Auto-captures** — session transcripts saved on exit via hooks (no agent cooperation needed)
+- **Knows your codebase** — Tree-sitter symbol index, callers/callees, impact analysis (opt-in)
+- **Reads your docs** — markdown wiki indexed and searchable (opt-in)
 
 Everything stays in one SQLite file on your machine. No data leaves your computer.
 
@@ -121,7 +121,7 @@ Works with Claude Code, Devin CLI, and Codex CLI.
 | Data location | Local SQLite | In-memory (ephemeral) | Cloud |
 | CodeGraph | Tree-sitter, 9 languages | No | No |
 | Wiki ingest | Yes | No | No |
-| Auto-capture hooks | SessionStart + Stop | No | No |
+| Auto-capture hooks | SessionStart + Stop + SessionEnd | No | No |
 | Team sharing | Commit JSON export | No | Yes (cloud) |
 | Cost | Free | Free | Freemium |
 
@@ -130,9 +130,15 @@ Works with Claude Code, Devin CLI, and Codex CLI.
 ```bash
 # Setup
 npx tdai-memory-mcp setup              # Register MCP server + hooks + test capture
+npx tdai-memory-mcp doctor             # Verify setup is correct
 npx tdai-memory-mcp install-skill      # Optional: install skill file for mid-session recall/capture
 npx tdai-memory-mcp install-hooks      # Wire hooks into agent configs
 npx tdai-memory-mcp uninstall-hooks    # Remove hooks
+
+# By default, only 7 core tools are exposed (recall, capture, search, forget, resolve, handoff, adr).
+# To enable CodeGraph + Wiki + Knowledge tools (17 extra tools), set:
+#   TDAI_ENABLE_ADVANCED=1
+# in your agent's MCP server env config.
 
 # CodeGraph
 npx tdai-memory-mcp index --path src --repo .          # Index code (Tree-sitter, 9 languages)

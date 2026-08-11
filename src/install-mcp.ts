@@ -93,10 +93,24 @@ export async function installMcpServer(): Promise<void> {
   let count = 0;
   for (const target of JSON_TARGETS) {
     // Only register if the config file already exists (agent is installed)
-    // or the agent's directory exists
+    // or the agent's directory exists.
+    // Special case: Cursor stores config in ~/.cursor/mcp.json — create it
+    // if the Cursor app directory exists but mcp.json doesn't.
     const agentDir = dirname(target.path);
     if (!existsSync(agentDir)) {
-      continue;
+      // Check if Cursor app is installed (macOS)
+      if (target.name === "Cursor") {
+        const cursorApp = "/Applications/Cursor.app";
+        const cursorAppHome = join(homedir(), "Library", "Application Support", "Cursor");
+        if (existsSync(cursorApp) || existsSync(cursorAppHome)) {
+          // Cursor is installed — create the config directory and file
+          mkdirSync(agentDir, { recursive: true });
+        } else {
+          continue;
+        }
+      } else {
+        continue;
+      }
     }
 
     if (registerJsonServer(target)) {

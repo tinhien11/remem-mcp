@@ -119,6 +119,9 @@ export function hookRecall(dbPath: string): void {
 
       lines.push("");
       lines.push("Use these memories to inform your work. Call recall() for more details.");
+      lines.push(
+        "After completing non-trivial work, call capture() to save a 1-3 sentence summary.",
+      );
 
       const context = lines.join("\n");
 
@@ -178,20 +181,29 @@ export function hookStop(dbPath?: string): void {
       return;
     }
 
-    // Auto-capture on every fire (Devin CLI may only fire once).
+    // Auto-capture the transcript directly — don't rely on the agent to call handoff.
+    // Claude Code provides transcript_path in stdin (available immediately).
     // Devin CLI writes transcript AFTER Stop hook fires, so we fork a
     // background process that waits for the transcript file to appear.
     if (dbPath && input.session_id) {
       const sid = input.session_id;
       const tpath = input.transcript_path ?? null;
-      const scriptPath = process.argv[1];
-      const child = spawn(
-        process.execPath,
-        [scriptPath, "--wait-and-capture", dbPath, sid, tpath ?? ""],
-        { detached: true, stdio: "ignore" },
-      );
-      child.unref();
-      logToFile(`Stop: spawned background capture for session ${sid}`);
+
+      if (tpath && existsSync(tpath)) {
+        // Claude Code: transcript is already available — capture now
+        const capId = captureSessionTranscript(dbPath, sid, tpath);
+        logToFile(`Stop: direct capture for session ${sid}, id=${capId ?? "skipped"}`);
+      } else {
+        // Devin CLI: transcript not yet written — spawn background waiter
+        const scriptPath = process.argv[1];
+        const child = spawn(
+          process.execPath,
+          [scriptPath, "--wait-and-capture", dbPath, sid, tpath ?? ""],
+          { detached: true, stdio: "ignore" },
+        );
+        child.unref();
+        logToFile(`Stop: spawned background capture for session ${sid}`);
+      }
     }
 
     // Second+ fire (stop_hook_active): agent already got the reminder, let it stop.
@@ -200,13 +212,13 @@ export function hookStop(dbPath?: string): void {
       return;
     }
 
-    // First fire: send the handoff reminder.
+    // First fire: send a brief reminder (capture already happened above).
     const reminder =
-      "Before you stop, call the handoff tool to save context for the next session. " +
-      "Include: task, status, progress, decisions, files, and next_steps. " +
-      "Skip handoff only if the task was trivial.";
+      "Session transcript auto-captured. If you made important decisions or " +
+      "found non-obvious solutions, call capture() to save a concise summary. " +
+      "Skip if the task was trivial.";
 
-    logToFile("Stop: handoff reminder sent to agent");
+    logToFile("Stop: reminder sent to agent");
 
     const output = {
       hookSpecificOutput: {

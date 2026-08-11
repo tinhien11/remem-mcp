@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -13,9 +14,21 @@ import { dirname, join } from "node:path";
  * - SessionEnd: runs `tdai-memory-mcp hook-session-end` → silently captures session summary to memory DB
  */
 
-/** The npx command to run the hook handler. */
+/**
+ * Resolve the best command to invoke tdai-memory-mcp hooks.
+ * If the binary is globally installed, use it directly (fast, no npx overhead).
+ * Fall back to npx --prefer-offline (uses cache, avoids re-download).
+ */
 function hookCommand(subcommand: string): string {
-  return `npx -y tdai-memory-mcp ${subcommand}`;
+  try {
+    const binPath = execFileSync("which", ["tdai-memory-mcp"], { encoding: "utf-8" }).trim();
+    if (binPath && existsSync(binPath)) {
+      return `${binPath} ${subcommand}`;
+    }
+  } catch {
+    // Binary not found — fall back to npx
+  }
+  return `npx --prefer-offline -y tdai-memory-mcp ${subcommand}`;
 }
 
 /** Hooks configuration that gets injected into agent config files. */
