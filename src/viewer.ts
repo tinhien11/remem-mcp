@@ -306,7 +306,7 @@ function renderPage(): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>tdai-memory — Memory Viewer</title>
+<title>tdai-memory Memory Viewer</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -509,13 +509,6 @@ function renderPage(): string {
     letter-spacing: 0.2em;
     color: var(--text-dim);
     margin-bottom: 1.5rem;
-  }
-
-  .hero-eyebrow-dot {
-    width: 6px; height: 6px;
-    border-radius: 50%;
-    background: var(--emerald);
-    box-shadow: 0 0 8px var(--emerald);
   }
 
   .hero h1 {
@@ -1141,11 +1134,10 @@ function renderPage(): string {
 <!-- ─── Hero ─── -->
 <section class="hero">
   <div class="hero-eyebrow">
-    <span class="hero-eyebrow-dot"></span>
     Memory Database
   </div>
   <h1>Long-term memory<br>for coding agents.</h1>
-  <p class="hero-sub">Every decision, learning, and error captured across sessions — searchable, persistent, and contextual.</p>
+  <p class="hero-sub">Decisions, learnings, and errors captured across sessions. Searchable, persistent, contextual.</p>
 
   <div class="stats-grid" id="statsGrid"></div>
 </section>
@@ -1172,12 +1164,8 @@ function renderPage(): string {
 <!-- ─── CodeGraph tab ─── -->
 <div id="tab-codegraph" class="tab-content" style="display:none">
   <section class="hero">
-    <div class="hero-eyebrow">
-      <span class="hero-eyebrow-dot"></span>
-      Code Symbol Index
-    </div>
     <h1>CodeGraph<br>Tree-sitter powered.</h1>
-    <p class="hero-sub">Functions, classes, methods, and call relationships — indexed from 9 languages, searchable and traceable.</p>
+    <p class="hero-sub">Symbols and call relationships from 9 languages. Click any symbol for callers and callees.</p>
     <div class="stats-grid" id="cgStatsGrid"></div>
   </section>
   <div class="filter-bar">
@@ -1190,12 +1178,8 @@ function renderPage(): string {
 <!-- ─── Wiki tab ─── -->
 <div id="tab-wiki" class="tab-content" style="display:none">
   <section class="hero">
-    <div class="hero-eyebrow">
-      <span class="hero-eyebrow-dot"></span>
-      Documentation Index
-    </div>
     <h1>Wiki<br>Markdown knowledge graph.</h1>
-    <p class="hero-sub">Pages, headings, frontmatter, and links — indexed from your docs, searchable and cross-referenced.</p>
+    <p class="hero-sub">Pages, headings, and links from your docs. Searchable and cross-referenced.</p>
     <div class="stats-grid" id="wikiStatsGrid"></div>
   </section>
   <div class="filter-bar">
@@ -1371,9 +1355,9 @@ function renderPage(): string {
     var callees = await r2.json();
     var html = '<div style="font-family:JetBrains Mono,monospace;font-size:0.8rem;line-height:1.6">'
       + '<h4 style="color:var(--accent);margin-bottom:0.5rem">Callers (' + callers.length + ')</h4>'
-      + (callers.length ? callers.map(function(c) { return '<div>' + c.kind + ' <b>' + c.name + '</b> — ' + c.file_path + ':' + c.line + '</div>'; }).join('') : '<div style="color:var(--text-dim)">None</div>')
+      + (callers.length ? callers.map(function(c) { return '<div>' + c.kind + ' <b>' + c.name + '</b>  ' + c.file_path + ':' + c.line + '</div>'; }).join('') : '<div style="color:var(--text-dim)">None</div>')
       + '<h4 style="color:var(--sky);margin:1rem 0 0.5rem">Callees (' + callees.length + ')</h4>'
-      + (callees.length ? callees.map(function(c) { return '<div>' + (c.name ? c.kind + ' <b>' + c.name + '</b> — ' + c.file_path + ':' + c.line : '<b>' + c.callee_name + '</b> — <i style="color:var(--text-dim)">unresolved</i>') + '</div>'; }).join('') : '<div style="color:var(--text-dim)">None</div>')
+      + (callees.length ? callees.map(function(c) { return '<div>' + (c.name ? c.kind + ' <b>' + c.name + '</b>  ' + c.file_path + ':' + c.line : '<b>' + c.callee_name + '</b>  <i style="color:var(--text-dim)">unresolved</i>') + '</div>'; }).join('') : '<div style="color:var(--text-dim)">None</div>')
       + '</div>';
     document.getElementById('modalTitle').textContent = 'Symbol Details';
     document.getElementById('modalBody').innerHTML = html;
