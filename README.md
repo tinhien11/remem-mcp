@@ -58,12 +58,6 @@ Restart your agent after `setup`.
 
 Memory, CodeGraph, and Wiki share one SQLite file. A `recall` call returns matching captures, code symbols, and wiki pages in one response.
 
-![Memory tab](docs/screenshots/showcase-3in1-memory.png)
-
-![CodeGraph tab](docs/screenshots/showcase-3in1-codegraph.png)
-
-![Wiki tab](docs/screenshots/showcase-3in1-wiki.png)
-
 ### Automatic recall and capture via hooks
 
 Lifecycle hooks run memory operations without agent involvement:
@@ -71,8 +65,6 @@ Lifecycle hooks run memory operations without agent involvement:
 - **SessionStart** — injects recent memories into agent context before the first message
 - **Stop** — prompts the agent to save a handoff packet, then auto-captures the session transcript (only keeps the latest snapshot per session)
 - **SessionEnd** — captures the session summary by reading the transcript (Claude Code only; Devin CLI uses Stop for auto-capture)
-
-![Hook system](docs/screenshots/showcase-hook-system.png)
 
 The hook log at `~/.local/share/tdai-memory-mcp/session.log` records every event. Works with Devin CLI and Claude Code.
 
