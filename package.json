@@ -1,7 +1,7 @@
 {
   "name": "tdai-memory-mcp",
   "mcpName": "io.github.tinhien11/tdai-memory-mcp",
-  "version": "0.5.16",
+  "version": "0.5.17",
   "description": "Long-term memory for AI coding agents. Memory + CodeGraph + Wiki in one SQLite file. Auto-recall, auto-capture, no API key, no cloud.",
   "type": "module",
   "license": "MIT",

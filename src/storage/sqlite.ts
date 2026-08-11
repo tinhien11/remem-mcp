@@ -481,6 +481,7 @@ export class SQLiteBackend implements StorageBackend {
     if (!ftsQuery) return [];
 
     let sql: string;
+    const params: unknown[] = [ftsQuery];
     try {
       sql = `
       SELECT fts.id as id, bm25(captures_fts) as score
@@ -488,7 +489,6 @@ export class SQLiteBackend implements StorageBackend {
       JOIN captures c ON c.id = fts.id
       WHERE captures_fts MATCH ? AND c.deleted_at IS NULL AND c.trust_state != 'rejected'
     `;
-      const params: unknown[] = [ftsQuery];
 
       if (sessionKey) {
         sql += " AND c.session_key = ?";
