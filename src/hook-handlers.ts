@@ -68,10 +68,22 @@ export function hookRecall(dbPath: string): void {
         created_at: number;
       }[] = [];
 
+      // If TDAI_GLOBAL_SESSION_KEY is set, include global memory first
+      const globalKey = process.env.TDAI_GLOBAL_SESSION_KEY;
+      if (globalKey) {
+        const globalRows = db
+          .prepare(`${baseSql} AND session_key = ? ORDER BY created_at DESC LIMIT 5`)
+          .all(globalKey) as typeof rows;
+        rows.push(...globalRows);
+      }
+
       if (sessionKey) {
-        rows = db
+        const sessionRows = db
           .prepare(`${baseSql} AND session_key = ? ORDER BY created_at DESC LIMIT 10`)
           .all(sessionKey) as typeof rows;
+        // Dedup by id
+        const seen = new Set(rows.map((r) => r.id));
+        rows.push(...sessionRows.filter((r) => !seen.has(r.id)));
       }
 
       // If no results with session_key, query all captures

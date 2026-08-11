@@ -44,10 +44,15 @@ import {
 
 /** Default session key: hash of the current working directory. */
 function defaultSessionKey(): string {
-  // TDAI_SESSION_KEY overrides the default hash(cwd) — use for global memory across projects
+  // TDAI_SESSION_KEY overrides the default hash(cwd) — use for single global session
   if (process.env.TDAI_SESSION_KEY) return process.env.TDAI_SESSION_KEY;
   const cwd = process.cwd();
   return createHash("sha256").update(cwd).digest("hex").slice(0, 16);
+}
+
+/** Global session key for cross-project memory (rules, learnings). */
+function globalSessionKey(): string | null {
+  return process.env.TDAI_GLOBAL_SESSION_KEY ?? null;
 }
 
 /** Detect the agent ID from environment variables. */
@@ -920,13 +925,41 @@ async function handleRecall(
     }
   }
 
-  const results = await opts.storage.search(query, queryEmbedding, {
-    sessionKey,
-    limit,
-    offset,
-    mode,
-    filters: { teamId, userId, taskId, agentId },
-  });
+  // If TDAI_GLOBAL_SESSION_KEY is set and session_key wasn't explicitly provided,
+  // search both global and project session keys, global first.
+  const globalKey = globalSessionKey();
+  const useGlobalFallback = globalKey && !args.session_key && globalKey !== sessionKey;
+
+  let results: SearchResult[];
+  if (useGlobalFallback) {
+    // Search global memory first (rules, learnings, cross-project decisions)
+    const globalResults = await opts.storage.search(query, queryEmbedding, {
+      sessionKey: globalKey,
+      limit: Math.ceil(limit / 2),
+      offset: 0,
+      mode,
+      filters: { teamId, userId, taskId, agentId },
+    });
+    // Then search project memory
+    const projectResults = await opts.storage.search(query, queryEmbedding, {
+      sessionKey,
+      limit: limit - globalResults.length,
+      offset: 0,
+      mode,
+      filters: { teamId, userId, taskId, agentId },
+    });
+    // Merge: global first, then project (dedup by id)
+    const seen = new Set(globalResults.map((r) => r.id));
+    results = [...globalResults, ...projectResults.filter((r) => !seen.has(r.id))];
+  } else {
+    results = await opts.storage.search(query, queryEmbedding, {
+      sessionKey,
+      limit,
+      offset,
+      mode,
+      filters: { teamId, userId, taskId, agentId },
+    });
+  }
 
   let text = formatResults(results);
 

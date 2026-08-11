@@ -455,9 +455,9 @@ If hooks are installed (`npx tdai-memory-mcp install-hooks`), memory works autom
 
 You can still call `recall`, `capture`, `search`, `forget`, `resolve`, `handoff`, and `adr` manually at any time.
 
-## Global memory (all projects share one memory)
+## Global + project memory (hybrid mode)
 
-By default, each project gets its own session key (`hash(cwd)`). To share memory across all projects, set the `TDAI_SESSION_KEY` environment variable in your MCP config:
+By default, each project gets its own session key (`hash(cwd)`). To have both global memory (cross-project rules, learnings) AND project-specific memory, set `TDAI_GLOBAL_SESSION_KEY` in your MCP config:
 
 ```json
 {
@@ -466,14 +466,28 @@ By default, each project gets its own session key (`hash(cwd)`). To share memory
       "command": "npx",
       "args": ["-y", "tdai-memory-mcp"],
       "env": {
-        "TDAI_SESSION_KEY": "global"
+        "TDAI_GLOBAL_SESSION_KEY": "global"
       }
     }
   }
 }
 ```
 
-When `TDAI_SESSION_KEY` is set, all captures and recalls use that key regardless of the working directory. This is useful when you want the agent to remember decisions and learnings from all projects in one shared memory.
+When `TDAI_GLOBAL_SESSION_KEY` is set, `recall` searches both:
+1. **Global memory** (session key = `"global"`) — cross-project rules, learnings, decisions
+2. **Project memory** (session key = `hash(cwd)`) — project-specific captures
+
+Global results appear first, then project results. Captures go to the project session by default. To capture to global, pass `session_key: "global"` explicitly.
+
+### Single global mode (no project separation)
+
+If you want ALL memory in one pool (no project separation), use `TDAI_SESSION_KEY` instead:
+
+```json
+"env": { "TDAI_SESSION_KEY": "global" }
+```
+
+This forces all captures and recalls to use the same session key, ignoring the working directory.
 
 ## Rules
 
