@@ -6,7 +6,7 @@ Inherits the L0-L3 layering, RRF fusion, and pluggable storage factory from [Ten
 
 ## Features
 
-- **14 MCP tools** — `recall`, `capture`, `search`, `forget`, `resolve`, `handoff`, `adr`, `knowledge_create/get/list/delete`, `skill_get/list/search`
+- **24 MCP tools** — `recall`, `capture`, `search`, `forget`, `resolve`, `handoff`, `adr`, `knowledge_create/get/list/delete`, `skill_get/list/search`, `codegraph_index/search/callers/callees/impact/list`, `wiki_ingest/search/get/outdated`
 - **Hybrid search** — BM25 (FTS5) + vector (sqlite-vec) fused via Reciprocal Rank Fusion in one SQL query
 - **L0-L3 layering** — L0 raw captures (always), L1 atoms, L2 scenarios, L3 persona (LLM-optional)
 - **Local embeddings** — ONNX model, no API call, no network
@@ -20,7 +20,10 @@ Inherits the L0-L3 layering, RRF fusion, and pluggable storage factory from [Ten
 - **Trust states** — every capture has a `trust_state`: `candidate` (default), `verified`, `stale`, or `rejected`. Search results rank `verified` above `candidate` above `stale`. Rejected captures are excluded from search and recall.
 - **Rejected-value tombstone** — when you reject a capture with a reason, the content hash is tombstoned. Re-capturing the same content is blocked unless `override_rejection: true` is set.
 - **Conflict detection** — `capture` checks for similar existing captures in the same session via vector similarity. If conflicts are found, the response lists them. Call `resolve` to mark a winner and supersede the loser.
-- **226 tests** — unit + integration + E2E with real MCP server + 16 negative evaluation tests for correction mechanisms
+- **CodeGraph** — Tree-sitter-powered code symbol index. Extracts functions, classes, methods, imports, and call relationships from TypeScript, JavaScript, Python, Go, Rust, Java, C, C++, and C#. Search symbols, find callers/callees, and run impact analysis to see what code is affected by a change. `recall` augments results with matching code symbols. `handoff` includes symbols for touched files.
+- **Wiki** — Markdown documentation index with frontmatter, heading, and link extraction. Parses `[[wikilinks]]` and `[text](url)` links to build a page graph. Search docs by content, get pages with backlinks, and detect outdated pages. `recall` augments results with matching wiki pages.
+- **Git post-commit hook** — `tdai-memory-mcp hook-post-commit` auto-indexes changed code files into the CodeGraph after each commit.
+- **258 tests** — unit + integration + E2E with real MCP server + 16 CodeGraph tests + 16 Wiki tests + 16 negative evaluation tests for correction mechanisms
 
 ## Install
 

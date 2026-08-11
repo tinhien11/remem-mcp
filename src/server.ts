@@ -7,6 +7,15 @@ import {
   ReadResourceRequestSchema,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
+import {
+  findCallees as cgFindCallees,
+  findCallers as cgFindCallers,
+  impactAnalysis as cgImpactAnalysis,
+  indexDirectory as cgIndexDirectory,
+  indexFile as cgIndexFile,
+  listSymbols as cgListSymbols,
+  searchSymbols as cgSearchSymbols,
+} from "./codegraph/engine.js";
 import type { Embedder } from "./embedding/types.js";
 import type { PipelineContext, PipelineStage } from "./pipeline/types.js";
 import { AuditLogger } from "./security/audit.js";
@@ -16,7 +25,6 @@ import type {
   CaptureEntry,
   CaptureMessage,
   CaptureType,
-  ConflictResult,
   DeleteFilter,
   DeleteResult,
   KnowledgeEntry,
@@ -26,6 +34,13 @@ import type {
 } from "./storage/types.js";
 import { formatResults } from "./tools/format.js";
 import { generateId } from "./utils/ulid.js";
+import {
+  getWikiPage as wikiGet,
+  ingestDirectory as wikiIngestDir,
+  ingestFile as wikiIngestFile,
+  findOutdatedPages as wikiOutdated,
+  searchWiki as wikiSearch,
+} from "./wiki/engine.js";
 
 /** Default session key: hash of the current working directory. */
 function defaultSessionKey(): string {
@@ -512,6 +527,206 @@ const TOOLS: Tool[] = [
       required: ["team_id", "agent_id", "query"],
     },
   },
+  // ─── CodeGraph tools ───
+  {
+    name: "codegraph_index",
+    description:
+      "Index a file or directory into the code graph. Extracts symbols (functions, classes, methods), " +
+      "call relationships, and imports. Supports TypeScript, JavaScript, Python, Go, Rust, Java, C, C++, C#. " +
+      "Run this before using codegraph_search, codegraph_callers, codegraph_callees, or codegraph_impact.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description:
+            "The file or directory path to index. For directories, all supported files are indexed recursively.",
+        },
+        repo_path: {
+          type: "string",
+          description:
+            "The root path of the repository. Used to compute relative file paths. Defaults to the path argument.",
+        },
+        team_id: { type: "string", description: "The team ID for isolation." },
+        max_files: {
+          type: "integer",
+          default: 500,
+          maximum: 5000,
+          description: "Maximum number of files to index (for directory mode).",
+        },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    name: "codegraph_search",
+    description:
+      "Search for code symbols by name. Returns matching functions, classes, methods, etc. " +
+      "with file paths and line numbers. Use this to find where a function or class is defined.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "The symbol name or pattern to search for." },
+        kind: {
+          type: "string",
+          description: "Filter by symbol kind (Function, Class, Method, Struct, etc.).",
+        },
+        language: {
+          type: "string",
+          description:
+            "Filter by language (typescript, javascript, python, go, rust, java, c, cpp, csharp).",
+        },
+        team_id: { type: "string", description: "The team ID for isolation." },
+        limit: { type: "integer", default: 20, maximum: 100 },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "codegraph_callers",
+    description:
+      "Find all callers of a symbol — who calls this function? " +
+      "Returns the calling functions with file paths and line numbers. " +
+      "Requires the symbol ID from codegraph_search.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        symbol_id: { type: "string", description: "The symbol ID (from codegraph_search)." },
+        limit: { type: "integer", default: 50, maximum: 200 },
+      },
+      required: ["symbol_id"],
+    },
+  },
+  {
+    name: "codegraph_callees",
+    description:
+      "Find all callees of a symbol — what does this function call? " +
+      "Returns the called functions with file paths and line numbers. " +
+      "Requires the symbol ID from codegraph_search.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        symbol_id: { type: "string", description: "The symbol ID (from codegraph_search)." },
+        limit: { type: "integer", default: 50, maximum: 200 },
+      },
+      required: ["symbol_id"],
+    },
+  },
+  {
+    name: "codegraph_impact",
+    description:
+      "Perform impact analysis: if I change this symbol, what else might be affected? " +
+      "Traverses the call graph upward (callers of callers) to find all potentially impacted code. " +
+      "Requires the symbol ID from codegraph_search.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        symbol_id: { type: "string", description: "The symbol ID (from codegraph_search)." },
+        max_depth: {
+          type: "integer",
+          default: 5,
+          maximum: 20,
+          description: "Maximum traversal depth in the call graph.",
+        },
+      },
+      required: ["symbol_id"],
+    },
+  },
+  {
+    name: "codegraph_list",
+    description:
+      "List all symbols in a file or directory. Returns symbols sorted by line number. " +
+      "Use this to get an overview of what a file contains.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        file_path: {
+          type: "string",
+          description: "The file path (relative to repo root) to list symbols for.",
+        },
+        kind: {
+          type: "string",
+          description: "Filter by symbol kind (Function, Class, Method, etc.).",
+        },
+        team_id: { type: "string", description: "The team ID for isolation." },
+        limit: { type: "integer", default: 100, maximum: 500 },
+      },
+      required: ["file_path"],
+    },
+  },
+  // ─── Wiki tools ───
+  {
+    name: "wiki_ingest",
+    description:
+      "Ingest markdown documentation files into the wiki. Parses frontmatter, headings, " +
+      "[[wikilinks]], and [text](url) links to build a structured page graph. " +
+      "Supports .md and .markdown files.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description:
+            "The file or directory path to ingest. For directories, all .md files are indexed recursively.",
+        },
+        repo_path: {
+          type: "string",
+          description:
+            "The root path for computing relative file paths. Defaults to the path argument.",
+        },
+        team_id: { type: "string", description: "The team ID for isolation." },
+        max_files: {
+          type: "integer",
+          default: 200,
+          maximum: 2000,
+          description: "Maximum number of files to ingest (for directory mode).",
+        },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    name: "wiki_search",
+    description:
+      "Search wiki pages by content. Returns matching pages with title, file path, and a snippet. " +
+      "Use this to find documentation relevant to a topic.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "The search query (FTS5 syntax supported)." },
+        team_id: { type: "string", description: "The team ID for isolation." },
+        limit: { type: "integer", default: 10, maximum: 50 },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "wiki_get",
+    description:
+      "Get a wiki page by ID, including its links and backlinks. " +
+      "Use this to read a specific page and see what it links to and what links to it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        page_id: { type: "string", description: "The page ID (from wiki_search)." },
+      },
+      required: ["page_id"],
+    },
+  },
+  {
+    name: "wiki_outdated",
+    description:
+      "Find wiki pages whose source file has changed since the last ingest. " +
+      "Returns pages that need re-ingesting because the source markdown was modified or deleted.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo_path: { type: "string", description: "The root path to check for source files." },
+        team_id: { type: "string", description: "The team ID for isolation." },
+      },
+      required: ["repo_path"],
+    },
+  },
 ];
 
 /** Create the MCP server with all tools registered. */
@@ -632,6 +847,26 @@ export function createServer(opts: ServerOptions): Server {
         return handleSkillList(args, opts);
       case "skill_search":
         return handleSkillSearch(args, opts);
+      case "codegraph_index":
+        return handleCodegraphIndex(args, opts);
+      case "codegraph_search":
+        return handleCodegraphSearch(args, opts);
+      case "codegraph_callers":
+        return handleCodegraphCallers(args, opts);
+      case "codegraph_callees":
+        return handleCodegraphCallees(args, opts);
+      case "codegraph_impact":
+        return handleCodegraphImpact(args, opts);
+      case "codegraph_list":
+        return handleCodegraphList(args, opts);
+      case "wiki_ingest":
+        return handleWikiIngest(args, opts);
+      case "wiki_search":
+        return handleWikiSearch(args, opts);
+      case "wiki_get":
+        return handleWikiGet(args, opts);
+      case "wiki_outdated":
+        return handleWikiOutdated(args, opts);
       default:
         return {
           content: [{ type: "text", text: `Error: Unknown tool "${name}".` }],
@@ -692,6 +927,35 @@ async function handleRecall(
   });
 
   let text = formatResults(results);
+
+  // Augment with CodeGraph symbols if available
+  try {
+    const db = getDb(opts);
+    const symbols = cgSearchSymbols(db, query, { teamId, limit: 5 });
+    if (symbols.length > 0) {
+      const symLines = symbols.map(
+        (s) => `  ${s.kind} ${s.name}  at  ${s.filePath}:${s.lineStart}`,
+      );
+      text += `\n\n## Code symbols\n${symLines.join("\n")}`;
+    }
+  } catch {
+    // CodeGraph not available (non-SQLite backend)
+  }
+
+  // Augment with Wiki pages if available
+  try {
+    const db = getDb(opts);
+    const wikiResults = wikiSearch(db, query, { teamId, limit: 3 });
+    if (wikiResults.length > 0) {
+      const wikiLines = wikiResults.map(
+        (w) => `  ${w.title}  (${w.sourceFile})  ${w.snippet.slice(0, 80)}`,
+      );
+      text += `\n\n## Wiki pages\n${wikiLines.join("\n")}`;
+    }
+  } catch {
+    // Wiki not available (non-SQLite backend)
+  }
+
   if (vectorDegraded) {
     text = `[note: vector search unavailable, results are keyword-only]\n${text}`;
   }
@@ -1012,7 +1276,7 @@ async function handleForget(
 
   let result: DeleteResult;
   if (reject && id) {
-    result = await opts.storage.reject(id, reason!);
+    result = await opts.storage.reject(id, reason ?? "");
   } else if (id) {
     result = await opts.storage.delete(id);
   } else if (filter) {
@@ -1153,6 +1417,25 @@ async function handleHandoff(
       lines.push(`- ${f}`);
     }
     lines.push("");
+  }
+
+  // Add code symbols for the touched files if CodeGraph is available
+  try {
+    const db = getDb(opts);
+    const allSyms: string[] = [];
+    for (const f of files.slice(0, 10)) {
+      const syms = cgListSymbols(db, f, { teamId, limit: 5 });
+      for (const s of syms) {
+        allSyms.push(`- ${f}:${s.lineStart}  ${s.kind} ${s.name}`);
+      }
+    }
+    if (allSyms.length > 0) {
+      lines.push("## Code symbols");
+      lines.push(...allSyms.slice(0, 20));
+      lines.push("");
+    }
+  } catch {
+    // CodeGraph not available
   }
 
   if (nextSteps.length > 0) {
@@ -1499,4 +1782,354 @@ async function handleSkillSearch(
     (e) => `- ${e.id}  v${e.version}  ${e.name}${e.description ? `  — ${e.description}` : ""}`,
   );
   return { content: [{ type: "text", text: lines.join("\n") }] };
+}
+
+// ─── CodeGraph handlers ───
+
+/** Get the raw database from storage (SQLiteBackend only). */
+function getDb(opts: ServerOptions): import("better-sqlite3").Database {
+  const storage = opts.storage as unknown as {
+    getDatabase?: () => import("better-sqlite3").Database;
+  };
+  if (!storage.getDatabase) {
+    throw new Error("CodeGraph requires SQLite storage backend.");
+  }
+  return storage.getDatabase();
+}
+
+async function handleCodegraphIndex(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  const path = args.path as string;
+  const repoPath = (args.repo_path as string) ?? path;
+  const teamId = (args.team_id as string) ?? null;
+  const maxFiles = (args.max_files as number) ?? 500;
+
+  if (!path) {
+    return { content: [{ type: "text", text: "Error: path is required." }], isError: true };
+  }
+
+  const db = getDb(opts);
+  const { statSync } = await import("node:fs");
+  let stat: ReturnType<typeof statSync>;
+  try {
+    stat = statSync(path);
+  } catch {
+    return { content: [{ type: "text", text: `Error: path not found: ${path}` }], isError: true };
+  }
+
+  let results: import("./codegraph/engine.js").IndexResult[];
+  if (stat.isDirectory()) {
+    results = await cgIndexDirectory(db, path, repoPath, teamId, maxFiles);
+  } else {
+    const result = await cgIndexFile(db, path, repoPath, teamId);
+    results = [result];
+  }
+
+  const indexed = results.filter((r) => !r.skipped);
+  const skipped = results.filter((r) => r.skipped);
+  const totalSymbols = indexed.reduce((s, r) => s + r.symbols, 0);
+  const totalCalls = indexed.reduce((s, r) => s + r.calls, 0);
+  const totalImports = indexed.reduce((s, r) => s + r.imports, 0);
+
+  const lines = [
+    `Indexed ${indexed.length} file(s) (${skipped.length} skipped).`,
+    `Symbols: ${totalSymbols}  Calls: ${totalCalls}  Imports: ${totalImports}`,
+    "",
+    ...indexed
+      .slice(0, 20)
+      .map(
+        (r) =>
+          `  ${r.language.padEnd(12)} ${r.symbols.toString().padStart(3)} sym  ${r.calls.toString().padStart(4)} calls  ${r.file}`,
+      ),
+  ];
+  if (indexed.length > 20) {
+    lines.push(`  ... and ${indexed.length - 20} more files.`);
+  }
+  return { content: [{ type: "text", text: lines.join("\n") }] };
+}
+
+function handleCodegraphSearch(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): { content: Array<{ type: "text"; text: string }>; isError?: boolean } {
+  const query = args.query as string;
+  const kind = args.kind as string | undefined;
+  const language = args.language as string | undefined;
+  const teamId = (args.team_id as string) ?? undefined;
+  const limit = (args.limit as number) ?? 20;
+
+  if (!query) {
+    return { content: [{ type: "text", text: "Error: query is required." }], isError: true };
+  }
+
+  const db = getDb(opts);
+  const symbols = cgSearchSymbols(db, query, { teamId, kind, language, limit });
+
+  if (symbols.length === 0) {
+    return { content: [{ type: "text", text: "No symbols found." }] };
+  }
+
+  const lines = symbols.map(
+    (s) => `${s.id}  ${s.kind.padEnd(10)}  ${s.name}  at  ${s.filePath}:${s.lineStart}`,
+  );
+  return {
+    content: [{ type: "text", text: `Found ${symbols.length} symbol(s):\n${lines.join("\n")}` }],
+  };
+}
+
+function handleCodegraphCallers(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): { content: Array<{ type: "text"; text: string }>; isError?: boolean } {
+  const symbolId = args.symbol_id as string;
+  const limit = (args.limit as number) ?? 50;
+
+  if (!symbolId) {
+    return { content: [{ type: "text", text: "Error: symbol_id is required." }], isError: true };
+  }
+
+  const db = getDb(opts);
+  const callers = cgFindCallers(db, symbolId, { limit });
+
+  if (callers.length === 0) {
+    return { content: [{ type: "text", text: "No callers found." }] };
+  }
+
+  const lines = callers.map(
+    (c) =>
+      `${c.caller.id}  ${c.caller.kind.padEnd(10)}  ${c.caller.name}  calls at  ${c.caller.filePath}:${c.line}`,
+  );
+  return {
+    content: [{ type: "text", text: `Found ${callers.length} caller(s):\n${lines.join("\n")}` }],
+  };
+}
+
+function handleCodegraphCallees(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): { content: Array<{ type: "text"; text: string }>; isError?: boolean } {
+  const symbolId = args.symbol_id as string;
+  const limit = (args.limit as number) ?? 50;
+
+  if (!symbolId) {
+    return { content: [{ type: "text", text: "Error: symbol_id is required." }], isError: true };
+  }
+
+  const db = getDb(opts);
+  const callees = cgFindCallees(db, symbolId, { limit });
+
+  if (callees.length === 0) {
+    return { content: [{ type: "text", text: "No callees found." }] };
+  }
+
+  const lines = callees.map(
+    (c) =>
+      `${c.calleeName}${c.callee ? `  ->  ${c.callee.kind} ${c.callee.name}  at  ${c.callee.filePath}:${c.callee.lineStart}` : "  (unresolved)"}`,
+  );
+  return {
+    content: [{ type: "text", text: `Found ${callees.length} callee(s):\n${lines.join("\n")}` }],
+  };
+}
+
+function handleCodegraphImpact(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): { content: Array<{ type: "text"; text: string }>; isError?: boolean } {
+  const symbolId = args.symbol_id as string;
+  const maxDepth = (args.max_depth as number) ?? 5;
+
+  if (!symbolId) {
+    return { content: [{ type: "text", text: "Error: symbol_id is required." }], isError: true };
+  }
+
+  const db = getDb(opts);
+  let impact: import("./codegraph/engine.js").ImpactResult;
+  try {
+    impact = cgImpactAnalysis(db, symbolId, { maxDepth });
+  } catch (e) {
+    return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+  }
+
+  const lines = [
+    `Root: ${impact.rootSymbol.kind} ${impact.rootSymbol.name}  at  ${impact.rootSymbol.filePath}:${impact.rootSymbol.lineStart}`,
+    `Affected: ${impact.affected.length} symbol(s)`,
+    "",
+    ...impact.affected.map(
+      (a) =>
+        `${"  ".repeat(a.depth)}-> ${a.symbol.kind} ${a.symbol.name}  at  ${a.symbol.filePath}:${a.symbol.lineStart}  (depth ${a.depth})`,
+    ),
+  ];
+  return { content: [{ type: "text", text: lines.join("\n") }] };
+}
+
+function handleCodegraphList(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): { content: Array<{ type: "text"; text: string }>; isError?: boolean } {
+  const filePath = args.file_path as string;
+  const kind = args.kind as string | undefined;
+  const teamId = (args.team_id as string) ?? undefined;
+  const limit = (args.limit as number) ?? 100;
+
+  if (!filePath) {
+    return { content: [{ type: "text", text: "Error: file_path is required." }], isError: true };
+  }
+
+  const db = getDb(opts);
+  const symbols = cgListSymbols(db, filePath, { teamId, kind, limit });
+
+  if (symbols.length === 0) {
+    return { content: [{ type: "text", text: "No symbols found." }] };
+  }
+
+  const lines = symbols.map(
+    (s) => `${s.id}  ${s.kind.padEnd(10)}  L${s.lineStart}-${s.lineEnd}  ${s.name}`,
+  );
+  return {
+    content: [
+      {
+        type: "text",
+        text: `Found ${symbols.length} symbol(s) in ${filePath}:\n${lines.join("\n")}`,
+      },
+    ],
+  };
+}
+
+// ─── Wiki handlers ───
+
+async function handleWikiIngest(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  const path = args.path as string;
+  const repoPath = (args.repo_path as string) ?? path;
+  const teamId = (args.team_id as string) ?? null;
+  const maxFiles = (args.max_files as number) ?? 200;
+
+  if (!path) {
+    return { content: [{ type: "text", text: "Error: path is required." }], isError: true };
+  }
+
+  const db = getDb(opts);
+  const { statSync } = await import("node:fs");
+  let stat: ReturnType<typeof statSync>;
+  try {
+    stat = statSync(path);
+  } catch {
+    return { content: [{ type: "text", text: `Error: path not found: ${path}` }], isError: true };
+  }
+
+  let results: import("./wiki/engine.js").WikiIngestResult[];
+  if (stat.isDirectory()) {
+    results = wikiIngestDir(db, path, repoPath, teamId, maxFiles);
+  } else {
+    const result = wikiIngestFile(db, path, repoPath, teamId);
+    results = [result];
+  }
+
+  const ingested = results.filter((r) => !r.skipped);
+  const skipped = results.filter((r) => r.skipped);
+  const totalPages = ingested.reduce((s, r) => s + r.pages, 0);
+  const totalLinks = ingested.reduce((s, r) => s + r.links, 0);
+
+  const lines = [
+    `Ingested ${totalPages} page(s) from ${ingested.length} file(s) (${skipped.length} skipped).`,
+    `Links: ${totalLinks}`,
+    "",
+    ...ingested.slice(0, 20).map((r) => `  ${r.pages} page  ${r.links} links  ${r.file}`),
+  ];
+  if (ingested.length > 20) {
+    lines.push(`  ... and ${ingested.length - 20} more files.`);
+  }
+  return { content: [{ type: "text", text: lines.join("\n") }] };
+}
+
+function handleWikiSearch(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): { content: Array<{ type: "text"; text: string }>; isError?: boolean } {
+  const query = args.query as string;
+  const teamId = (args.team_id as string) ?? undefined;
+  const limit = (args.limit as number) ?? 10;
+
+  if (!query) {
+    return { content: [{ type: "text", text: "Error: query is required." }], isError: true };
+  }
+
+  const db = getDb(opts);
+  const results = wikiSearch(db, query, { teamId, limit });
+
+  if (results.length === 0) {
+    return { content: [{ type: "text", text: "No pages found." }] };
+  }
+
+  const lines = results.map((r) => `${r.id}  ${r.title}  (${r.sourceFile})\n    ${r.snippet}`);
+  return {
+    content: [{ type: "text", text: `Found ${results.length} page(s):\n${lines.join("\n")}` }],
+  };
+}
+
+function handleWikiGet(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): { content: Array<{ type: "text"; text: string }>; isError?: boolean } {
+  const pageId = args.page_id as string;
+
+  if (!pageId) {
+    return { content: [{ type: "text", text: "Error: page_id is required." }], isError: true };
+  }
+
+  const db = getDb(opts);
+  const result = wikiGet(db, pageId);
+
+  if (!result) {
+    return { content: [{ type: "text", text: "Page not found." }], isError: true };
+  }
+
+  const { page, links, backlinks } = result;
+  const lines = [
+    `Title: ${page.title}`,
+    `Source: ${page.sourceFile}`,
+    `Tags: ${page.tags ?? "(none)"}`,
+    "",
+    page.content.slice(0, 500) + (page.content.length > 500 ? "..." : ""),
+    "",
+    `Links (${links.length}):`,
+    ...links.map(
+      (l) =>
+        `  -> ${l.toTitle}${l.toPageId ? " (resolved)" : " (unresolved)"}  [${l.linkType}]  L${l.line}`,
+    ),
+    "",
+    `Backlinks (${backlinks.length}):`,
+    ...backlinks.map((l) => `  <- ${l.toTitle}  [${l.linkType}]  L${l.line}`),
+  ];
+  return { content: [{ type: "text", text: lines.join("\n") }] };
+}
+
+async function handleWikiOutdated(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  const repoPath = args.repo_path as string;
+  const teamId = (args.team_id as string) ?? undefined;
+
+  if (!repoPath) {
+    return { content: [{ type: "text", text: "Error: repo_path is required." }], isError: true };
+  }
+
+  const db = getDb(opts);
+  const outdated = wikiOutdated(db, repoPath, { teamId });
+
+  if (outdated.length === 0) {
+    return { content: [{ type: "text", text: "All pages are up to date." }] };
+  }
+
+  const lines = outdated.map((o) => `${o.id}  ${o.title}  (${o.sourceFile})  — ${o.reason}`);
+  return {
+    content: [
+      { type: "text", text: `Found ${outdated.length} outdated page(s):\n${lines.join("\n")}` },
+    ],
+  };
 }

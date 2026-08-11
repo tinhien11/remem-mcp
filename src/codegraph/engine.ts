@@ -1,0 +1,690 @@
+/**
+ * CodeGraph engine: parse code, extract symbols, build call graph, impact analysis.
+ *
+ * Uses @kreuzberg/tree-sitter-language-pack for multi-language parsing.
+ * Supports: TypeScript, JavaScript, Python, Go, Rust, Java, C, C++, C#.
+ */
+import { createHash } from "node:crypto";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { extname, join, relative, sep } from "node:path";
+import type { Database } from "better-sqlite3";
+import { generateId } from "../utils/ulid.js";
+
+// Lazy-load the language pack (CommonJS interop)
+let _pack: unknown = null;
+async function getPack(): Promise<Record<string, unknown>> {
+  if (!_pack) {
+    const mod = await import("@kreuzberg/tree-sitter-language-pack");
+    // Handle both ESM default and CJS module.exports
+    _pack = mod.default ?? mod;
+  }
+  return _pack as Record<string, unknown>;
+}
+
+/** Supported languages mapped to file extensions. */
+const EXTENSION_MAP: Record<string, string> = {
+  ".ts": "typescript",
+  ".tsx": "tsx",
+  ".js": "javascript",
+  ".jsx": "javascript",
+  ".mjs": "javascript",
+  ".cjs": "javascript",
+  ".py": "python",
+  ".go": "go",
+  ".rs": "rust",
+  ".java": "java",
+  ".c": "c",
+  ".h": "c",
+  ".cpp": "cpp",
+  ".cc": "cpp",
+  ".cxx": "cpp",
+  ".hpp": "cpp",
+  ".cs": "csharp",
+};
+
+/** Languages we support for symbol extraction. */
+export const SUPPORTED_LANGUAGES = new Set(Object.values(EXTENSION_MAP));
+
+/** Detect language from file extension. Returns null if unsupported. */
+export function detectLanguage(filePath: string): string | null {
+  const ext = extname(filePath).toLowerCase();
+  return EXTENSION_MAP[ext] ?? null;
+}
+
+/** A symbol extracted from code. */
+export interface SymbolInfo {
+  id: string;
+  name: string;
+  kind: string;
+  filePath: string;
+  lineStart: number;
+  lineEnd: number;
+  language: string;
+  signature: string | null;
+  docstring: string | null;
+  parentId: string | null;
+  contentHash: string;
+}
+
+/** A call relationship. */
+export interface CallInfo {
+  callerId: string;
+  calleeName: string;
+  calleeId: string | null;
+  line: number;
+  kind: string;
+}
+
+/** An import relationship. */
+export interface ImportInfo {
+  filePath: string;
+  symbolName: string;
+  sourcePath: string | null;
+  line: number;
+  language: string;
+}
+
+/** Result of indexing a file. */
+export interface IndexResult {
+  file: string;
+  language: string;
+  symbols: number;
+  calls: number;
+  imports: number;
+  skipped: boolean;
+}
+
+/** Impact analysis result. */
+export interface ImpactResult {
+  rootSymbol: SymbolInfo;
+  affected: Array<{ symbol: SymbolInfo; depth: number; path: string[] }>;
+}
+
+/** Parse a file and extract symbols, calls, and imports. */
+export async function parseFile(
+  filePath: string,
+  repoPath: string,
+): Promise<{ symbols: SymbolInfo[]; calls: CallInfo[]; imports: ImportInfo[] } | null> {
+  const language = detectLanguage(filePath);
+  if (!language) return null;
+
+  const pack = await getPack();
+  if (!pack.hasLanguage(language)) return null;
+
+  let source: string;
+  try {
+    source = readFileSync(filePath, "utf-8");
+  } catch {
+    return null;
+  }
+
+  const result = pack.process(source, { language });
+  if (!result) return null;
+
+  const relPath = relative(repoPath, filePath).split(sep).join("/");
+  const symbols: SymbolInfo[] = [];
+  const calls: CallInfo[] = [];
+  const imports: ImportInfo[] = [];
+
+  // Extract symbols from structure
+  const extractSymbols = (
+    items: Array<{
+      kind?: string;
+      name?: string;
+      span?: { startLine?: number; endLine?: number };
+      signature?: string;
+      docComment?: string;
+      children?: Array<{
+        kind?: string;
+        name?: string;
+        span?: { startLine?: number; endLine?: number };
+        signature?: string;
+        docComment?: string;
+      }>;
+    }>,
+    parentId: string | null,
+  ) => {
+    for (const item of items) {
+      if (!item.name) continue;
+      const id = generateId();
+      const lineStart = (item.span?.startLine ?? 0) + 1; // 1-indexed
+      const lineEnd = (item.span?.endLine ?? lineStart) + 1;
+      const _bodyText = source.slice(
+        item.span?.startLine !== undefined
+          ? source.split("\n").slice(0, item.span.startLine).join("\n").length + 1
+          : 0,
+        item.span?.endLine !== undefined
+          ? source
+              .split("\n")
+              .slice(0, item.span.endLine + 1)
+              .join("\n").length
+          : source.length,
+      );
+      symbols.push({
+        id,
+        name: item.name,
+        kind: item.kind ?? "unknown",
+        filePath: relPath,
+        lineStart,
+        lineEnd,
+        language,
+        signature: item.signature ?? null,
+        docstring: item.docComment ?? null,
+        parentId,
+        contentHash: createHash("sha256")
+          .update(item.name + relPath + lineStart)
+          .digest("hex"),
+      });
+
+      // Extract calls within this symbol's body
+      // We do a simple regex-based call extraction for now
+      const callRegex = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g;
+      let match: RegExpExecArray | null;
+      const bodyStartLine = lineStart;
+      const bodyLines = source.split("\n").slice(lineStart - 1, lineEnd);
+      for (let i = 0; i < bodyLines.length; i++) {
+        const line = bodyLines[i];
+        callRegex.lastIndex = 0;
+        match = callRegex.exec(line);
+        while (match !== null) {
+          const calleeName = match[1];
+          // Skip language keywords and the symbol itself
+          const isKeyword =
+            calleeName === item.name ||
+            calleeName === "if" ||
+            calleeName === "for" ||
+            calleeName === "while" ||
+            calleeName === "switch" ||
+            calleeName === "return" ||
+            calleeName === "function" ||
+            calleeName === "def" ||
+            calleeName === "func" ||
+            calleeName === "fn" ||
+            calleeName === "print" ||
+            calleeName === "console";
+          if (!isKeyword) {
+            calls.push({
+              callerId: id,
+              calleeName,
+              calleeId: null,
+              line: bodyStartLine + i,
+              kind: "call",
+            });
+          }
+          match = callRegex.exec(line);
+        }
+      }
+
+      // Recurse into children
+      if (item.children && item.children.length > 0) {
+        extractSymbols(item.children, id);
+      }
+    }
+  };
+
+  extractSymbols(result.structure ?? [], null);
+
+  // Extract imports
+  for (const imp of result.imports ?? []) {
+    imports.push({
+      filePath: relPath,
+      symbolName: imp.items?.join(", ") ?? imp.source ?? "unknown",
+      sourcePath: imp.source ?? null,
+      line: (imp.span?.startLine ?? 0) + 1,
+      language,
+    });
+  }
+
+  return { symbols, calls, imports };
+}
+
+/** Index a single file into the database. */
+export async function indexFile(
+  db: Database,
+  filePath: string,
+  repoPath: string,
+  teamId: string | null,
+): Promise<IndexResult> {
+  const language = detectLanguage(filePath);
+  if (!language) {
+    return { file: filePath, language: "unknown", symbols: 0, calls: 0, imports: 0, skipped: true };
+  }
+
+  const parsed = await parseFile(filePath, repoPath);
+  if (!parsed) {
+    return { file: filePath, language, symbols: 0, calls: 0, imports: 0, skipped: true };
+  }
+
+  const relPath = relative(repoPath, filePath).split(sep).join("/");
+  const now = Date.now();
+
+  // Delete existing symbols for this file
+  const existingIds = db
+    .prepare("SELECT id FROM symbols WHERE file_path = ? AND team_id IS ?")
+    .all(relPath, teamId) as { id: string }[];
+  if (existingIds.length > 0) {
+    const placeholders = existingIds.map(() => "?").join(",");
+    db.prepare(`DELETE FROM calls WHERE caller_id IN (${placeholders})`).run(
+      ...existingIds.map((e) => e.id),
+    );
+    db.prepare("DELETE FROM symbols WHERE file_path = ? AND team_id IS ?").run(relPath, teamId);
+  }
+  db.prepare("DELETE FROM imports WHERE file_path = ? AND team_id IS ?").run(relPath, teamId);
+
+  // Insert symbols
+  const symbolStmt = db.prepare(
+    `INSERT INTO symbols (id, name, kind, file_path, line_start, line_end, language, signature, docstring, parent_id, team_id, repo_path, content_hash, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  for (const s of parsed.symbols) {
+    symbolStmt.run(
+      s.id,
+      s.name,
+      s.kind,
+      s.filePath,
+      s.lineStart,
+      s.lineEnd,
+      s.language,
+      s.signature,
+      s.docstring,
+      s.parentId,
+      teamId,
+      repoPath,
+      s.contentHash,
+      now,
+      now,
+    );
+  }
+
+  // Resolve callee IDs and insert calls
+  const callStmt = db.prepare(
+    `INSERT INTO calls (caller_id, callee_name, callee_id, line, kind, team_id) VALUES (?, ?, ?, ?, ?, ?)`,
+  );
+  for (const c of parsed.calls) {
+    // Try to resolve callee by name within the same repo
+    const callee = db
+      .prepare("SELECT id FROM symbols WHERE name = ? AND team_id IS ? LIMIT 1")
+      .get(c.calleeName, teamId) as { id: string } | undefined;
+    callStmt.run(c.callerId, c.calleeName, callee?.id ?? null, c.line, c.kind, teamId);
+  }
+
+  // Insert imports
+  const importStmt = db.prepare(
+    `INSERT INTO imports (file_path, symbol_name, source_path, line, language, team_id, repo_path) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  );
+  for (const imp of parsed.imports) {
+    importStmt.run(
+      imp.filePath,
+      imp.symbolName,
+      imp.sourcePath,
+      imp.line,
+      imp.language,
+      teamId,
+      repoPath,
+    );
+  }
+
+  return {
+    file: relPath,
+    language,
+    symbols: parsed.symbols.length,
+    calls: parsed.calls.length,
+    imports: parsed.imports.length,
+    skipped: false,
+  };
+}
+
+/** Index a directory recursively. */
+export async function indexDirectory(
+  db: Database,
+  dirPath: string,
+  repoPath: string,
+  teamId: string | null,
+  maxFiles = 500,
+): Promise<IndexResult[]> {
+  const results: IndexResult[] = [];
+  const files: string[] = [];
+
+  const walk = (dir: string) => {
+    if (files.length >= maxFiles) return;
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (files.length >= maxFiles) return;
+      const fullPath = join(dir, entry);
+      let stat: ReturnType<typeof statSync>;
+      try {
+        stat = statSync(fullPath);
+      } catch {
+        continue;
+      }
+      if (stat.isDirectory()) {
+        // Skip common ignore dirs
+        if (
+          entry === "node_modules" ||
+          entry === ".git" ||
+          entry === "dist" ||
+          entry === "build" ||
+          entry === "target" ||
+          entry === "__pycache__" ||
+          entry === ".next" ||
+          entry === "vendor" ||
+          entry === ".venv" ||
+          entry.startsWith(".")
+        )
+          continue;
+        walk(fullPath);
+      } else if (stat.isFile()) {
+        if (detectLanguage(fullPath)) {
+          files.push(fullPath);
+        }
+      }
+    }
+  };
+
+  walk(dirPath);
+
+  for (const file of files) {
+    const result = await indexFile(db, file, repoPath, teamId);
+    results.push(result);
+  }
+
+  // Re-resolve callee IDs now that all symbols are indexed
+  const unresolved = db
+    .prepare("SELECT id, callee_name FROM calls WHERE callee_id IS NULL")
+    .all() as { id: number; callee_name: string }[];
+  if (unresolved.length > 0) {
+    const updateStmt = db.prepare("UPDATE calls SET callee_id = ? WHERE id = ?");
+    for (const u of unresolved) {
+      const callee = db
+        .prepare("SELECT id FROM symbols WHERE name = ? AND team_id IS ? LIMIT 1")
+        .get(u.callee_name, teamId) as { id: string } | undefined;
+      if (callee) {
+        updateStmt.run(callee.id, u.id);
+      }
+    }
+  }
+
+  return results;
+}
+
+/** Search symbols by name or pattern. */
+export function searchSymbols(
+  db: Database,
+  query: string,
+  opts: { teamId?: string; kind?: string; language?: string; limit?: number } = {},
+): SymbolInfo[] {
+  const limit = opts.limit ?? 20;
+  const pattern = `%${query}%`;
+  let sql = "SELECT * FROM symbols WHERE name LIKE ?";
+  const params: unknown[] = [pattern];
+  if (opts.teamId !== undefined) {
+    sql += " AND team_id IS ?";
+    params.push(opts.teamId);
+  }
+  if (opts.kind) {
+    sql += " AND kind = ?";
+    params.push(opts.kind);
+  }
+  if (opts.language) {
+    sql += " AND language = ?";
+    params.push(opts.language);
+  }
+  sql += " LIMIT ?";
+  params.push(limit);
+
+  const rows = db.prepare(sql).all(...params) as Array<{
+    id: string;
+    name: string;
+    kind: string;
+    file_path: string;
+    line_start: number;
+    line_end: number;
+    language: string;
+    signature: string | null;
+    docstring: string | null;
+    parent_id: string | null;
+    content_hash: string;
+  }>;
+
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    kind: r.kind,
+    filePath: r.file_path,
+    lineStart: r.line_start,
+    lineEnd: r.line_end,
+    language: r.language,
+    signature: r.signature,
+    docstring: r.docstring,
+    parentId: r.parent_id,
+    contentHash: r.content_hash,
+  }));
+}
+
+/** Find all callers of a symbol (who calls X?). */
+export function findCallers(
+  db: Database,
+  symbolId: string,
+  opts: { limit?: number } = {},
+): Array<{ caller: SymbolInfo; line: number }> {
+  const limit = opts.limit ?? 50;
+  const rows = db
+    .prepare(
+      `SELECT s.*, c.line as call_line
+       FROM calls c
+       JOIN symbols s ON s.id = c.caller_id
+       WHERE c.callee_id = ? OR c.callee_name = (SELECT name FROM symbols WHERE id = ?)
+       LIMIT ?`,
+    )
+    .all(symbolId, symbolId, limit) as Array<{
+    id: string;
+    name: string;
+    kind: string;
+    file_path: string;
+    line_start: number;
+    line_end: number;
+    language: string;
+    signature: string | null;
+    docstring: string | null;
+    parent_id: string | null;
+    content_hash: string;
+    call_line: number;
+  }>;
+
+  return rows.map((r) => ({
+    caller: {
+      id: r.id,
+      name: r.name,
+      kind: r.kind,
+      filePath: r.file_path,
+      lineStart: r.line_start,
+      lineEnd: r.line_end,
+      language: r.language,
+      signature: r.signature,
+      docstring: r.docstring,
+      parentId: r.parent_id,
+      contentHash: r.content_hash,
+    },
+    line: r.call_line,
+  }));
+}
+
+/** Find all callees of a symbol (X calls whom?). */
+export function findCallees(
+  db: Database,
+  symbolId: string,
+  opts: { limit?: number } = {},
+): Array<{ callee: SymbolInfo | null; calleeName: string; line: number }> {
+  const limit = opts.limit ?? 50;
+  const rows = db
+    .prepare(
+      `SELECT c.callee_name, c.callee_id, c.line,
+              s.id as sid, s.name as sname, s.kind as skind, s.file_path as sfile,
+              s.line_start as sline_start, s.line_end as sline_end, s.language as slang,
+              s.signature as ssig, s.docstring as sdoc, s.parent_id as sparent, s.content_hash as shash
+       FROM calls c
+       LEFT JOIN symbols s ON s.id = c.callee_id
+       WHERE c.caller_id = ?
+       LIMIT ?`,
+    )
+    .all(symbolId, limit) as Array<{
+    callee_name: string;
+    callee_id: string | null;
+    line: number;
+    sid: string | null;
+    sname: string | null;
+    skind: string | null;
+    sfile: string | null;
+    sline_start: number | null;
+    sline_end: number | null;
+    slang: string | null;
+    ssig: string | null;
+    sdoc: string | null;
+    sparent: string | null;
+    shash: string | null;
+  }>;
+
+  return rows.map((r) => ({
+    callee: r.sid
+      ? {
+          id: r.sid,
+          name: r.sname ?? "",
+          kind: r.skind ?? "",
+          filePath: r.sfile ?? "",
+          lineStart: r.sline_start ?? 0,
+          lineEnd: r.sline_end ?? 0,
+          language: r.slang ?? "",
+          signature: r.ssig,
+          docstring: r.sdoc,
+          parentId: r.sparent,
+          contentHash: r.shash ?? "",
+        }
+      : null,
+    calleeName: r.callee_name,
+    line: r.line,
+  }));
+}
+
+/** Impact analysis: BFS from a symbol through the caller chain.
+ *  Returns all symbols that might be affected if the given symbol changes. */
+export function impactAnalysis(
+  db: Database,
+  symbolId: string,
+  opts: { maxDepth?: number } = {},
+): ImpactResult {
+  const maxDepth = opts.maxDepth ?? 5;
+
+  const rootRow = db.prepare("SELECT * FROM symbols WHERE id = ?").get(symbolId) as
+    | {
+        id: string;
+        name: string;
+        kind: string;
+        file_path: string;
+        line_start: number;
+        line_end: number;
+        language: string;
+        signature: string | null;
+        docstring: string | null;
+        parent_id: string | null;
+        content_hash: string;
+      }
+    | undefined;
+
+  if (!rootRow) {
+    throw new Error(`Symbol not found: ${symbolId}`);
+  }
+
+  const root: SymbolInfo = {
+    id: rootRow.id,
+    name: rootRow.name,
+    kind: rootRow.kind,
+    filePath: rootRow.file_path,
+    lineStart: rootRow.line_start,
+    lineEnd: rootRow.line_end,
+    language: rootRow.language,
+    signature: rootRow.signature,
+    docstring: rootRow.docstring,
+    parentId: rootRow.parent_id,
+    contentHash: rootRow.content_hash,
+  };
+
+  const affected: Array<{ symbol: SymbolInfo; depth: number; path: string[] }> = [];
+  const visited = new Set<string>([symbolId]);
+
+  // BFS through callers (who calls X → who calls them → ...)
+  const queue: Array<{ id: string; depth: number; path: string[] }> = [
+    { id: symbolId, depth: 0, path: [root.name] },
+  ];
+
+  while (queue.length > 0) {
+    const item = queue.shift();
+    if (!item) continue;
+    const { id, depth, path } = item;
+    if (depth >= maxDepth) continue;
+
+    const callers = findCallers(db, id, { limit: 100 });
+    for (const { caller } of callers) {
+      if (visited.has(caller.id)) continue;
+      visited.add(caller.id);
+      const newPath = [...path, caller.name];
+      affected.push({ symbol: caller, depth: depth + 1, path: newPath });
+      queue.push({ id: caller.id, depth: depth + 1, path: newPath });
+    }
+  }
+
+  return { rootSymbol: root, affected };
+}
+
+/** List symbols in a file or directory. */
+export function listSymbols(
+  db: Database,
+  filePath: string,
+  opts: { teamId?: string; kind?: string; limit?: number } = {},
+): SymbolInfo[] {
+  const limit = opts.limit ?? 100;
+  let sql = "SELECT * FROM symbols WHERE file_path LIKE ?";
+  const params: unknown[] = [`${filePath}%`];
+  if (opts.teamId !== undefined) {
+    sql += " AND team_id IS ?";
+    params.push(opts.teamId);
+  }
+  if (opts.kind) {
+    sql += " AND kind = ?";
+    params.push(opts.kind);
+  }
+  sql += " ORDER BY line_start LIMIT ?";
+  params.push(limit);
+
+  const rows = db.prepare(sql).all(...params) as Array<{
+    id: string;
+    name: string;
+    kind: string;
+    file_path: string;
+    line_start: number;
+    line_end: number;
+    language: string;
+    signature: string | null;
+    docstring: string | null;
+    parent_id: string | null;
+    content_hash: string;
+  }>;
+
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    kind: r.kind,
+    filePath: r.file_path,
+    lineStart: r.line_start,
+    lineEnd: r.line_end,
+    language: r.language,
+    signature: r.signature,
+    docstring: r.docstring,
+    parentId: r.parent_id,
+    contentHash: r.content_hash,
+  }));
+}

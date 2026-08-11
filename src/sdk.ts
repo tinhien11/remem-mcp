@@ -303,3 +303,32 @@ export class Memory {
     this.storage.close();
   }
 }
+
+export type {
+  CallInfo,
+  ImpactResult,
+  ImportInfo,
+  IndexResult,
+  SymbolInfo,
+} from "./codegraph/engine.js";
+// Re-export CodeGraph engine for programmatic use
+export {
+  detectLanguage,
+  findCallees,
+  findCallers,
+  impactAnalysis,
+  indexDirectory,
+  indexFile,
+  listSymbols,
+  SUPPORTED_LANGUAGES,
+  searchSymbols,
+} from "./codegraph/engine.js";
+export type { IngestResult as WikiIngestResult, WikiLink, WikiPage } from "./wiki/engine.js";
+// Re-export Wiki engine for programmatic use
+export {
+  findOutdatedPages,
+  getWikiPage,
+  ingestDirectory as wikiIngestDirectory,
+  ingestFile as wikiIngestFile,
+  searchWiki,
+} from "./wiki/engine.js";

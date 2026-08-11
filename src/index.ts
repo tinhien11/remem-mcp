@@ -16,7 +16,7 @@ import { skillsCommand } from "./cli/skills.js";
 import { loadConfig } from "./config.js";
 import { LocalEmbedder } from "./embedding/local.js";
 import { exportData } from "./export.js";
-import { hookRecall, hookSessionEnd, hookStop } from "./hook-handlers.js";
+import { hookPostCommit, hookRecall, hookSessionEnd, hookStop } from "./hook-handlers.js";
 import { installHooks, uninstallHooks } from "./hooks.js";
 import { importData } from "./import.js";
 import { installSkill } from "./install-skill.js";
@@ -141,6 +141,10 @@ async function main(): Promise<void> {
     hookSessionEnd(defaultDbPath());
     return;
   }
+  if (arg === "hook-post-commit") {
+    await hookPostCommit(defaultDbPath());
+    return;
+  }
 
   // ─── L1-L3 CLI commands ──────────────────────────────────────
   if (arg === "atoms") {
@@ -192,6 +196,7 @@ Usage:
   tdai-memory-mcp install-skill  Install the agent skill for Devin CLI
   tdai-memory-mcp install-hooks  Install lifecycle hooks (SessionStart, SessionEnd)
   tdai-memory-mcp uninstall-hooks  Remove lifecycle hooks
+  tdai-memory-mcp hook-post-commit  Auto-index changed files (git post-commit hook)
   tdai-memory-mcp export [file]  Export captures to JSON (default: stdout)
   tdai-memory-mcp import <file>  Import captures from JSON
   tdai-memory-mcp stats          Print memory statistics

@@ -29,7 +29,7 @@ describe("Integration: database detection and migration", () => {
     const row = db.prepare("SELECT MAX(version) as version FROM schema_version").get() as
       | { version: number }
       | undefined;
-    expect(row?.version).toBe(5);
+    expect(row?.version).toBe(6);
 
     // All tables must exist.
     const tables = db
@@ -45,6 +45,11 @@ describe("Integration: database detection and migration", () => {
     expect(tableNames).toContain("persona");
     expect(tableNames).toContain("knowledge");
     expect(tableNames).toContain("skills");
+    expect(tableNames).toContain("symbols");
+    expect(tableNames).toContain("calls");
+    expect(tableNames).toContain("imports");
+    expect(tableNames).toContain("wiki_pages");
+    expect(tableNames).toContain("wiki_links");
 
     db.close();
     backend.close();
@@ -109,7 +114,7 @@ describe("Integration: database detection and migration", () => {
     const row = db2.prepare("SELECT MAX(version) as version FROM schema_version").get() as
       | { version: number }
       | undefined;
-    expect(row?.version).toBe(5);
+    expect(row?.version).toBe(6);
 
     // The old data must still be there.
     const oldRow = db2.prepare("SELECT content FROM captures WHERE id = 'old-1'").get() as

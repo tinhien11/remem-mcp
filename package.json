@@ -50,10 +50,12 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
+    "@kreuzberg/tree-sitter-language-pack": "^1.10.9",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "better-sqlite3": "^13.0.3",
     "gpt-tokenizer": "^3.4.0",
     "sqlite-vec": "^0.1.9",
+    "tree-sitter": "^0.25.1",
     "ulid": "^3.0.2"
   },
   "devDependencies": {

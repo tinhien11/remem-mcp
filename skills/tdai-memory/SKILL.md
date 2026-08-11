@@ -4,7 +4,7 @@ description: Long-term memory for coding agents. Automatically recall project co
 user-invocable: false
 ---
 
-You have access to a long-term memory server via MCP. It has 14 tools: `recall`, `capture`, `search`, `forget`, `resolve`, `handoff`, `adr`, `knowledge_create`, `knowledge_get`, `knowledge_list`, `knowledge_delete`, `skill_get`, `skill_list`, and `skill_search`. Use them automatically as described below. Do not ask the user for permission to use memory.
+You have access to a long-term memory server via MCP. It has 24 tools: `recall`, `capture`, `search`, `forget`, `resolve`, `handoff`, `adr`, `knowledge_create`, `knowledge_get`, `knowledge_list`, `knowledge_delete`, `skill_get`, `skill_list`, `skill_search`, `codegraph_index`, `codegraph_search`, `codegraph_callers`, `codegraph_callees`, `codegraph_impact`, `codegraph_list`, `wiki_ingest`, `wiki_search`, `wiki_get`, and `wiki_outdated`. Use them automatically as described below. Do not ask the user for permission to use memory.
 
 ## When to recall
 
@@ -283,6 +283,107 @@ Use `skill_list` to list reusable workflows bound to a team. Use `skill_search` 
 ```
 skill_search({ "team_id": "team-1", "agent_id": "agent-x", "query": "deploy" })
 ```
+
+## CodeGraph
+
+The CodeGraph indexes code symbols (functions, classes, methods) and call relationships from your project. It uses Tree-sitter to parse TypeScript, JavaScript, Python, Go, Rust, Java, C, C++, and C# files.
+
+### Index your code
+
+Call `codegraph_index` at the start of a session to index the project. This extracts symbols, calls, and imports into the memory database.
+
+```
+codegraph_index({ "path": "src", "repo_path": "." })
+```
+
+For a single file:
+
+```
+codegraph_index({ "path": "src/server.ts", "repo_path": "." })
+```
+
+### Search for symbols
+
+Call `codegraph_search` to find where a function or class is defined.
+
+```
+codegraph_search({ "query": "handleCapture" })
+```
+
+### Find callers and callees
+
+After you find a symbol, use `codegraph_callers` to see who calls it, and `codegraph_callees` to see what it calls.
+
+```
+codegraph_callers({ "symbol_id": "<id from codegraph_search>" })
+codegraph_callees({ "symbol_id": "<id from codegraph_search>" })
+```
+
+### Impact analysis
+
+Call `codegraph_impact` before you change a function. It traverses the call graph upward to find all code that may be affected.
+
+```
+codegraph_impact({ "symbol_id": "<id>", "max_depth": 5 })
+```
+
+### List symbols in a file
+
+Call `codegraph_list` to get an overview of what a file contains.
+
+```
+codegraph_list({ "file_path": "src/server.ts" })
+```
+
+### Automatic indexing
+
+The `recall` tool augments its results with matching code symbols. The `handoff` tool includes symbols for files listed in the handoff packet.
+
+To auto-index after each commit, add this to `.git/hooks/post-commit`:
+
+```bash
+npx tdai-memory-mcp hook-post-commit
+```
+
+## Wiki
+
+The Wiki indexes markdown documentation files. It parses frontmatter, headings, `[[wikilinks]]`, and `[text](url)` links to build a page graph.
+
+### Ingest documentation
+
+Call `wiki_ingest` to index markdown files.
+
+```
+wiki_ingest({ "path": "docs", "repo_path": "." })
+```
+
+### Search documentation
+
+Call `wiki_search` to find pages by content.
+
+```
+wiki_search({ "query": "authentication setup" })
+```
+
+### Get a page with links
+
+Call `wiki_get` to read a page and see its links and backlinks.
+
+```
+wiki_get({ "page_id": "<id from wiki_search>" })
+```
+
+### Find outdated pages
+
+Call `wiki_outdated` to find pages whose source file changed since the last ingest.
+
+```
+wiki_outdated({ "repo_path": "." })
+```
+
+### Automatic augmentation
+
+The `recall` tool augments its results with matching wiki pages.
 
 ## Team-shared memory
 

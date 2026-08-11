@@ -27,7 +27,7 @@ import type {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /** Current schema version. */
-const CURRENT_SCHEMA_VERSION = 5;
+const CURRENT_SCHEMA_VERSION = 6;
 
 /**
  * SQLite storage backend.
@@ -36,6 +36,11 @@ const CURRENT_SCHEMA_VERSION = 5;
  */
 export class SQLiteBackend implements StorageBackend {
   private db: Database.Database;
+
+  /** Get the underlying database instance (for CodeGraph/Wiki operations). */
+  getDatabase(): Database.Database {
+    return this.db;
+  }
 
   constructor(dbPath: string) {
     // Make sure the directory exists
@@ -81,6 +86,7 @@ export class SQLiteBackend implements StorageBackend {
         this.migrateV2ToV3();
         this.migrateV3ToV4();
         this.migrateV4ToV5();
+        this.migrateV5ToV6();
         // Now run the full schema to create any remaining tables/triggers/indexes
         this.runSchema();
         this.writeSchemaVersion(CURRENT_SCHEMA_VERSION);
@@ -118,6 +124,13 @@ export class SQLiteBackend implements StorageBackend {
       this.backupDatabase(dbPath);
       this.migrateV4ToV5();
       this.writeSchemaVersion(5);
+    }
+    if (currentVersion < 6) {
+      // Tables are created by runSchema() via CREATE TABLE IF NOT EXISTS.
+      // Run schema to create CodeGraph + Wiki tables.
+      this.runSchema();
+      this.migrateV5ToV6();
+      this.writeSchemaVersion(6);
     }
   }
 
@@ -304,6 +317,13 @@ export class SQLiteBackend implements StorageBackend {
       "CREATE INDEX IF NOT EXISTS idx_captures_rejected_hash ON captures (content_hash) WHERE trust_state = 'rejected'",
     );
     console.error("[tdai-memory] Migrated schema v4 → v5 (trust state + correction)");
+  }
+
+  /** Migrate schema v5 → v6: add CodeGraph + Wiki tables (created by runSchema). */
+  private migrateV5ToV6(): void {
+    // Tables are created by runSchema() which runs CREATE TABLE IF NOT EXISTS.
+    // This migration is a no-op placeholder for version tracking.
+    console.error("[tdai-memory] Migrated schema v5 → v6 (CodeGraph + Wiki tables)");
   }
 
   async put(entry: CaptureEntry): Promise<void> {

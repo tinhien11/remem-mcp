@@ -383,3 +383,98 @@ export function hookSessionEnd(dbPath: string): void {
     }
   });
 }
+
+/**
+ * Post-commit hook: auto-index changed files into the CodeGraph.
+ *
+ * Reads the list of changed files from `git diff-tree` and indexes them
+ * into the memory database. This keeps the code graph up to date without
+ * manual `codegraph_index` calls.
+ *
+ * Usage in .git/hooks/post-commit:
+ *   node /path/to/dist/index.js --hook=post-commit --db-path=/path/to/memory.db
+ */
+export async function hookPostCommit(dbPath: string): Promise<void> {
+  try {
+    const { execSync } = await import("node:child_process");
+    // Get list of changed files in this commit
+    const output = execSync("git diff-tree --no-commit-id --name-only -r HEAD", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const files = output.trim().split("\n").filter(Boolean);
+
+    if (files.length === 0) {
+      logToFile("PostCommit: no changed files");
+      process.stdout.write(JSON.stringify({}));
+      return;
+    }
+
+    // Load schema and CodeGraph engine
+    const { readFileSync } = await import("node:fs");
+    const { join, dirname } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const sqliteVec = await import("sqlite-vec");
+    const { indexFile } = await import("./codegraph/engine.js");
+
+    const db = new Database(dbPath);
+    db.pragma("journal_mode = WAL");
+    sqliteVec.load(db);
+
+    // Ensure schema exists (create tables if missing)
+    const schemaPath = join(dirname(fileURLToPath(import.meta.url)), "schema.sql");
+    try {
+      const schema = readFileSync(schemaPath, "utf-8");
+      db.exec(schema);
+    } catch {
+      // Schema file not found — tables may already exist
+    }
+
+    // Index supported code files
+    const SUPPORTED_EXT = [
+      ".ts",
+      ".tsx",
+      ".js",
+      ".jsx",
+      ".mjs",
+      ".cjs",
+      ".py",
+      ".go",
+      ".rs",
+      ".java",
+      ".c",
+      ".h",
+      ".cpp",
+      ".cc",
+      ".hpp",
+      ".cs",
+    ];
+    let indexed = 0;
+    let skipped = 0;
+    const repoRoot = execSync("git rev-parse --show-toplevel", { encoding: "utf-8" }).trim();
+
+    for (const file of files) {
+      const ext = file.slice(file.lastIndexOf(".")).toLowerCase();
+      if (!SUPPORTED_EXT.includes(ext)) {
+        skipped++;
+        continue;
+      }
+      try {
+        const fullPath = join(repoRoot, file);
+        await indexFile(db, fullPath, repoRoot, null);
+        indexed++;
+      } catch {
+        // Skip on error (file may not exist, parse error, etc.)
+        skipped++;
+      }
+    }
+
+    db.close();
+    logToFile(`PostCommit: indexed ${indexed} file(s), skipped ${skipped}`);
+    process.stdout.write(JSON.stringify({}));
+  } catch (err) {
+    process.stderr.write(`[tdai-memory hook-post-commit] Error: ${err}\n`);
+    logToFile(`PostCommit: error - ${err}`);
+    process.stdout.write(JSON.stringify({}));
+  }
+}
