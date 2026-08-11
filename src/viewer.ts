@@ -312,79 +312,45 @@ function renderPage(): string {
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #050505;
-    --glass: rgba(255,255,255,0.03);
-    --glass-strong: rgba(255,255,255,0.06);
-    --hairline: rgba(255,255,255,0.08);
-    --hairline-strong: rgba(255,255,255,0.12);
+    --bg: #0a0a0b;
+    --surface: #111113;
+    --surface-hover: #161618;
+    --hairline: rgba(255,255,255,0.07);
+    --hairline-strong: rgba(255,255,255,0.14);
     --text: rgba(255,255,255,0.92);
     --text-dim: rgba(255,255,255,0.5);
-    --text-faint: rgba(255,255,255,0.3);
+    --text-faint: rgba(255,255,255,0.28);
     --accent: #a78bfa;
-    --accent-glow: rgba(167,139,250,0.15);
+    --accent-dim: rgba(167,139,250,0.12);
     --emerald: #34d399;
-    --emerald-glow: rgba(52,211,153,0.12);
     --rose: #fb7185;
     --amber: #fbbf24;
     --sky: #38bdf8;
-    --bezier: cubic-bezier(0.32, 0.72, 0, 1);
-    --bezier-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+    --bezier: cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
-
-  html { scroll-behavior: smooth; }
 
   body {
     font-family: 'Plus Jakarta Sans', -apple-system, system-ui, sans-serif;
     background: var(--bg);
     color: var(--text);
     min-height: 100dvh;
-    overflow-x: hidden;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 
-  /* ─── Radial mesh gradient background ─── */
-  .bg-mesh {
-    position: fixed;
-    inset: 0;
-    z-index: 0;
-    pointer-events: none;
-    background:
-      radial-gradient(ellipse 60% 50% at 15% 10%, var(--accent-glow), transparent 60%),
-      radial-gradient(ellipse 50% 40% at 85% 20%, var(--emerald-glow), transparent 55%),
-      radial-gradient(ellipse 70% 60% at 50% 90%, rgba(56,189,248,0.08), transparent 60%);
-  }
-
-  /* ─── Film grain overlay ─── */
-  .bg-grain {
-    position: fixed;
-    inset: 0;
-    z-index: 1;
-    pointer-events: none;
-    opacity: 0.025;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' /%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' /%3E%3C/svg%3E");
-  }
-
-  /* ─── Floating glass nav pill ─── */
+  /* ─── Sticky nav bar ─── */
   .nav {
     position: sticky;
-    top: 1.5rem;
+    top: 0;
     z-index: 100;
-    width: max-content;
-    max-width: calc(100vw - 2rem);
-    margin: 1.5rem auto 0;
-    padding: 0.625rem 0.625rem 0.625rem 1.5rem;
+    background: var(--surface);
+    border-bottom: 1px solid var(--hairline);
+    padding: 0.75rem 1.5rem;
     display: flex;
     align-items: center;
     gap: 1rem;
-    background: rgba(10,10,10,0.6);
-    backdrop-filter: blur(24px) saturate(180%);
-    -webkit-backdrop-filter: blur(24px) saturate(180%);
-    border: 1px solid var(--hairline);
-    border-radius: 9999px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.4), inset 0 1px 1px rgba(255,255,255,0.06);
   }
 
   .nav-brand {
@@ -393,206 +359,148 @@ function renderPage(): string {
     letter-spacing: -0.02em;
     color: var(--text);
     white-space: nowrap;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
   }
-
-  .nav-brand-dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    background: var(--accent);
-    box-shadow: 0 0 12px var(--accent);
-    animation: pulse 3s ease-in-out infinite;
-  }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 0.6; transform: scale(1); }
-    50% { opacity: 1; transform: scale(1.15); }
-  }
-
-  .nav-search {
-    flex: 1;
-    min-width: 200px;
-    padding: 0.5rem 1rem;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid var(--hairline);
-    border-radius: 9999px;
-    color: var(--text);
-    font-size: 0.8125rem;
-    font-family: inherit;
-    outline: none;
-    transition: all 0.4s var(--bezier);
-  }
-
-  .nav-search::placeholder { color: var(--text-faint); }
-  .nav-search:focus {
-    border-color: var(--hairline-strong);
-    background: rgba(255,255,255,0.06);
-    box-shadow: 0 0 0 3px var(--accent-glow);
-  }
-
-  .nav-btn {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 0.5rem 0.5rem 1.125rem;
-    background: var(--text);
-    color: #050505;
-    border: none;
-    border-radius: 9999px;
-    font-size: 0.8125rem;
-    font-weight: 600;
-    font-family: inherit;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: all 0.4s var(--bezier);
-  }
-
-  .nav-btn:hover { transform: scale(1.02); }
-  .nav-btn:active { transform: scale(0.98); }
 
   .nav-tabs {
     display: flex;
-    gap: 0.25rem;
+    gap: 0.125rem;
   }
   .nav-tab {
     padding: 0.375rem 0.875rem;
     background: transparent;
     color: var(--text-dim);
-    border: 1px solid var(--hairline);
-    border-radius: 9999px;
+    border: none;
+    border-radius: 8px;
     font-size: 0.8125rem;
     font-weight: 500;
     font-family: inherit;
     cursor: pointer;
-    transition: all 0.3s var(--bezier);
+    transition: all 0.2s var(--bezier);
   }
-  .nav-tab:hover { color: var(--text); border-color: var(--hairline-strong); }
-  .nav-tab.active { color: var(--accent); border-color: var(--accent); background: var(--accent-glow); }
+  .nav-tab:hover { color: var(--text); background: var(--surface-hover); }
+  .nav-tab.active { color: var(--accent); background: var(--accent-dim); }
 
-  .nav-btn-icon {
-    width: 28px; height: 28px;
-    border-radius: 50%;
-    background: rgba(0,0,0,0.1);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.75rem;
-    transition: all 0.4s var(--bezier);
+  .nav-search {
+    flex: 1;
+    max-width: 320px;
+    margin-left: auto;
+    padding: 0.5rem 0.875rem;
+    background: var(--bg);
+    border: 1px solid var(--hairline);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 0.8125rem;
+    font-family: inherit;
+    outline: none;
+    transition: all 0.2s var(--bezier);
   }
+  .nav-search::placeholder { color: var(--text-faint); }
+  .nav-search:focus { border-color: var(--accent); }
 
-  .nav-btn:hover .nav-btn-icon {
-    transform: translate(1px, -1px) scale(1.05);
+  .nav-btn {
+    padding: 0.5rem 1rem;
+    background: var(--text);
+    color: #0a0a0b;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.2s var(--bezier);
   }
+  .nav-btn:hover { opacity: 0.9; }
+  .nav-btn:active { transform: scale(0.97); }
 
-  /* ─── Hero stats section ─── */
+  /* ─── Page header ─── */
   .hero {
-    position: relative;
-    z-index: 2;
     max-width: 1200px;
     margin: 0 auto;
-    padding: 5rem 1.5rem 2rem;
+    padding: 4rem 1.5rem 1.5rem;
   }
 
   .hero-eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.375rem 0.875rem;
-    background: var(--glass);
+    display: inline-block;
+    padding: 0.25rem 0.625rem;
+    background: var(--surface);
     border: 1px solid var(--hairline);
-    border-radius: 9999px;
+    border-radius: 8px;
     font-size: 0.625rem;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.2em;
+    letter-spacing: 0.18em;
     color: var(--text-dim);
-    margin-bottom: 1.5rem;
+    margin-bottom: 1.25rem;
+    font-family: 'JetBrains Mono', monospace;
   }
 
   .hero h1 {
-    font-size: clamp(2.5rem, 6vw, 4.5rem);
+    font-size: clamp(2rem, 5vw, 3.25rem);
     font-weight: 800;
-    letter-spacing: -0.04em;
-    line-height: 0.95;
-    margin-bottom: 1rem;
-    background: linear-gradient(180deg, var(--text) 60%, var(--text-dim));
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+    margin-bottom: 0.75rem;
+    color: var(--text);
   }
 
   .hero-sub {
-    font-size: 1.0625rem;
+    font-size: 1rem;
     color: var(--text-dim);
-    max-width: 480px;
+    max-width: 520px;
     line-height: 1.6;
-    margin-bottom: 2.5rem;
+    margin-bottom: 2rem;
   }
 
-  /* ─── Stats bento (double-bezel) ─── */
+  /* ─── Stats grid ─── */
   .stats-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 1rem;
-    margin-bottom: 3rem;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 0.75rem;
   }
 
   .stat-card {
-    padding: 0.5rem;
-    background: var(--glass);
+    padding: 1rem 1.25rem;
+    background: var(--surface);
     border: 1px solid var(--hairline);
-    border-radius: 1.5rem;
-    transition: all 0.5s var(--bezier);
+    border-radius: 12px;
+    transition: border-color 0.2s var(--bezier);
   }
-
-  .stat-card:hover {
-    border-color: var(--hairline-strong);
-    background: var(--glass-strong);
-  }
-
-  .stat-card-inner {
-    padding: 1.25rem 1.5rem;
-    background: rgba(255,255,255,0.02);
-    border-radius: calc(1.5rem - 0.5rem);
-    box-shadow: inset 0 1px 1px rgba(255,255,255,0.04);
-  }
+  .stat-card:hover { border-color: var(--hairline-strong); }
 
   .stat-value {
-    font-size: 2rem;
+    font-size: 1.75rem;
     font-weight: 700;
     letter-spacing: -0.03em;
     line-height: 1;
     margin-bottom: 0.375rem;
+    font-family: 'JetBrains Mono', monospace;
   }
 
   .stat-label {
     font-size: 0.6875rem;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.15em;
+    letter-spacing: 0.12em;
     color: var(--text-faint);
   }
 
   /* ─── Filter bar ─── */
   .filter-bar {
-    position: relative;
-    z-index: 2;
     max-width: 1200px;
     margin: 0 auto;
-    padding: 0 1.5rem 2rem;
+    padding: 0 1.5rem 1.5rem;
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.625rem;
     flex-wrap: wrap;
   }
 
   .filter-select {
-    padding: 0.5rem 2rem 0.5rem 1rem;
-    background: var(--glass);
+    padding: 0.5rem 2rem 0.5rem 0.875rem;
+    background: var(--surface);
     border: 1px solid var(--hairline);
-    border-radius: 9999px;
+    border-radius: 8px;
     color: var(--text);
     font-size: 0.8125rem;
     font-family: inherit;
@@ -602,114 +510,100 @@ function renderPage(): string {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='rgba(255,255,255,0.4)' stroke-width='1.5'%3E%3Cpath d='M3 4.5l3 3 3-3'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 0.75rem center;
-    transition: all 0.4s var(--bezier);
+    transition: border-color 0.2s var(--bezier);
   }
-
   .filter-select:hover { border-color: var(--hairline-strong); }
+  .filter-select option { background: var(--surface); color: var(--text); }
 
-  .filter-select option {
-    background: #0a0a0a;
-    color: var(--text);
-  }
-
-  .danger-btn {
-    padding: 0.5rem 1rem;
-    background: rgba(251,113,133,0.08);
-    border: 1px solid rgba(251,113,133,0.2);
-    border-radius: 9999px;
-    color: var(--rose);
-    font-size: 0.75rem;
-    font-weight: 500;
-    font-family: inherit;
-    cursor: pointer;
-    transition: all 0.4s var(--bezier);
-  }
-
-  .danger-btn:hover {
-    background: rgba(251,113,133,0.14);
-    border-color: rgba(251,113,133,0.35);
-  }
-
-  .danger-btn:active { transform: scale(0.97); }
-
-  /* ─── Search input for filter bars ─── */
   .filter-search {
     flex: 1;
     min-width: 200px;
-    padding: 0.5rem 1rem;
-    background: var(--glass);
+    padding: 0.5rem 0.875rem;
+    background: var(--surface);
     border: 1px solid var(--hairline);
-    border-radius: 9999px;
+    border-radius: 8px;
     color: var(--text);
     font-size: 0.8125rem;
     font-family: inherit;
     outline: none;
-    transition: all 0.4s var(--bezier);
+    transition: border-color 0.2s var(--bezier);
   }
-  .filter-search:focus { border-color: var(--accent); background: var(--glass-strong); }
+  .filter-search:focus { border-color: var(--accent); }
   .filter-search::placeholder { color: var(--text-faint); }
 
   .filter-btn {
-    padding: 0.5rem 1.25rem;
+    padding: 0.5rem 1.125rem;
     background: var(--text);
-    color: #050505;
+    color: #0a0a0b;
     border: none;
-    border-radius: 9999px;
+    border-radius: 8px;
     font-size: 0.8125rem;
     font-weight: 600;
     font-family: inherit;
     cursor: pointer;
     white-space: nowrap;
-    transition: all 0.4s var(--bezier);
+    transition: opacity 0.2s var(--bezier);
   }
-  .filter-btn:hover { transform: scale(1.02); }
-  .filter-btn:active { transform: scale(0.98); }
+  .filter-btn:hover { opacity: 0.9; }
+  .filter-btn:active { transform: scale(0.97); }
 
-  /* ─── Symbol / Wiki card grid (uniform) ─── */
+  .danger-btn {
+    padding: 0.5rem 0.875rem;
+    background: transparent;
+    border: 1px solid rgba(251,113,133,0.2);
+    border-radius: 8px;
+    color: var(--rose);
+    font-size: 0.75rem;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s var(--bezier);
+  }
+  .danger-btn:hover {
+    background: rgba(251,113,133,0.08);
+    border-color: rgba(251,113,133,0.35);
+  }
+  .danger-btn:active { transform: scale(0.97); }
+
+  /* ─── Item grid (CodeGraph + Wiki) ─── */
   .item-grid {
-    position: relative;
-    z-index: 2;
     max-width: 1200px;
     margin: 0 auto;
-    padding: 0 1.5rem 6rem;
+    padding: 0 1.5rem 5rem;
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 0.875rem;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 0.625rem;
   }
 
   .item-card {
-    padding: 1rem 1.25rem;
-    background: var(--glass);
+    padding: 0.875rem 1rem;
+    background: var(--surface);
     border: 1px solid var(--hairline);
-    border-radius: 1rem;
+    border-radius: 12px;
     cursor: pointer;
-    transition: all 0.4s var(--bezier);
-    opacity: 0;
-    transform: translateY(1rem);
+    transition: all 0.2s var(--bezier);
   }
-  .item-card.revealed { opacity: 1; transform: translateY(0); }
   .item-card:hover {
     border-color: var(--hairline-strong);
-    background: var(--glass-strong);
-    transform: translateY(-2px);
+    background: var(--surface-hover);
   }
 
   .item-card-head {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.375rem;
   }
   .item-kind {
-    padding: 0.2rem 0.6rem;
-    border-radius: 9999px;
+    padding: 0.125rem 0.5rem;
+    border-radius: 6px;
     font-size: 0.625rem;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
-    background: rgba(167,139,250,0.1);
+    letter-spacing: 0.06em;
+    background: var(--accent-dim);
     color: var(--accent);
-    border: 1px solid rgba(167,139,250,0.2);
+    font-family: 'JetBrains Mono', monospace;
   }
   .item-lang {
     font-size: 0.625rem;
@@ -733,19 +627,17 @@ function renderPage(): string {
     text-overflow: ellipsis;
   }
 
-  /* ─── Capture grid (asymmetrical bento) ─── */
+  /* ─── Capture grid (bento) ─── */
   .capture-grid {
-    position: relative;
-    z-index: 2;
     max-width: 1200px;
     margin: 0 auto;
-    padding: 0 1.5rem 6rem;
+    padding: 0 1.5rem 5rem;
     display: grid;
     grid-template-columns: repeat(12, 1fr);
-    gap: 1rem;
+    gap: 0.75rem;
   }
 
-  /* Bento spans — varied sizes */
+  /* Bento spans - varied sizes */
   .capture-card:nth-child(6n+1) { grid-column: span 8; }
   .capture-card:nth-child(6n+2) { grid-column: span 4; }
   .capture-card:nth-child(6n+3) { grid-column: span 4; }
@@ -761,61 +653,40 @@ function renderPage(): string {
     .capture-card:nth-child(n) { grid-column: span 12; }
   }
 
-  /* ─── Double-bezel capture card ─── */
   .capture-card {
-    padding: 0.5rem;
-    background: var(--glass);
+    background: var(--surface);
     border: 1px solid var(--hairline);
-    border-radius: 1.75rem;
-    transition: all 0.6s var(--bezier);
-    opacity: 0;
-    transform: translateY(2rem) scale(0.98);
-  }
-
-  .capture-card.revealed {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-
-  .capture-card:hover {
-    border-color: var(--hairline-strong);
-    background: var(--glass-strong);
-    transform: translateY(-2px);
-  }
-
-  .capture-card-inner {
-    padding: 1.25rem 1.5rem 1.5rem;
-    background: rgba(255,255,255,0.015);
-    border-radius: calc(1.75rem - 0.5rem);
-    box-shadow: inset 0 1px 1px rgba(255,255,255,0.04);
-    height: 100%;
+    border-radius: 12px;
+    padding: 1.25rem;
+    transition: border-color 0.2s var(--bezier);
     display: flex;
     flex-direction: column;
   }
+  .capture-card:hover { border-color: var(--hairline-strong); }
 
   .capture-meta {
     display: flex;
     align-items: center;
-    gap: 0.625rem;
-    margin-bottom: 0.875rem;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
   }
 
   .type-badge {
-    padding: 0.25rem 0.625rem;
-    border-radius: 9999px;
+    padding: 0.2rem 0.5rem;
+    border-radius: 6px;
     font-size: 0.625rem;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
-    border: 1px solid transparent;
+    letter-spacing: 0.08em;
+    font-family: 'JetBrains Mono', monospace;
   }
 
-  .type-decision { background: rgba(56,189,248,0.1); color: var(--sky); border-color: rgba(56,189,248,0.2); }
-  .type-learning { background: rgba(52,211,153,0.1); color: var(--emerald); border-color: rgba(52,211,153,0.2); }
-  .type-error { background: rgba(251,113,133,0.1); color: var(--rose); border-color: rgba(251,113,133,0.2); }
-  .type-task { background: rgba(251,191,36,0.1); color: var(--amber); border-color: rgba(251,191,36,0.2); }
-  .type-conversation { background: rgba(255,255,255,0.06); color: var(--text-dim); border-color: var(--hairline); }
-  .type-atom { background: rgba(167,139,250,0.1); color: var(--accent); border-color: rgba(167,139,250,0.2); }
+  .type-decision { background: rgba(56,189,248,0.1); color: var(--sky); }
+  .type-learning { background: rgba(52,211,153,0.1); color: var(--emerald); }
+  .type-error { background: rgba(251,113,133,0.1); color: var(--rose); }
+  .type-task { background: rgba(251,191,36,0.1); color: var(--amber); }
+  .type-conversation { background: rgba(255,255,255,0.05); color: var(--text-dim); }
+  .type-atom { background: var(--accent-dim); color: var(--accent); }
 
   .capture-date {
     font-size: 0.6875rem;
@@ -841,34 +712,30 @@ function renderPage(): string {
     overflow: hidden;
     position: relative;
   }
-
-  .capture-content.expanded {
-    max-height: none;
-  }
+  .capture-content.expanded { max-height: none; }
 
   .capture-content-fade {
     position: absolute;
     bottom: 0; left: 0; right: 0;
-    height: 48px;
-    background: linear-gradient(transparent, rgba(10,10,10,0.6));
+    height: 40px;
+    background: linear-gradient(transparent, var(--surface));
     pointer-events: none;
-    transition: opacity 0.4s var(--bezier);
+    transition: opacity 0.2s var(--bezier);
   }
-
   .capture-content.expanded + .capture-content-fade { opacity: 0; }
 
   .capture-tags {
     display: flex;
     gap: 0.375rem;
     flex-wrap: wrap;
-    margin-top: 0.875rem;
+    margin-top: 0.75rem;
   }
 
   .tag {
-    padding: 0.1875rem 0.5rem;
-    background: rgba(255,255,255,0.04);
+    padding: 0.125rem 0.5rem;
+    background: var(--bg);
     border: 1px solid var(--hairline);
-    border-radius: 9999px;
+    border-radius: 6px;
     font-size: 0.625rem;
     font-weight: 500;
     color: var(--text-dim);
@@ -879,80 +746,61 @@ function renderPage(): string {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    margin-top: 1rem;
-    padding-top: 1rem;
+    margin-top: 0.875rem;
+    padding-top: 0.875rem;
     border-top: 1px solid var(--hairline);
   }
 
   .btn-expand {
-    padding: 0.375rem 0.875rem;
-    background: rgba(255,255,255,0.04);
+    padding: 0.3rem 0.75rem;
+    background: transparent;
     border: 1px solid var(--hairline);
-    border-radius: 9999px;
+    border-radius: 8px;
     color: var(--text-dim);
     font-size: 0.6875rem;
     font-weight: 500;
     font-family: inherit;
     cursor: pointer;
-    transition: all 0.4s var(--bezier);
+    transition: all 0.2s var(--bezier);
   }
-
   .btn-expand:hover {
-    background: rgba(255,255,255,0.08);
+    border-color: var(--hairline-strong);
     color: var(--text);
   }
 
   .btn-delete-card {
     margin-left: auto;
-    width: 32px; height: 32px;
-    background: rgba(251,113,133,0.06);
+    width: 30px; height: 30px;
+    background: transparent;
     border: 1px solid rgba(251,113,133,0.15);
-    border-radius: 50%;
+    border-radius: 8px;
     color: var(--rose);
     font-size: 0.875rem;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.4s var(--bezier);
+    transition: all 0.2s var(--bezier);
   }
-
   .btn-delete-card:hover {
-    background: rgba(251,113,133,0.14);
+    background: rgba(251,113,133,0.08);
     border-color: rgba(251,113,133,0.3);
-    transform: scale(1.05);
   }
-
   .btn-delete-card:active { transform: scale(0.95); }
 
   /* ─── Empty state ─── */
   .empty-state {
-    position: relative;
-    z-index: 2;
     max-width: 1200px;
     margin: 0 auto;
-    padding: 6rem 1.5rem;
+    padding: 5rem 1.5rem;
     text-align: center;
   }
 
-  .empty-state-icon {
-    width: 64px; height: 64px;
-    margin: 0 auto 1.5rem;
-    border-radius: 50%;
-    background: var(--glass);
-    border: 1px solid var(--hairline);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.5rem;
-    color: var(--text-faint);
-  }
-
   .empty-state h3 {
-    font-size: 1.25rem;
+    font-size: 1.125rem;
     font-weight: 600;
     letter-spacing: -0.02em;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.375rem;
     color: var(--text);
   }
 
@@ -964,23 +812,20 @@ function renderPage(): string {
     line-height: 1.6;
   }
 
-  /* ─── Modal (confirm dialog) ─── */
+  /* ─── Modal ─── */
   .modal-overlay {
     position: fixed;
     inset: 0;
     z-index: 200;
-    background: rgba(0,0,0,0.7);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
+    background: rgba(0,0,0,0.6);
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 1.5rem;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 0.4s var(--bezier);
+    transition: opacity 0.2s var(--bezier);
   }
-
   .modal-overlay.active {
     opacity: 1;
     pointer-events: auto;
@@ -988,25 +833,15 @@ function renderPage(): string {
 
   .modal {
     width: 100%;
-    max-width: 420px;
-    padding: 0.5rem;
-    background: rgba(15,15,15,0.9);
+    max-width: 480px;
+    background: var(--surface);
     border: 1px solid var(--hairline-strong);
-    border-radius: 2rem;
-    box-shadow: 0 24px 64px rgba(0,0,0,0.6);
-    transform: scale(0.95) translateY(1rem);
-    transition: all 0.5s var(--bezier-spring);
-  }
-
-  .modal-overlay.active .modal {
-    transform: scale(1) translateY(0);
-  }
-
-  .modal-inner {
+    border-radius: 12px;
     padding: 1.5rem;
-    background: rgba(255,255,255,0.02);
-    border-radius: calc(2rem - 0.5rem);
+    transform: scale(0.97);
+    transition: transform 0.2s var(--bezier);
   }
+  .modal-overlay.active .modal { transform: scale(1); }
 
   .modal h3 {
     font-size: 1.125rem;
@@ -1019,35 +854,33 @@ function renderPage(): string {
     font-size: 0.875rem;
     color: var(--text-dim);
     line-height: 1.6;
-    margin-bottom: 1.5rem;
+    margin-bottom: 1.25rem;
   }
 
   .modal-actions {
     display: flex;
-    gap: 0.625rem;
+    gap: 0.5rem;
   }
 
   .modal-btn {
     flex: 1;
-    padding: 0.625rem 1.25rem;
+    padding: 0.5rem 1rem;
     border: 1px solid var(--hairline);
-    border-radius: 9999px;
+    border-radius: 8px;
     font-size: 0.8125rem;
     font-weight: 600;
     font-family: inherit;
     cursor: pointer;
-    transition: all 0.4s var(--bezier);
+    transition: all 0.2s var(--bezier);
   }
-
   .modal-btn:active { transform: scale(0.97); }
 
   .modal-btn-cancel {
-    background: rgba(255,255,255,0.04);
+    background: transparent;
     color: var(--text-dim);
   }
-
   .modal-btn-cancel:hover {
-    background: rgba(255,255,255,0.08);
+    background: var(--surface-hover);
     color: var(--text);
   }
 
@@ -1056,93 +889,97 @@ function renderPage(): string {
     border-color: var(--rose);
     color: #fff;
   }
-
-  .modal-btn-confirm:hover { filter: brightness(1.1); }
+  .modal-btn-confirm:hover { opacity: 0.9; }
 
   /* ─── Toast ─── */
   .toast {
     position: fixed;
-    bottom: 2rem;
+    bottom: 1.5rem;
     left: 50%;
-    transform: translateX(-50%) translateY(1rem);
+    transform: translateX(-50%) translateY(0.5rem);
     z-index: 300;
-    padding: 0.75rem 1.25rem;
-    background: rgba(15,15,15,0.9);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
+    padding: 0.625rem 1.125rem;
+    background: var(--surface);
     border: 1px solid var(--hairline-strong);
-    border-radius: 9999px;
+    border-radius: 8px;
     font-size: 0.8125rem;
     font-weight: 500;
     color: var(--text);
-    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
     opacity: 0;
     pointer-events: none;
-    transition: all 0.5s var(--bezier-spring);
+    transition: all 0.2s var(--bezier);
   }
-
   .toast.show {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
   }
 
+  /* ─── Symbol details modal content ─── */
+  .symbol-detail {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+    line-height: 1.7;
+  }
+  .symbol-detail h4 {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 0.5rem;
+  }
+  .symbol-detail h4:first-child { color: var(--accent); }
+  .symbol-detail h4:nth-child(3) { color: var(--sky); margin-top: 1rem; }
+  .symbol-detail .row { color: var(--text-dim); }
+  .symbol-detail .row b { color: var(--text); font-weight: 600; }
+  .symbol-detail .none { color: var(--text-faint); }
+
+  /* ─── Reduced motion ─── */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      transition-duration: 0.01ms !important;
+      animation-duration: 0.01ms !important;
+    }
+  }
+
   /* ─── Mobile ─── */
   @media (max-width: 768px) {
     .nav {
-      top: 0.75rem;
-      margin: 0.75rem auto 0;
-      width: calc(100vw - 1.5rem);
       flex-wrap: wrap;
-      border-radius: 1.5rem;
-      padding: 0.75rem;
+      padding: 0.625rem 1rem;
     }
-    .nav-search { min-width: 0; width: 100%; order: 3; }
-    .hero { padding: 3rem 1rem 1.5rem; }
-    .hero h1 { font-size: 2.25rem; }
-    .filter-bar { padding: 0 1rem 1.5rem; }
-    .capture-grid { padding: 0 1rem 4rem; gap: 0.75rem; }
-    .stat-card-inner { padding: 1rem; }
-    .stat-value { font-size: 1.5rem; }
+    .nav-search { max-width: none; width: 100%; order: 3; }
+    .hero { padding: 2.5rem 1rem 1rem; }
+    .hero h1 { font-size: 1.875rem; }
+    .filter-bar { padding: 0 1rem 1.25rem; }
+    .capture-grid { padding: 0 1rem 3rem; gap: 0.625rem; }
+    .item-grid { padding: 0 1rem 3rem; }
+    .stat-value { font-size: 1.375rem; }
   }
 </style>
 </head>
 <body>
 
-<div class="bg-mesh"></div>
-<div class="bg-grain"></div>
-
-<!-- ─── Floating glass nav ─── -->
+<!-- ─── Nav ─── -->
 <nav class="nav">
-  <div class="nav-brand">
-    <span class="nav-brand-dot"></span>
-    tdai-memory
-  </div>
+  <div class="nav-brand">tdai-memory</div>
   <div class="nav-tabs">
     <button class="nav-tab active" data-tab="memory" onclick="switchTab('memory')">Memory</button>
     <button class="nav-tab" data-tab="codegraph" onclick="switchTab('codegraph')">CodeGraph</button>
     <button class="nav-tab" data-tab="wiki" onclick="switchTab('wiki')">Wiki</button>
   </div>
   <input class="nav-search" id="search" placeholder="Search captures..." autocomplete="off" />
-  <button class="nav-btn" onclick="doSearch()">
-    Search
-    <span class="nav-btn-icon">&#8599;</span>
-  </button>
+  <button class="nav-btn" onclick="doSearch()">Search</button>
 </nav>
 
 <!-- ─── Memory tab ─── -->
 <div id="tab-memory" class="tab-content">
-<!-- ─── Hero ─── -->
 <section class="hero">
-  <div class="hero-eyebrow">
-    Memory Database
-  </div>
+  <div class="hero-eyebrow">Memory Database</div>
   <h1>Long-term memory<br>for coding agents.</h1>
   <p class="hero-sub">Decisions, learnings, and errors captured across sessions. Searchable, persistent, contextual.</p>
-
   <div class="stats-grid" id="statsGrid"></div>
 </section>
 
-<!-- ─── Filter bar ─── -->
 <div class="filter-bar">
   <select class="filter-select" id="typeFilter" onchange="loadCaptures()">
     <option value="">All types</option>
@@ -1157,48 +994,45 @@ function renderPage(): string {
   <button class="danger-btn" onclick="clearAll()">Clear all</button>
 </div>
 
-<!-- ─── Capture grid ─── -->
 <div class="capture-grid" id="list"></div>
 </div>
 
 <!-- ─── CodeGraph tab ─── -->
 <div id="tab-codegraph" class="tab-content" style="display:none">
-  <section class="hero">
-    <h1>CodeGraph<br>Tree-sitter powered.</h1>
-    <p class="hero-sub">Symbols and call relationships from 9 languages. Click any symbol for callers and callees.</p>
-    <div class="stats-grid" id="cgStatsGrid"></div>
-  </section>
-  <div class="filter-bar">
-    <input class="filter-search" id="cgSearch" placeholder="Search symbols by name..." autocomplete="off" onkeydown="if(event.key==='Enter')loadSymbols()" />
-    <button class="filter-btn" onclick="loadSymbols()">Search</button>
-  </div>
-  <div class="item-grid" id="cgList"></div>
+<section class="hero">
+  <h1>CodeGraph<br>Tree-sitter powered.</h1>
+  <p class="hero-sub">Symbols and call relationships from 9 languages. Click any symbol for callers and callees.</p>
+  <div class="stats-grid" id="cgStatsGrid"></div>
+</section>
+<div class="filter-bar">
+  <input class="filter-search" id="cgSearch" placeholder="Search symbols by name..." autocomplete="off" onkeydown="if(event.key==='Enter')loadSymbols()" />
+  <button class="filter-btn" onclick="loadSymbols()">Search</button>
+</div>
+<div class="item-grid" id="cgList"></div>
 </div>
 
 <!-- ─── Wiki tab ─── -->
 <div id="tab-wiki" class="tab-content" style="display:none">
-  <section class="hero">
-    <h1>Wiki<br>Markdown knowledge graph.</h1>
-    <p class="hero-sub">Pages, headings, and links from your docs. Searchable and cross-referenced.</p>
-    <div class="stats-grid" id="wikiStatsGrid"></div>
-  </section>
-  <div class="filter-bar">
-    <input class="filter-search" id="wikiSearch" placeholder="Search wiki pages..." autocomplete="off" onkeydown="if(event.key==='Enter')loadWiki()" />
-    <button class="filter-btn" onclick="loadWiki()">Search</button>
-  </div>
-  <div class="item-grid" id="wikiList"></div>
+<section class="hero">
+  <h1>Wiki<br>Markdown knowledge graph.</h1>
+  <p class="hero-sub">Pages, headings, and links from your docs. Searchable and cross-referenced.</p>
+  <div class="stats-grid" id="wikiStatsGrid"></div>
+</section>
+<div class="filter-bar">
+  <input class="filter-search" id="wikiSearch" placeholder="Search wiki pages..." autocomplete="off" onkeydown="if(event.key==='Enter')loadWiki()" />
+  <button class="filter-btn" onclick="loadWiki()">Search</button>
+</div>
+<div class="item-grid" id="wikiList"></div>
 </div>
 
 <!-- ─── Modal ─── -->
 <div class="modal-overlay" id="modalOverlay">
   <div class="modal">
-    <div class="modal-inner">
-      <h3 id="modalTitle">Confirm</h3>
-      <p id="modalBody">Are you sure?</p>
-      <div class="modal-actions">
-        <button class="modal-btn modal-btn-cancel" onclick="closeModal()">Cancel</button>
-        <button class="modal-btn modal-btn-confirm" id="modalConfirm">Delete</button>
-      </div>
+    <h3 id="modalTitle">Confirm</h3>
+    <div id="modalBody"><p>Are you sure?</p></div>
+    <div class="modal-actions">
+      <button class="modal-btn modal-btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="modal-btn modal-btn-confirm" id="modalConfirm">Delete</button>
     </div>
   </div>
 </div>
@@ -1209,20 +1043,6 @@ function renderPage(): string {
 <script>
   // ─── State ───
   let modalCallback = null;
-  let observer = null;
-
-  // ─── IntersectionObserver for scroll reveals ───
-  function setupObserver() {
-    if (observer) observer.disconnect();
-    observer = new IntersectionObserver(function(entries) {
-      entries.forEach(function(entry) {
-        if (entry.isIntersecting) {
-          entry.target.classList.add('revealed');
-          observer.unobserve(entry.target);
-        }
-      });
-    }, { threshold: 0.05, rootMargin: '0px 0px -40px 0px' });
-  }
 
   // ─── Toast ───
   function showToast(msg) {
@@ -1235,7 +1055,8 @@ function renderPage(): string {
   // ─── Modal ───
   function showModal(title, body, onConfirm) {
     document.getElementById('modalTitle').textContent = title;
-    document.getElementById('modalBody').textContent = body;
+    document.getElementById('modalBody').innerHTML = '<p>' + body + '</p>';
+    document.getElementById('modalConfirm').style.display = '';
     modalCallback = onConfirm;
     document.getElementById('modalOverlay').classList.add('active');
   }
@@ -1280,10 +1101,10 @@ function renderPage(): string {
       cards.push({ value: t.count, label: t.type, color: typeColors[t.type] || 'var(--text)' });
     });
     grid.innerHTML = cards.map(function(c) {
-      return '<div class="stat-card"><div class="stat-card-inner">'
+      return '<div class="stat-card">'
         + '<div class="stat-value" style="' + (c.color ? 'color:' + c.color : '') + '">' + c.value + '</div>'
         + '<div class="stat-label">' + c.label + '</div>'
-        + '</div></div>';
+        + '</div>';
     }).join('');
   }
 
@@ -1313,12 +1134,14 @@ function renderPage(): string {
         cards.push({ value: l.count, label: l.language, color: 'var(--text-dim)' });
       });
       grid.innerHTML = cards.map(function(c) {
-        return '<div class="stat-card"><div class="stat-card-inner">'
+        return '<div class="stat-card">'
           + '<div class="stat-value" style="' + (c.color ? 'color:' + c.color : '') + '">' + c.value + '</div>'
           + '<div class="stat-label">' + c.label + '</div>'
-          + '</div></div>';
+          + '</div>';
       }).join('');
-    } catch(e) { document.getElementById('cgStatsGrid').innerHTML = '<p style="color:var(--text-dim);padding:2rem">No CodeGraph data. Run: tdai-memory-mcp index --path src --repo .</p>'; }
+    } catch(e) {
+      document.getElementById('cgStatsGrid').innerHTML = '<p style="color:var(--text-dim);padding:1.5rem 0">No CodeGraph data. Run: tdai-memory-mcp index --path src --repo .</p>';
+    }
   }
 
   async function loadSymbols() {
@@ -1328,7 +1151,7 @@ function renderPage(): string {
     var rows = await r.json();
     var list = document.getElementById('cgList');
     if (!rows || rows.length === 0) {
-      list.innerHTML = '<p style="color:var(--text-dim);padding:2rem;text-align:center">No symbols found.</p>';
+      list.innerHTML = '<p style="color:var(--text-dim);padding:2rem 0;text-align:center;grid-column:1/-1">No symbols found.</p>';
       return;
     }
     list.innerHTML = rows.map(function(s) {
@@ -1337,15 +1160,10 @@ function renderPage(): string {
         + '<span class="item-kind">' + s.kind + '</span>'
         + '<span class="item-lang">' + s.language + '</span>'
         + '</div>'
-        + '<div class="item-name">' + s.name + '</div>'
-        + '<div class="item-file">' + s.file_path + ':' + s.line_start + '</div>'
+        + '<div class="item-name">' + escapeHtml(s.name) + '</div>'
+        + '<div class="item-file">' + escapeHtml(s.file_path) + ':' + s.line_start + '</div>'
         + '</div>';
     }).join('');
-    requestAnimationFrame(function() {
-      list.querySelectorAll('.item-card').forEach(function(c, i) {
-        setTimeout(function() { c.classList.add('revealed'); }, i * 20);
-      });
-    });
   }
 
   async function showSymbolDetails(id) {
@@ -1353,11 +1171,17 @@ function renderPage(): string {
     var callers = await r1.json();
     var r2 = await fetch('/api/codegraph/callees?id=' + id);
     var callees = await r2.json();
-    var html = '<div style="font-family:JetBrains Mono,monospace;font-size:0.8rem;line-height:1.6">'
-      + '<h4 style="color:var(--accent);margin-bottom:0.5rem">Callers (' + callers.length + ')</h4>'
-      + (callers.length ? callers.map(function(c) { return '<div>' + c.kind + ' <b>' + c.name + '</b>  ' + c.file_path + ':' + c.line + '</div>'; }).join('') : '<div style="color:var(--text-dim)">None</div>')
-      + '<h4 style="color:var(--sky);margin:1rem 0 0.5rem">Callees (' + callees.length + ')</h4>'
-      + (callees.length ? callees.map(function(c) { return '<div>' + (c.name ? c.kind + ' <b>' + c.name + '</b>  ' + c.file_path + ':' + c.line : '<b>' + c.callee_name + '</b>  <i style="color:var(--text-dim)">unresolved</i>') + '</div>'; }).join('') : '<div style="color:var(--text-dim)">None</div>')
+    var html = '<div class="symbol-detail">'
+      + '<h4>Callers (' + callers.length + ')</h4>'
+      + (callers.length ? callers.map(function(c) {
+          return '<div class="row">' + c.kind + ' <b>' + escapeHtml(c.name) + '</b> ' + escapeHtml(c.file_path) + ':' + c.line + '</div>';
+        }).join('') : '<div class="none">None</div>')
+      + '<h4>Callees (' + callees.length + ')</h4>'
+      + (callees.length ? callees.map(function(c) {
+          return c.name
+            ? '<div class="row">' + c.kind + ' <b>' + escapeHtml(c.name) + '</b> ' + escapeHtml(c.file_path) + ':' + c.line + '</div>'
+            : '<div class="row"><b>' + escapeHtml(c.callee_name) + '</b> <span class="none">unresolved</span></div>';
+        }).join('') : '<div class="none">None</div>')
       + '</div>';
     document.getElementById('modalTitle').textContent = 'Symbol Details';
     document.getElementById('modalBody').innerHTML = html;
@@ -1376,12 +1200,14 @@ function renderPage(): string {
         { value: d.links.count, label: 'Links', color: 'var(--sky)' }
       ];
       grid.innerHTML = cards.map(function(c) {
-        return '<div class="stat-card"><div class="stat-card-inner">'
+        return '<div class="stat-card">'
           + '<div class="stat-value" style="color:' + c.color + '">' + c.value + '</div>'
           + '<div class="stat-label">' + c.label + '</div>'
-          + '</div></div>';
+          + '</div>';
       }).join('');
-    } catch(e) { document.getElementById('wikiStatsGrid').innerHTML = '<p style="color:var(--text-dim);padding:2rem">No Wiki data. Run: tdai-memory-mcp wiki ingest --path docs --repo .</p>'; }
+    } catch(e) {
+      document.getElementById('wikiStatsGrid').innerHTML = '<p style="color:var(--text-dim);padding:1.5rem 0">No Wiki data. Run: tdai-memory-mcp wiki ingest --path docs --repo .</p>';
+    }
   }
 
   async function loadWiki() {
@@ -1391,7 +1217,7 @@ function renderPage(): string {
     var rows = await r.json();
     var list = document.getElementById('wikiList');
     if (!rows || rows.length === 0) {
-      list.innerHTML = '<p style="color:var(--text-dim);padding:2rem;text-align:center">No wiki pages found.</p>';
+      list.innerHTML = '<p style="color:var(--text-dim);padding:2rem 0;text-align:center;grid-column:1/-1">No wiki pages found.</p>';
       return;
     }
     list.innerHTML = rows.map(function(p) {
@@ -1399,15 +1225,10 @@ function renderPage(): string {
         + '<div class="item-card-head">'
         + '<span class="item-kind">page</span>'
         + '</div>'
-        + '<div class="item-name">' + p.title + '</div>'
-        + '<div class="item-file">' + p.source_file + '</div>'
+        + '<div class="item-name">' + escapeHtml(p.title) + '</div>'
+        + '<div class="item-file">' + escapeHtml(p.source_file) + '</div>'
         + '</div>';
     }).join('');
-    requestAnimationFrame(function() {
-      list.querySelectorAll('.item-card').forEach(function(c, i) {
-        setTimeout(function() { c.classList.add('revealed'); }, i * 20);
-      });
-    });
   }
 
   // ─── Captures ───
@@ -1431,22 +1252,19 @@ function renderPage(): string {
   function renderList(rows) {
     var el = document.getElementById('list');
     if (rows.length === 0) {
-      el.innerHTML = '';
       el.className = '';
       el.innerHTML = '<div class="empty-state">'
-        + '<div class="empty-state-icon">&#8709;</div>'
         + '<h3>No captures found</h3>'
         + '<p>Try adjusting your filters or search query. Captures will appear here as your agent learns.</p>'
         + '</div>';
       return;
     }
     el.className = 'capture-grid';
-    el.innerHTML = rows.map(function(r, i) {
+    el.innerHTML = rows.map(function(r) {
       var tags = r.tags ? JSON.parse(r.tags) : [];
       var date = new Date(r.created_at).toISOString().split('T')[0];
       var needsExpand = r.content.length > 500;
-      return '<div class="capture-card" data-idx="' + i + '">'
-        + '<div class="capture-card-inner">'
+      return '<div class="capture-card" data-id="' + r.id + '">'
         + '<div class="capture-meta">'
         + '<span class="type-badge type-' + r.type + '">' + r.type + '</span>'
         + '<span class="capture-agent">' + escapeHtml(r.agent_id || '') + '</span>'
@@ -1459,17 +1277,10 @@ function renderPage(): string {
         }).join('') + '</div>' : '')
         + '<div class="capture-actions">'
         + (needsExpand ? '<button class="btn-expand" onclick="toggleExpand(\\'' + r.id + '\\')">Show more</button>' : '<span></span>')
-        + '<button class="btn-delete-card" onclick="deleteCapture(\\'' + r.id + '\\')" title="Delete">&#215;</button>'
-        + '</div>'
+        + '<button class="btn-delete-card" onclick="deleteCapture(\\'' + r.id + '\\')" title="Delete">x</button>'
         + '</div>'
         + '</div>';
     }).join('');
-
-    // Observe new cards for scroll reveal
-    setupObserver();
-    document.querySelectorAll('.capture-card').forEach(function(card) {
-      observer.observe(card);
-    });
   }
 
   function toggleExpand(id) {
@@ -1519,8 +1330,8 @@ function renderPage(): string {
       return;
     }
     showModal(
-      'Delete all "' + type + '" captures?',
-      'All captures of type "' + type + '" will be permanently deleted.',
+      'Delete all ' + type + ' captures?',
+      'All captures of type ' + type + ' will be permanently deleted.',
       async function() {
         var r = await fetch('/api/delete-by-type', {
           method: 'POST',
