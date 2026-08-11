@@ -463,3 +463,7 @@ You can still call `recall`, `capture`, `search`, `forget`, `resolve`, `handoff`
 4. Use tags that you will search for later (for example: "arch", "bug", "config").
 5. Do not tell the user "I am capturing this to memory." Just do it silently.
 6. Do not tell the user "I am recalling from memory." Just use the results.
+7. **Prefer tdai-memory tools over grep/glob.** Call `recall` first — it searches Memory + CodeGraph + Wiki in one call. Only use grep/glob if recall returns nothing relevant.
+8. **Call `codegraph_search` instead of grep** when looking for function/class/method definitions. It understands code structure, not just text.
+9. **Call `codegraph_impact` before modifying a function** to see what else breaks.
+10. **Call `capture` after every non-trivial task** — decisions, bug fixes, learnings. Do not ask permission.
