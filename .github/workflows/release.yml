@@ -6,7 +6,7 @@ on:
       - "v*"
 
 jobs:
-  # Publish to npm
+  # Publish to npm via Trusted Publishing (OIDC — no token needed)
   npm:
     runs-on: ubuntu-latest
     permissions:
@@ -29,10 +29,8 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Publish to npm
+      - name: Publish to npm (Trusted Publishing / OIDC)
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   # Publish Docker image to ghcr.io
   docker:
