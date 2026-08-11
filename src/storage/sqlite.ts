@@ -334,7 +334,7 @@ export class SQLiteBackend implements StorageBackend {
   }
 
   async findByContentHash(contentHash: string, sessionKey?: string): Promise<CaptureEntry[]> {
-    let sql = "SELECT * FROM captures WHERE content_hash = ?";
+    let sql = "SELECT * FROM captures WHERE content_hash = ? AND deleted_at IS NULL";
     const params: unknown[] = [contentHash];
     if (sessionKey) {
       sql += " AND session_key = ?";
