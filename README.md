@@ -15,7 +15,7 @@ Inherits the L0-L3 layering, RRF fusion, and pluggable storage factory from [Ten
 - **Audit log** — every tool call logged with hashed args, no raw secrets
 - **Handoff** — structured context packet between agent sessions, saves 60-85% tokens vs re-reading files
 - **Team-shared memory** — commit `.tdai-memory/memory-export.jsonl` to share memory via git. Uses append-only JSONL so parallel branches auto-merge without conflicts
-- **Lifecycle hooks** — `SessionStart` auto-injects recent memory into agent context. `SessionEnd` silently captures session summary to memory DB by reading the transcript. No Stop hook, no agent involvement — capture runs automatically on session exit. Writes activity to `~/.local/share/tdai-memory-mcp/session.log`. Supports Claude Code (`~/.claude/settings.json`) and Devin CLI (`~/.config/devin/config.json`).
+- **Lifecycle hooks** — `SessionStart` auto-injects recent memory into agent context. `Stop` prompts the agent to save a handoff packet before exit. `SessionEnd` silently captures session summary to memory DB by reading the transcript. No agent involvement — capture runs automatically on session exit. Writes activity to `~/.local/share/tdai-memory-mcp/session.log`. Supports Claude Code (`~/.claude/settings.json`) and Devin CLI (`~/.config/devin/config.json`).
 - **Token savings tracker** — `npx tdai-memory-mcp token-stats` prints a report of estimated tokens saved by memory recall and capture preservation.
 - **Trust states** — every capture has a `trust_state`: `candidate` (default), `verified`, `stale`, or `rejected`. Search results rank `verified` above `candidate` above `stale`. Rejected captures are excluded from search and recall.
 - **Rejected-value tombstone** — when you reject a capture with a reason, the content hash is tombstoned. Re-capturing the same content is blocked unless `override_rejection: true` is set.
@@ -69,8 +69,10 @@ First run creates the database at `~/.local/share/tdai-memory-mcp/memory.db`. Sc
 This is the key step. Without it, the agent has memory tools but will not use them automatically.
 
 ```bash
-npx tdai-memory-mcp install-skill && npx tdai-memory-mcp install-hooks
+npx tdai-memory-mcp setup
 ```
+
+This one command installs the skill, wires hooks into both Devin CLI and Claude Code, and saves a test capture to verify the database works.
 
 What this does:
 
@@ -78,6 +80,7 @@ What this does:
 |---|---|---|
 | **Skill** | Teaches the agent when to recall, capture, and hand off | `~/.claude/skills/`, `~/.agents/skills/`, `~/.config/devin/skills/` |
 | **SessionStart hook** | Auto-injects recent memory into agent context on every new session | `~/.claude/settings.json`, `~/.config/devin/config.json` |
+| **Stop hook** | Prompts the agent to save a handoff packet before session exit | same config files |
 | **SessionEnd hook** | Silently captures session summary to memory DB by reading the transcript — no agent involvement, runs on session exit | same config files |
 
 Without hooks: agent has tools but must be told to use them. With hooks: every session starts with relevant memory and ends with an auto-capture.
@@ -187,8 +190,9 @@ Default mode is `noop` — stores L0 captures and runs hybrid search. Set an LLM
 ```bash
 # MCP server
 npx tdai-memory-mcp                    # Start MCP server (stdio)
-npx tdai-memory-mcp install-skill      # Install agent skill
-npx tdai-memory-mcp install-hooks      # Install lifecycle hooks
+npx tdai-memory-mcp setup              # Install skill + hooks + test capture (one command)
+npx tdai-memory-mcp install-skill      # Install agent skill only
+npx tdai-memory-mcp install-hooks      # Install lifecycle hooks only
 npx tdai-memory-mcp uninstall-hooks    # Remove hooks
 
 # CodeGraph — index and trace code symbols

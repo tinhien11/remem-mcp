@@ -100,6 +100,28 @@ async function main(): Promise<void> {
     await installHooks();
     return;
   }
+  if (arg === "setup") {
+    console.log("tdai-memory-mcp setup\n");
+    console.log("This will install the skill, hooks, and run a test capture.\n");
+    await installSkill();
+    console.log("");
+    await installHooks();
+    console.log("\nTest capture...");
+    const { Memory } = await import("./sdk.js");
+    const mem = new Memory();
+    const id = await mem.capture(
+      "tdai-memory-mcp setup completed. This is a test capture.",
+      "task",
+      ["setup", "test"],
+    );
+    if (id) {
+      console.log(`Test capture saved: ${id}`);
+    } else {
+      console.log("Test capture already exists (duplicate).");
+    }
+    console.log("\nSetup complete. Restart your agent to activate hooks.");
+    return;
+  }
   if (arg === "uninstall-hooks") {
     await uninstallHooks();
     return;
@@ -422,8 +444,9 @@ async function main(): Promise<void> {
 
 Usage:
   tdai-memory-mcp                Start the MCP server (stdio)
+  tdai-memory-mcp setup          Install skill + hooks + test capture (one command)
   tdai-memory-mcp install-skill  Install the agent skill for Devin CLI
-  tdai-memory-mcp install-hooks  Install lifecycle hooks (SessionStart, SessionEnd)
+  tdai-memory-mcp install-hooks  Install lifecycle hooks (SessionStart, Stop, SessionEnd)
   tdai-memory-mcp uninstall-hooks  Remove lifecycle hooks
   tdai-memory-mcp hook-post-commit  Auto-index changed files (git post-commit hook)
 

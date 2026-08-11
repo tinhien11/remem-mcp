@@ -31,6 +31,17 @@ const HOOKS_CONFIG = {
       ],
     },
   ],
+  Stop: [
+    {
+      hooks: [
+        {
+          type: "command",
+          command: hookCommand("hook-stop"),
+          timeout: 10,
+        },
+      ],
+    },
+  ],
   SessionEnd: [
     {
       hooks: [
@@ -128,6 +139,7 @@ export async function installHooks(): Promise<void> {
   console.log(`\nHooks wired to ${installed} agent(s).`);
   console.log("\nHooks installed:");
   console.log("  SessionStart → auto-recall recent memory into agent context");
+  console.log("  Stop         → prompt agent to save handoff before exit");
   console.log("  SessionEnd   → silently capture session summary to memory DB");
   console.log("\nRestart your agent for hooks to take effect.");
   console.log("\nTo verify: run /hooks in your agent.");
@@ -147,6 +159,7 @@ export async function uninstallHooks(): Promise<void> {
       const hooks = config.hooks as Record<string, unknown>;
       delete hooks.SessionStart;
       delete hooks.SessionEnd;
+      delete hooks.Stop;
       if (Object.keys(hooks).length === 0) {
         delete config.hooks;
       }
@@ -164,6 +177,7 @@ export async function uninstallHooks(): Promise<void> {
       const hooks = config.hooks as Record<string, unknown>;
       delete hooks.SessionStart;
       delete hooks.SessionEnd;
+      delete hooks.Stop;
       if (Object.keys(hooks).length === 0) {
         delete config.hooks;
       }
