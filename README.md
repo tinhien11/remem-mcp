@@ -5,7 +5,7 @@
 
 > Local-first MCP memory server for AI coding agents. No API key. No daemon. No external database.
 
-![Demo](docs/screenshots/demo.gif)
+![Demo](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/demo.gif)
 
 *Demo: React codebase — Memory + CodeGraph + Wiki*
 
