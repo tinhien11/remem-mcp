@@ -9,22 +9,25 @@ import { generateId } from "../utils/ulid.js";
 import type {
   AtomEntry,
   CaptureEntry,
+  ConflictResult,
   DeleteFilter,
   DeleteResult,
   KnowledgeEntry,
   MessageRow,
   PersonaEntry,
   QueryOptions,
+  ResolveResult,
   ScenarioEntry,
   SearchResult,
   SkillEntry,
   StorageBackend,
+  TrustState,
 } from "./types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /** Current schema version. */
-const CURRENT_SCHEMA_VERSION = 3;
+const CURRENT_SCHEMA_VERSION = 5;
 
 /**
  * SQLite storage backend.
@@ -76,6 +79,8 @@ export class SQLiteBackend implements StorageBackend {
         this.backupDatabase(dbPath);
         this.migrateV1ToV2();
         this.migrateV2ToV3();
+        this.migrateV3ToV4();
+        this.migrateV4ToV5();
         // Now run the full schema to create any remaining tables/triggers/indexes
         this.runSchema();
         this.writeSchemaVersion(CURRENT_SCHEMA_VERSION);
@@ -108,6 +113,11 @@ export class SQLiteBackend implements StorageBackend {
       this.backupDatabase(dbPath);
       this.migrateV3ToV4();
       this.writeSchemaVersion(4);
+    }
+    if (currentVersion < 5) {
+      this.backupDatabase(dbPath);
+      this.migrateV4ToV5();
+      this.writeSchemaVersion(5);
     }
   }
 
@@ -271,12 +281,37 @@ export class SQLiteBackend implements StorageBackend {
     console.error("[tdai-memory] Migrated schema v3 → v4 (tombstone / soft delete)");
   }
 
+  /** Migrate schema v4 → v5: add trust_state, rejection_reason, superseded_by columns. */
+  private migrateV4ToV5(): void {
+    const cols = this.db.prepare("PRAGMA table_info(captures)").all() as { name: string }[];
+    const hasTrustState = cols.some((c) => c.name === "trust_state");
+    if (!hasTrustState) {
+      this.db.exec("ALTER TABLE captures ADD COLUMN trust_state TEXT NOT NULL DEFAULT 'candidate'");
+      console.error("[tdai-memory] Added trust_state column to captures");
+    }
+    const hasRejectionReason = cols.some((c) => c.name === "rejection_reason");
+    if (!hasRejectionReason) {
+      this.db.exec("ALTER TABLE captures ADD COLUMN rejection_reason TEXT");
+      console.error("[tdai-memory] Added rejection_reason column to captures");
+    }
+    const hasSupersededBy = cols.some((c) => c.name === "superseded_by");
+    if (!hasSupersededBy) {
+      this.db.exec("ALTER TABLE captures ADD COLUMN superseded_by TEXT REFERENCES captures(id)");
+      console.error("[tdai-memory] Added superseded_by column to captures");
+    }
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_captures_trust ON captures (trust_state)");
+    this.db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_captures_rejected_hash ON captures (content_hash) WHERE trust_state = 'rejected'",
+    );
+    console.error("[tdai-memory] Migrated schema v4 → v5 (trust state + correction)");
+  }
+
   async put(entry: CaptureEntry): Promise<void> {
     const contentHash =
       entry.contentHash ?? createHash("sha256").update(entry.content).digest("hex");
     const stmt = this.db.prepare(`
-      INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata, team_id, user_id, task_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata, team_id, user_id, task_id, trust_state)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
       entry.id,
@@ -291,6 +326,7 @@ export class SQLiteBackend implements StorageBackend {
       entry.teamId ?? null,
       entry.userId ?? null,
       entry.taskId ?? null,
+      entry.trustState ?? "candidate",
     );
 
     // Store role-based messages if provided
@@ -317,6 +353,20 @@ export class SQLiteBackend implements StorageBackend {
       .get(id) as DbRow | undefined;
     if (!row) return null;
     return rowToEntry(row);
+  }
+
+  async findRejectedByContentHash(
+    contentHash: string,
+    sessionKey?: string,
+  ): Promise<CaptureEntry[]> {
+    let sql = "SELECT * FROM captures WHERE content_hash = ? AND trust_state = 'rejected'";
+    const params: unknown[] = [contentHash];
+    if (sessionKey) {
+      sql += " AND session_key = ?";
+      params.push(sessionKey);
+    }
+    const rows = this.db.prepare(sql).all(...params) as DbRow[];
+    return rows.map(rowToEntry);
   }
 
   async getMessages(captureId: string): Promise<MessageRow[]> {
@@ -391,7 +441,7 @@ export class SQLiteBackend implements StorageBackend {
       SELECT fts.id as id, bm25(captures_fts) as score
       FROM captures_fts fts
       JOIN captures c ON c.id = fts.id
-      WHERE captures_fts MATCH ? AND c.deleted_at IS NULL
+      WHERE captures_fts MATCH ? AND c.deleted_at IS NULL AND c.trust_state != 'rejected'
     `;
     const params: unknown[] = [ftsQuery];
 
@@ -447,7 +497,7 @@ export class SQLiteBackend implements StorageBackend {
       SELECT vec.id as id, vec.distance as score
       FROM captures_vec vec
       JOIN captures c ON c.id = vec.id
-      WHERE vec.embedding MATCH ? AND vec.k = ? AND c.deleted_at IS NULL
+      WHERE vec.embedding MATCH ? AND vec.k = ? AND c.deleted_at IS NULL AND c.trust_state != 'rejected'
     `;
     const params: unknown[] = [Buffer.from(buffer.buffer), limit];
 
@@ -501,7 +551,7 @@ export class SQLiteBackend implements StorageBackend {
     return this.fetchEntriesById(paged);
   }
 
-  /** Fetch capture entries by ID, preserving the order of the input list. Applies memory decay. */
+  /** Fetch capture entries by ID, preserving the order of the input list. Applies memory decay and trust-state ranking. */
   private async fetchEntriesById(
     results: { id: string; score: number }[],
   ): Promise<SearchResult[]> {
@@ -514,15 +564,29 @@ export class SQLiteBackend implements StorageBackend {
     const rowMap = new Map(rows.map((r) => [r.id, r]));
     const now = Date.now();
     const HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+    // Trust-state multipliers: verified > candidate > stale
+    const TRUST_BOOST: Record<string, number> = {
+      verified: 1.5,
+      candidate: 1.0,
+      stale: 0.5,
+      rejected: 0,
+    };
     return results
       .map((r) => {
         const row = rowMap.get(r.id);
         if (!row) return null;
         const ageMs = now - row.created_at;
         const decay = 0.5 ** (ageMs / HALF_LIFE_MS);
-        return { entry: rowToEntry(row), score: r.score * decay };
+        const trustBoost = TRUST_BOOST[row.trust_state ?? "candidate"] ?? 1.0;
+        const decayed = r.score * decay;
+        // BM25 scores are negative (lower = better). For negative scores, divide by boost
+        // so a lower boost makes the score more negative (ranks lower). For positive scores
+        // (RRF fusion), multiply so a lower boost makes the score lower.
+        const finalScore = decayed >= 0 ? decayed * trustBoost : decayed / trustBoost;
+        return { entry: rowToEntry(row), score: finalScore };
       })
-      .filter((r): r is SearchResult => r !== null);
+      .filter((r): r is SearchResult => r !== null)
+      .sort((a, b) => b.score - a.score);
   }
 
   /** Escape a query string for FTS5 MATCH. */
@@ -605,6 +669,82 @@ export class SQLiteBackend implements StorageBackend {
     }
 
     return { captures, atoms, scenarios };
+  }
+
+  async reject(id: string, reason: string): Promise<DeleteResult> {
+    const now = Date.now();
+    const captureCount = this.db
+      .prepare(
+        "UPDATE captures SET trust_state = 'rejected', rejection_reason = ?, deleted_at = ? WHERE id = ? AND deleted_at IS NULL AND trust_state != 'rejected'",
+      )
+      .run(reason, now, id).changes;
+
+    if (captureCount > 0) {
+      // Remove from search indexes so rejected captures are not retrievable
+      this.db.prepare("DELETE FROM captures_vec WHERE id = ?").run(id);
+      const rowid = this.db.prepare("SELECT rowid FROM captures WHERE id = ?").get(id) as
+        | { rowid: number }
+        | undefined;
+      if (rowid) {
+        this.db
+          .prepare(
+            "INSERT INTO captures_fts(captures_fts, rowid, content, tags, type) VALUES('delete', ?, '', '', '')",
+          )
+          .run(rowid.rowid);
+      }
+    }
+
+    return { captures: captureCount, atoms: 0, scenarios: 0 };
+  }
+
+  async findConflicts(
+    embedding: number[],
+    sessionKey: string,
+    threshold: number,
+  ): Promise<ConflictResult[]> {
+    const buffer = new Float32Array(embedding);
+    const rows = this.db
+      .prepare(
+        `SELECT vec.id as id, vec.distance as distance, c.content as content, c.trust_state as trust_state
+         FROM captures_vec vec
+         JOIN captures c ON c.id = vec.id
+         WHERE vec.embedding MATCH ? AND vec.k = 20
+           AND c.deleted_at IS NULL
+           AND c.trust_state IN ('candidate', 'verified')
+           AND c.session_key = ?
+         ORDER BY vec.distance
+         LIMIT 10`,
+      )
+      .all(Buffer.from(buffer.buffer), sessionKey) as {
+      id: string;
+      distance: number;
+      content: string;
+      trust_state: string;
+    }[];
+
+    return rows
+      .filter((r) => r.distance < threshold)
+      .map((r) => ({
+        id: r.id,
+        content: r.content,
+        distance: r.distance,
+        trustState: r.trust_state as TrustState,
+      }));
+  }
+
+  async supersede(loserId: string, winnerId: string): Promise<ResolveResult> {
+    const updated = this.db
+      .prepare(
+        "UPDATE captures SET trust_state = 'stale', superseded_by = ? WHERE id = ? AND deleted_at IS NULL AND trust_state != 'rejected'",
+      )
+      .run(winnerId, loserId).changes;
+    return { winnerId, loserId, updated };
+  }
+
+  async setTrustState(id: string, state: TrustState): Promise<number> {
+    return this.db
+      .prepare("UPDATE captures SET trust_state = ? WHERE id = ? AND deleted_at IS NULL")
+      .run(state, id).changes;
   }
 
   // ─── L1 atoms ───────────────────────────────────────────────
@@ -930,6 +1070,10 @@ interface DbRow {
   team_id: string | null;
   user_id: string | null;
   task_id: string | null;
+  deleted_at: number | null;
+  trust_state: string | null;
+  rejection_reason: string | null;
+  superseded_by: string | null;
 }
 
 interface MessageDbRow {
@@ -1011,6 +1155,9 @@ function rowToEntry(row: DbRow): CaptureEntry {
     teamId: row.team_id ?? undefined,
     userId: row.user_id ?? undefined,
     taskId: row.task_id ?? undefined,
+    trustState: (row.trust_state as TrustState) ?? "candidate",
+    rejectionReason: row.rejection_reason ?? undefined,
+    supersededBy: row.superseded_by ?? undefined,
   };
 }
 

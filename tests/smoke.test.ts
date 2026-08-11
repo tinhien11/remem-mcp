@@ -130,7 +130,8 @@ describeOrSkip("Smoke test: full server over stdio", () => {
     expect(toolNames).toContain("skill_get");
     expect(toolNames).toContain("skill_list");
     expect(toolNames).toContain("skill_search");
-    expect(toolNames.length).toBe(13);
+    expect(toolNames).toContain("resolve");
+    expect(toolNames.length).toBe(14);
   });
 
   it("captures a decision", async () => {

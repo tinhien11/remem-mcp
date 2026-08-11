@@ -317,7 +317,9 @@ describe("Integration: team-shared artifact (JSONL)", () => {
 
     // Add a second capture
     const db2 = new (require("better-sqlite3"))(dbPath);
-    db2.exec(`INSERT INTO captures VALUES ('id-2', 's1', 'a1', 'learning', 'Second', 'h2', '[]', ${Date.now()}, NULL)`);
+    db2.exec(
+      `INSERT INTO captures VALUES ('id-2', 's1', 'a1', 'learning', 'Second', 'h2', '[]', ${Date.now()}, NULL)`,
+    );
     db2.close();
 
     // Second export — should append, not rewrite

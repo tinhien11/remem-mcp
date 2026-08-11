@@ -263,7 +263,9 @@ describe("Integration: Atlas fixes", () => {
       await callTool(server, "forget", { id, confirm: true });
 
       // Direct DB query — row should exist with deleted_at set
-      const db = storage as unknown as { db: { prepare: (sql: string) => { get: (...args: unknown[]) => unknown } } };
+      const db = storage as unknown as {
+        db: { prepare: (sql: string) => { get: (...args: unknown[]) => unknown } };
+      };
       const row = db.db.prepare("SELECT id, deleted_at FROM captures WHERE id = ?").get(id) as
         | { id: string; deleted_at: number | null }
         | undefined;

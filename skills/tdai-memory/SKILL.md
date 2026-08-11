@@ -4,7 +4,7 @@ description: Long-term memory for coding agents. Automatically recall project co
 user-invocable: false
 ---
 
-You have access to a long-term memory server via MCP. It has 13 tools: `recall`, `capture`, `search`, `forget`, `handoff`, `adr`, `knowledge_create`, `knowledge_get`, `knowledge_list`, `knowledge_delete`, `skill_get`, `skill_list`, and `skill_search`. Use them automatically as described below. Do not ask the user for permission to use memory.
+You have access to a long-term memory server via MCP. It has 14 tools: `recall`, `capture`, `search`, `forget`, `resolve`, `handoff`, `adr`, `knowledge_create`, `knowledge_get`, `knowledge_list`, `knowledge_delete`, `skill_get`, `skill_list`, and `skill_search`. Use them automatically as described below. Do not ask the user for permission to use memory.
 
 ## When to recall
 
@@ -126,6 +126,68 @@ search({
   "query": "<specific query>",
   "mode": "hybrid",
   "filters": { "type": "decision", "tags": ["arch"], "team_id": "team-a" }
+})
+```
+
+## Trust states and correction
+
+Every capture has a `trust_state` that controls how it ranks in search and recall:
+
+- `candidate`: the default state for new captures.
+- `verified`: confirmed as correct. Set this when the user confirms a fact, or when you read the value from an authoritative source.
+- `stale`: outdated, replaced by a newer capture. Set by the `resolve` tool or by `capture` with `supersedes`.
+- `rejected`: wrong content, blocked from search and recall. Set by `forget` with `reject: true`.
+
+### When to mark a capture as verified
+
+Set `verified: true` when you capture a fact that the user confirmed, or that you read from an authoritative source (documentation, config file, source code).
+
+```
+capture({
+  "content": "The default port is 8080.",
+  "type": "decision",
+  "verified": true
+})
+```
+
+### When to reject a capture
+
+Call `forget` with `reject: true` when the user tells you a captured fact is wrong. Always provide a `reason` so future agents can see why the content was rejected.
+
+```
+forget({
+  "id": "<capture_id>",
+  "confirm": true,
+  "reject": true,
+  "reason": "Wrong: the port is 9090, not 8080."
+})
+```
+
+When you reject a capture, the content hash is tombstoned. If you try to capture the same content again, the capture is blocked. Set `override_rejection: true` on `capture` to force the capture if the rejection was a mistake.
+
+### When to resolve a conflict
+
+When `capture` reports a conflict, two captures in the same session have similar content. Call `resolve` to mark one as the winner and the other as stale.
+
+```
+resolve({
+  "winner": "<correct_capture_id>",
+  "loser": "<wrong_capture_id>",
+  "reason": "The winner is the renderer default."
+})
+```
+
+The loser is set to `stale` and linked to the winner via `superseded_by`. The stale capture still appears in search results but ranks lower than the winner.
+
+### When to use supersedes
+
+If you capture a new value that replaces an old one, set `supersedes` to the old capture ID. This marks the old capture as `stale` in the same call.
+
+```
+capture({
+  "content": "The port is 9090.",
+  "type": "decision",
+  "supersedes": "<old_capture_id>"
 })
 ```
 
@@ -262,6 +324,10 @@ npx tdai-memory-mcp persona --team-id <id> --agent-id <id> --user-id <id> --writ
 
 Call `forget` ONLY when the user explicitly asks to delete memory. Always require `confirm: true`. Never auto-forget.
 
+There are two modes:
+- **Soft delete** (default): removes the capture from search and recall results.
+- **Reject** (`reject: true, reason: "..."`): marks the capture as `rejected` and tombstones the content hash. This blocks re-capture of the same content. Use this when the user tells you a captured fact is wrong.
+
 ## Lifecycle hooks (automatic)
 
 If hooks are installed (`npx tdai-memory-mcp install-hooks`), memory works automatically:
@@ -269,7 +335,7 @@ If hooks are installed (`npx tdai-memory-mcp install-hooks`), memory works autom
 - **SessionStart**: Recent captures are injected into your context. You do not need to call `recall` manually.
 - **SessionEnd**: When the session ends, a hook silently captures the session summary (first user message + last assistant message) to the memory DB. You do not need to do anything — this runs automatically on session exit.
 
-You can still call `recall`, `capture`, `search`, `forget`, `handoff`, and `adr` manually at any time.
+You can still call `recall`, `capture`, `search`, `forget`, `resolve`, `handoff`, and `adr` manually at any time.
 
 ## Rules
 

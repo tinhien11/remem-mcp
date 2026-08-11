@@ -10,7 +10,7 @@
  * - Tests are skipped automatically if claude is not available
  * - Each test uses an isolated temp HOME (with copied credentials) and temp DB
  */
-import { execSync, execFileSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -96,11 +96,15 @@ function initDb(dbPath: string): void {
 /**
  * Read all captures from DB.
  */
-function readCaptures(dbPath: string): Array<{ id: string; type: string; content: string; tags: string }> {
+function readCaptures(
+  dbPath: string,
+): Array<{ id: string; type: string; content: string; tags: string }> {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const Database = require("better-sqlite3");
   const db = new Database(dbPath, { readonly: true });
-  const rows = db.prepare("SELECT id, type, content, tags FROM captures ORDER BY created_at ASC").all() as Array<{
+  const rows = db
+    .prepare("SELECT id, type, content, tags FROM captures ORDER BY created_at ASC")
+    .all() as Array<{
     id: string;
     type: string;
     content: string;
@@ -149,50 +153,38 @@ describe.skipIf(!CLAUDE_AVAILABLE)("E2E: Claude CLI hook auto-capture", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it(
-    "SessionEnd hook fires and captures the conversation",
-    () => {
-      const output = runClaudePrint(
-        "Write a haiku about SQLite. Just the haiku, nothing else.",
-        tmpDir,
-        dbPath,
-      );
+  it("SessionEnd hook fires and captures the conversation", () => {
+    const output = runClaudePrint(
+      "Write a haiku about SQLite. Just the haiku, nothing else.",
+      tmpDir,
+      dbPath,
+    );
 
-      expect(output.length).toBeGreaterThan(0);
+    expect(output.length).toBeGreaterThan(0);
 
-      // SessionEnd hook should have fired and captured the conversation
-      const captures = readCaptures(dbPath);
-      const autoCaptures = captures.filter((c) => c.type === "conversation");
-      expect(autoCaptures.length).toBeGreaterThanOrEqual(1);
+    // SessionEnd hook should have fired and captured the conversation
+    const captures = readCaptures(dbPath);
+    const autoCaptures = captures.filter((c) => c.type === "conversation");
+    expect(autoCaptures.length).toBeGreaterThanOrEqual(1);
 
-      const capture = autoCaptures[0];
-      const tags = JSON.parse(capture.tags);
-      expect(tags).toContain("auto-capture");
+    const capture = autoCaptures[0];
+    const tags = JSON.parse(capture.tags);
+    expect(tags).toContain("auto-capture");
 
-      // Content should contain the user's prompt
-      expect(capture.content).toContain("haiku");
-    },
-    60000,
-  );
+    // Content should contain the user's prompt
+    expect(capture.content).toContain("haiku");
+  }, 60000);
 
-  it(
-    "captures non-trivial session with user + assistant exchange",
-    () => {
-      const output = runClaudePrint(
-        "What is 2+2? Answer with just the number.",
-        tmpDir,
-        dbPath,
-      );
+  it("captures non-trivial session with user + assistant exchange", () => {
+    const output = runClaudePrint("What is 2+2? Answer with just the number.", tmpDir, dbPath);
 
-      expect(output.length).toBeGreaterThan(0);
+    expect(output.length).toBeGreaterThan(0);
 
-      const captures = readCaptures(dbPath);
-      const autoCaptures = captures.filter((c) => c.type === "conversation");
-      expect(autoCaptures.length).toBeGreaterThanOrEqual(1);
-      expect(autoCaptures[0].content).toContain("2+2");
-    },
-    60000,
-  );
+    const captures = readCaptures(dbPath);
+    const autoCaptures = captures.filter((c) => c.type === "conversation");
+    expect(autoCaptures.length).toBeGreaterThanOrEqual(1);
+    expect(autoCaptures[0].content).toContain("2+2");
+  }, 60000);
 });
 
 describe.skipIf(!CLAUDE_AVAILABLE)("E2E: Claude CLI round-trip (capture → recall)", () => {
@@ -210,75 +202,71 @@ describe.skipIf(!CLAUDE_AVAILABLE)("E2E: Claude CLI round-trip (capture → reca
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it(
-    "Session 1 auto-captures → recall hook outputs the capture",
-    () => {
-      // ─── Session 1: real claude session ──────────────────────
-      const session1Output = runClaudePrint(
-        "Explain in 2 sentences why SQLite is good for local-first apps. Be specific.",
-        tmpDir,
-        dbPath,
-        30000,
+  it("Session 1 auto-captures → recall hook outputs the capture", () => {
+    // ─── Session 1: real claude session ──────────────────────
+    const session1Output = runClaudePrint(
+      "Explain in 2 sentences why SQLite is good for local-first apps. Be specific.",
+      tmpDir,
+      dbPath,
+      30000,
+    );
+
+    expect(session1Output.length).toBeGreaterThan(0);
+
+    // Verify session 1 auto-captured a conversation
+    const captures = readCaptures(dbPath);
+    const autoCaptures = captures.filter((c) => c.type === "conversation");
+    expect(autoCaptures.length).toBeGreaterThanOrEqual(1);
+
+    // ─── Verify recall hook ──────────────────────────────────
+    // The recall hook returns decision/learning/error/task types,
+    // not conversation. So we also manually insert a decision capture
+    // to verify the full round-trip (recall → injection).
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Database = require("better-sqlite3");
+    const writeDb = new Database(dbPath);
+    writeDb
+      .prepare(
+        "INSERT INTO captures (id, session_key, agent_id, type, content, tags, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        "test-decision-1",
+        "session-1",
+        "claude",
+        "decision",
+        "Use SQLite for local-first apps because it is embedded and ACID-compliant",
+        '["sqlite", "local-first"]',
+        Date.now(),
+        null,
       );
+    // Also insert into FTS table
+    writeDb
+      .prepare(
+        "INSERT INTO captures_fts (rowid, id, content, tags, type) VALUES ((SELECT last_insert_rowid()), 'test-decision-1', 'Use SQLite for local-first apps because it is embedded and ACID-compliant', '[\"sqlite\", \"local-first\"]', 'decision')",
+      )
+      .run();
+    writeDb.close();
 
-      expect(session1Output.length).toBeGreaterThan(0);
+    // Now run recall hook as Session 2 would
+    const recallStdin = JSON.stringify({
+      hook_event_name: "SessionStart",
+      session_id: "test-session-2",
+      source: "startup",
+    });
 
-      // Verify session 1 auto-captured a conversation
-      const captures = readCaptures(dbPath);
-      const autoCaptures = captures.filter((c) => c.type === "conversation");
-      expect(autoCaptures.length).toBeGreaterThanOrEqual(1);
+    const recallOutput = execSync(`node ${BIN} hook-recall`, {
+      input: recallStdin,
+      encoding: "utf-8",
+      env: { ...process.env, TDAI_DB_PATH: dbPath },
+      timeout: 10000,
+    });
 
-      // ─── Verify recall hook ──────────────────────────────────
-      // The recall hook returns decision/learning/error/task types,
-      // not conversation. So we also manually insert a decision capture
-      // to verify the full round-trip (recall → injection).
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const Database = require("better-sqlite3");
-      const writeDb = new Database(dbPath);
-      writeDb
-        .prepare(
-          "INSERT INTO captures (id, session_key, agent_id, type, content, tags, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .run(
-          "test-decision-1",
-          "session-1",
-          "claude",
-          "decision",
-          "Use SQLite for local-first apps because it is embedded and ACID-compliant",
-          '["sqlite", "local-first"]',
-          Date.now(),
-          null,
-        );
-      // Also insert into FTS table
-      writeDb
-        .prepare(
-          "INSERT INTO captures_fts (rowid, id, content, tags, type) VALUES ((SELECT last_insert_rowid()), 'test-decision-1', 'Use SQLite for local-first apps because it is embedded and ACID-compliant', '[\"sqlite\", \"local-first\"]', 'decision')",
-        )
-        .run();
-      writeDb.close();
-
-      // Now run recall hook as Session 2 would
-      const recallStdin = JSON.stringify({
-        hook_event_name: "SessionStart",
-        session_id: "test-session-2",
-        source: "startup",
-      });
-
-      const recallOutput = execSync(`node ${BIN} hook-recall`, {
-        input: recallStdin,
-        encoding: "utf-8",
-        env: { ...process.env, TDAI_DB_PATH: dbPath },
-        timeout: 10000,
-      });
-
-      const parsed = JSON.parse(recallOutput);
-      expect(parsed.hookSpecificOutput).toBeDefined();
-      expect(parsed.hookSpecificOutput.additionalContext).toContain("[tdai-memory]");
-      expect(parsed.hookSpecificOutput.additionalContext).toContain("SQLite");
-      expect(parsed.hookSpecificOutput.additionalContext).toContain("local-first");
-    },
-    60000,
-  );
+    const parsed = JSON.parse(recallOutput);
+    expect(parsed.hookSpecificOutput).toBeDefined();
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("[tdai-memory]");
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("SQLite");
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("local-first");
+  }, 60000);
 });
 
 // ─── Devin CLI smoke test ──────────────────────────────────────

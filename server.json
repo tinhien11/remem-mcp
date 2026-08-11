@@ -6,12 +6,12 @@
     "url": "https://github.com/tinhien11/tdai-memory-mcp",
     "source": "github"
   },
-  "version": "0.3.1",
+  "version": "0.4.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "tdai-memory-mcp",
-      "version": "0.3.1",
+      "version": "0.4.0",
       "transport": {
         "type": "stdio"
       }

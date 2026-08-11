@@ -299,7 +299,13 @@ describe("Integration: hook-session-end", () => {
     const lines = [
       JSON.stringify({ type: "system", message: { role: "system", content: "system prompt" } }),
       JSON.stringify({ type: "user", message: { role: "user", content: "Fix the login bug" } }),
-      JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "I fixed the JWT validation." }] } }),
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "I fixed the JWT validation." }],
+        },
+      }),
       JSON.stringify({ type: "user", message: { role: "user", content: "thanks" } }),
     ];
     writeFileSync(transcriptPath, lines.join("\n"));

@@ -24,12 +24,12 @@ describe("Integration: database detection and migration", () => {
     // The database file must exist now.
     expect(existsSync(testDbPath)).toBe(true);
 
-    // The schema_version table must exist and have version 3.
+    // The schema_version table must exist and have the current version.
     const db = new Database(testDbPath);
     const row = db.prepare("SELECT MAX(version) as version FROM schema_version").get() as
       | { version: number }
       | undefined;
-    expect(row?.version).toBe(3);
+    expect(row?.version).toBe(5);
 
     // All tables must exist.
     const tables = db
@@ -109,7 +109,7 @@ describe("Integration: database detection and migration", () => {
     const row = db2.prepare("SELECT MAX(version) as version FROM schema_version").get() as
       | { version: number }
       | undefined;
-    expect(row?.version).toBe(3);
+    expect(row?.version).toBe(5);
 
     // The old data must still be there.
     const oldRow = db2.prepare("SELECT content FROM captures WHERE id = 'old-1'").get() as

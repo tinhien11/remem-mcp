@@ -9,6 +9,9 @@
 
 export type CaptureType = "conversation" | "decision" | "learning" | "task" | "error" | "atom";
 
+/** Trust state for a capture. Controls retrieval filtering and ranking. */
+export type TrustState = "candidate" | "verified" | "rejected" | "stale";
+
 /** A single role-based message within a conversation capture. */
 export interface CaptureMessage {
   role: string;
@@ -34,6 +37,12 @@ export interface CaptureEntry {
   taskId?: string;
   /** Role-based conversation messages. If set, content is a flattened summary. */
   messages?: CaptureMessage[];
+  /** Trust state: candidate (default), verified, rejected, stale. */
+  trustState?: TrustState;
+  /** Reason for rejection, if trust_state is 'rejected'. */
+  rejectionReason?: string;
+  /** ID of the capture that supersedes this one, if trust_state is 'stale'. */
+  supersededBy?: string;
 }
 
 export interface MessageRow {
@@ -84,6 +93,21 @@ export interface DeleteResult {
   captures: number;
   atoms: number;
   scenarios: number;
+}
+
+/** Result of a conflict detection check. */
+export interface ConflictResult {
+  id: string;
+  content: string;
+  distance: number;
+  trustState: TrustState;
+}
+
+/** Result of a resolve operation. */
+export interface ResolveResult {
+  winnerId: string;
+  loserId: string;
+  updated: number;
 }
 
 /** L1 atomic fact extracted from a capture. */
@@ -168,11 +192,30 @@ export interface StorageBackend {
   /** Find captures with content hash matching the given content. Used for dedup. */
   findByContentHash(contentHash: string, sessionKey?: string): Promise<CaptureEntry[]>;
 
+  /** Find rejected tombstones by content hash. Used to block re-extraction of rejected values. */
+  findRejectedByContentHash(contentHash: string, sessionKey?: string): Promise<CaptureEntry[]>;
+
   /** Delete a capture by ID. Also deletes children (atoms, scenarios, messages). */
   delete(id: string): Promise<DeleteResult>;
 
+  /** Reject a capture: set trust_state to 'rejected' with a reason. Keeps the row as a tombstone. */
+  reject(id: string, reason: string): Promise<DeleteResult>;
+
   /** Delete captures that match the filter. */
   deleteByFilter(filter: DeleteFilter): Promise<DeleteResult>;
+
+  /** Find captures with vector distance below threshold (potential conflicts). */
+  findConflicts(
+    embedding: number[],
+    sessionKey: string,
+    threshold: number,
+  ): Promise<ConflictResult[]>;
+
+  /** Mark a capture as stale, superseded by another. Returns the number of rows updated. */
+  supersede(loserId: string, winnerId: string): Promise<ResolveResult>;
+
+  /** Set the trust state of a capture (e.g., candidate → verified). */
+  setTrustState(id: string, state: TrustState): Promise<number>;
 
   // L1 atoms
   putAtom(atom: AtomEntry): Promise<void>;

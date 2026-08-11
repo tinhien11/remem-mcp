@@ -6,7 +6,7 @@ Inherits the L0-L3 layering, RRF fusion, and pluggable storage factory from [Ten
 
 ## Features
 
-- **13 MCP tools** — `recall`, `capture`, `search`, `forget`, `handoff`, `adr`, `knowledge_create/get/list/delete`, `skill_get/list/search`
+- **14 MCP tools** — `recall`, `capture`, `search`, `forget`, `resolve`, `handoff`, `adr`, `knowledge_create/get/list/delete`, `skill_get/list/search`
 - **Hybrid search** — BM25 (FTS5) + vector (sqlite-vec) fused via Reciprocal Rank Fusion in one SQL query
 - **L0-L3 layering** — L0 raw captures (always), L1 atoms, L2 scenarios, L3 persona (LLM-optional)
 - **Local embeddings** — ONNX model, no API call, no network
@@ -17,7 +17,10 @@ Inherits the L0-L3 layering, RRF fusion, and pluggable storage factory from [Ten
 - **Team-shared memory** — commit `.tdai-memory/memory-export.jsonl` to share memory via git. Uses append-only JSONL so parallel branches auto-merge without conflicts
 - **Lifecycle hooks** — `SessionStart` auto-injects recent memory into agent context. `SessionEnd` silently captures session summary to memory DB by reading the transcript. No Stop hook, no agent involvement — capture runs automatically on session exit. Writes activity to `~/.local/share/tdai-memory-mcp/session.log`. Supports Claude Code (`~/.claude/settings.json`) and Devin CLI (`~/.config/devin/config.json`).
 - **Token savings tracker** — `npx tdai-memory-mcp token-stats` prints a report of estimated tokens saved by memory recall and capture preservation.
-- **210 tests** — unit + integration + E2E with real Claude CLI
+- **Trust states** — every capture has a `trust_state`: `candidate` (default), `verified`, `stale`, or `rejected`. Search results rank `verified` above `candidate` above `stale`. Rejected captures are excluded from search and recall.
+- **Rejected-value tombstone** — when you reject a capture with a reason, the content hash is tombstoned. Re-capturing the same content is blocked unless `override_rejection: true` is set.
+- **Conflict detection** — `capture` checks for similar existing captures in the same session via vector similarity. If conflicts are found, the response lists them. Call `resolve` to mark a winner and supersede the loser.
+- **226 tests** — unit + integration + E2E with real MCP server + 16 negative evaluation tests for correction mechanisms
 
 ## Install
 
@@ -83,9 +86,10 @@ Restart your agent after install.
 | Tool | Does | When |
 |---|---|---|
 | `recall` | Hybrid BM25 + vector search of past memory | Before answering, when user references past work |
-| `capture` | Save a decision, learning, task, error, or conversation | After a non-trivial task |
+| `capture` | Save a decision, learning, task, error, or conversation. Set `verified: true` for confirmed facts. Set `supersedes: <old_id>` to mark an old capture as stale. Set `override_rejection: true` to re-capture previously rejected content. | After a non-trivial task |
 | `search` | Filtered search by type, tags, team, user, task, date | When `recall` is too broad |
-| `forget` | Delete memory entries (requires `confirm: true`) | Only when user asks |
+| `forget` | Delete memory entries (requires `confirm: true`). Set `reject: true` with a `reason` to tombstone the content hash and block re-capture. | Only when user asks |
+| `resolve` | Mark one capture as superseding another. The loser is set to `stale` and linked via `superseded_by`. | When `capture` reports a conflict, or to correct an outdated capture |
 | `handoff` | Write a structured context packet for the next session | End of session, or before switching agents |
 | `adr` | Record an Architecture Decision Record | Architectural decisions future agents need |
 | `knowledge_create` | Register a wiki or code-graph asset | Register external knowledge source |
@@ -106,6 +110,53 @@ L3 Persona       → user profile (LLM, optional, one per team/agent/user)
 ```
 
 `recall` reads top-down (L3 → L0). `capture` writes bottom-up (always L0, upper layers when a pipeline runs). Every upper-layer entry links back to its source.
+
+## Correction and trust states
+
+Every capture has a `trust_state` that controls how it appears in search and recall:
+
+| State | Meaning | How it gets set | Search ranking |
+|---|---|---|---|
+| `candidate` | Default state for new captures | `capture` without `verified` | Baseline score |
+| `verified` | Confirmed as correct | `capture` with `verified: true` | 1.5x score boost |
+| `stale` | Outdated, superseded by a newer capture | `resolve` tool, or `capture` with `supersedes` | 0.5x score penalty |
+| `rejected` | Wrong content, tombstoned | `forget` with `reject: true, reason: "..."` | Excluded from search |
+
+### Rejected-value tombstone
+
+When you reject a capture, the content hash is stored as a tombstone. If the agent tries to capture the same content again, the capture is blocked:
+
+```
+Agent: capture { content: "BATCH_MODE = 30m" }
+→ Captured: 01ABC...
+
+User: That is wrong. It should be 60m.
+Agent: forget { id: "01ABC...", confirm: true, reject: true, reason: "Wrong: should be 60m" }
+→ Rejected: 1 captures
+
+Later, agent tries to capture the same wrong value:
+Agent: capture { content: "BATCH_MODE = 30m" }
+→ Blocked: This content was previously rejected (01ABC...). Reason: Wrong: should be 60m. Set override_rejection to true to force capture.
+```
+
+### Conflict detection
+
+When `capture` stores new content, it runs a vector similarity check against existing captures in the same session. If a similar capture is found (cosine distance below 0.15), the response lists the conflict:
+
+```
+Agent: capture { content: "BATCH_MODE = 45m for useEffect" }
+→ Captured: 01DEF...
+   Conflicts detected:
+     - 01GHI... (similarity: 0.92, state: verified): BATCH_MODE = 60m is the renderer default
+   Call resolve to mark one as superseding the other.
+
+Agent: resolve { winner: "01GHI...", loser: "01DEF...", reason: "60m is the renderer default" }
+→ Resolved: 01DEF... is now stale (superseded by 01GHI...). Reason: 60m is the renderer default
+```
+
+### Schema migration
+
+The trust-state columns (`trust_state`, `rejection_reason`, `superseded_by`) are added by an automatic schema migration (v4 → v5) on first run. Existing databases are backed up before migration. All existing captures default to `candidate` trust state.
 
 ## Optional: LLM features
 

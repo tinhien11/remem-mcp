@@ -1,5 +1,5 @@
 -- Schema for tdai-memory-mcp
--- Version: 4
+-- Version: 5
 --
 -- This file runs on the first start. It creates all tables, triggers, and indexes.
 -- It uses CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS.
@@ -25,7 +25,10 @@ CREATE TABLE IF NOT EXISTS captures (
   team_id      TEXT,
   user_id      TEXT,
   task_id      TEXT,
-  deleted_at   INTEGER
+  deleted_at   INTEGER,
+  trust_state      TEXT NOT NULL DEFAULT 'candidate',
+  rejection_reason TEXT,
+  superseded_by    TEXT REFERENCES captures(id)
 );
 
 -- L0 messages: role-based conversation messages linked to a capture.
@@ -153,6 +156,8 @@ CREATE INDEX IF NOT EXISTS idx_captures_hash ON captures (content_hash);
 CREATE INDEX IF NOT EXISTS idx_captures_team ON captures (team_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_captures_user ON captures (team_id, user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_captures_task ON captures (task_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_captures_trust ON captures (trust_state);
+CREATE INDEX IF NOT EXISTS idx_captures_rejected_hash ON captures (content_hash) WHERE trust_state = 'rejected';
 CREATE INDEX IF NOT EXISTS idx_atoms_capture ON atoms (capture_id);
 CREATE INDEX IF NOT EXISTS idx_atoms_team ON atoms (team_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_capture ON messages (capture_id, seq);

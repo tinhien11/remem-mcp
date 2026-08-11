@@ -359,9 +359,11 @@ describe("Integration: capture → recall → search → forget", () => {
     // The handler should apply defaultSessionKey() = sha256(cwd).slice(0,16)
     // which is neither "project-a" nor "project-b", so it should return
     // results from the current project only (or none if nothing matches).
-    const handler = (server as unknown as {
-      _requestHandlers: Map<string, (req: unknown) => Promise<unknown>>;
-    })._requestHandlers.get("tools/call");
+    const handler = (
+      server as unknown as {
+        _requestHandlers: Map<string, (req: unknown) => Promise<unknown>>;
+      }
+    )._requestHandlers.get("tools/call");
     if (!handler) throw new Error("No tools/call handler found");
 
     const result = (await handler({

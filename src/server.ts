@@ -16,11 +16,13 @@ import type {
   CaptureEntry,
   CaptureMessage,
   CaptureType,
+  ConflictResult,
   DeleteFilter,
   DeleteResult,
   KnowledgeEntry,
   SearchMode,
   StorageBackend,
+  TrustState,
 } from "./storage/types.js";
 import { formatResults } from "./tools/format.js";
 import { generateId } from "./utils/ulid.js";
@@ -168,6 +170,23 @@ const TOOLS: Tool[] = [
         tags: { type: "array", items: { type: "string" }, description: "Optional tags." },
         session_key: { type: "string", description: "The session key. The default is hash(cwd)." },
         metadata: { type: "object", description: "Optional metadata." },
+        verified: {
+          type: "boolean",
+          default: false,
+          description:
+            "Set this to true to mark the capture as verified. Verified captures rank higher in recall.",
+        },
+        supersedes: {
+          type: "string",
+          description:
+            "The ID of a capture that this one replaces. The old capture is marked as stale and ranks lower.",
+        },
+        override_rejection: {
+          type: "boolean",
+          default: false,
+          description:
+            "Set this to true to force capture even if the content was previously rejected. Use this only when the rejection reason no longer applies.",
+        },
         ...TENANT_PARAMS,
       },
       required: ["type"],
@@ -245,7 +264,45 @@ const TOOLS: Tool[] = [
           default: false,
           description: "Set this to true to execute the deletion.",
         },
+        reject: {
+          type: "boolean",
+          default: false,
+          description:
+            "Set this to true to reject the capture instead of deleting it. " +
+            "The capture is marked as rejected with a reason, and the same content cannot be captured again. " +
+            "Use this when the memory is wrong, not just outdated.",
+        },
+        reason: {
+          type: "string",
+          description:
+            "The reason for rejection. Required when reject is true. The agent stores this with the tombstone.",
+        },
       },
+    },
+  },
+  {
+    name: "resolve",
+    description:
+      "Resolve a conflict between two captures. Mark one as the winner and the other as stale. " +
+      "Call this tool when capture reports a conflict between two memories.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        winner: {
+          type: "string",
+          description: "The ID of the capture that is correct. This capture stays active.",
+        },
+        loser: {
+          type: "string",
+          description:
+            "The ID of the capture that is wrong or outdated. This capture is marked as stale.",
+        },
+        reason: {
+          type: "string",
+          description: "The reason for the resolution. The agent stores this in the audit log.",
+        },
+      },
+      required: ["winner", "loser"],
     },
   },
   {
@@ -555,6 +612,8 @@ export function createServer(opts: ServerOptions): Server {
         return handleSearch(args, opts);
       case "forget":
         return handleForget(args, opts);
+      case "resolve":
+        return handleResolve(args, opts);
       case "handoff":
         return handleHandoff(args, opts);
       case "adr":
@@ -660,6 +719,9 @@ async function handleCapture(
   const metadata = args.metadata as Record<string, unknown> | undefined;
   const { teamId, userId, taskId } = extractTenant(args);
   const agentId = (args.agent_id as string) ?? detectAgentId();
+  const verified = (args.verified as boolean) ?? false;
+  const supersedes = args.supersedes as string | undefined;
+  const overrideRejection = (args.override_rejection as boolean) ?? false;
 
   // Build content from either 'content' or 'messages'
   let content: string;
@@ -668,7 +730,6 @@ async function handleCapture(
 
   if (rawMessages && rawMessages.length > 0) {
     messages = rawMessages;
-    // Flatten messages into a single text for search and dedup
     content = rawMessages.map((m) => `${m.role}: ${m.content}`).join("\n");
   } else {
     content = args.content as string;
@@ -701,8 +762,33 @@ async function handleCapture(
     ? redact(content)
     : { text: content, redacted: false };
 
-  // Dedup: check if content with the same hash already exists in this session.
   const contentHash = createHash("sha256").update(redactedContent).digest("hex");
+
+  // Rejected-value tombstone: check if this content was previously rejected.
+  if (!overrideRejection) {
+    const rejected = await opts.storage.findRejectedByContentHash(contentHash, sessionKey);
+    if (rejected.length > 0) {
+      const reason = rejected[0].rejectionReason ?? "no reason given";
+      opts.audit.log({
+        tool: "capture",
+        argsHash: AuditLogger.hashArgs({ type, tags, sessionKey, teamId, userId, taskId }),
+        resultLen: 0,
+        quotaHit: false,
+        redacted: wasRedacted,
+      });
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Blocked: This content was previously rejected (${rejected[0].id}). Reason: ${reason}. Set override_rejection to true to force capture.`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+
+  // Dedup: check if content with the same hash already exists in this session.
   const existing = await opts.storage.findByContentHash(contentHash, sessionKey);
   if (existing.length > 0) {
     opts.audit.log({
@@ -723,6 +809,7 @@ async function handleCapture(
   }
 
   const id = generateId();
+  const trustState: TrustState = verified ? "verified" : "candidate";
 
   const entry: CaptureEntry = {
     id,
@@ -737,15 +824,42 @@ async function handleCapture(
     userId,
     taskId,
     messages: messages ?? undefined,
+    trustState,
   };
 
   await opts.storage.put(entry);
 
+  // If supersedes is set, mark the old capture as stale.
+  if (supersedes) {
+    await opts.storage.supersede(supersedes, id);
+  }
+
+  let embedding: number[] | null = null;
   try {
-    const embedding = await opts.embedder.embed(redactedContent);
+    embedding = await opts.embedder.embed(redactedContent);
     await opts.storage.putVector(id, embedding);
   } catch (err) {
     console.error(`[tdai-memory] Embedding failed: ${err}`);
+  }
+
+  // Conflict detection: find similar captures in the same session.
+  let conflictInfo = "";
+  if (embedding) {
+    try {
+      const conflicts = await opts.storage.findConflicts(embedding, sessionKey, 0.15);
+      const filtered = conflicts.filter((c) => c.id !== id);
+      if (filtered.length > 0) {
+        const conflictList = filtered
+          .map(
+            (c) =>
+              `  - ${c.id} (similarity: ${(1 - c.distance).toFixed(2)}, state: ${c.trustState}): ${c.content.slice(0, 120)}`,
+          )
+          .join("\n");
+        conflictInfo = `\nConflicts detected:\n${conflictList}\nCall resolve to mark one as superseding the other.`;
+      }
+    } catch (err) {
+      console.error(`[tdai-memory] Conflict detection failed: ${err}`);
+    }
   }
 
   if (opts.pipeline.name !== "noop") {
@@ -769,7 +883,16 @@ async function handleCapture(
 
   const redactionNote = wasRedacted ? " (secrets were redacted)" : "";
   const msgNote = messages ? ` (${messages.length} messages)` : "";
-  return { content: [{ type: "text", text: `Captured: ${id}${redactionNote}${msgNote}` }] };
+  const trustNote = trustState === "verified" ? " [verified]" : "";
+  const supersedesNote = supersedes ? ` (supersedes ${supersedes})` : "";
+  return {
+    content: [
+      {
+        type: "text",
+        text: `Captured: ${id}${redactionNote}${msgNote}${trustNote}${supersedesNote}${conflictInfo}`,
+      },
+    ],
+  };
 }
 
 /** Handle the search tool. */
@@ -848,6 +971,8 @@ async function handleForget(
   const id = args.id as string | undefined;
   const filter = args.filter as DeleteFilter | undefined;
   const confirm = (args.confirm as boolean) ?? false;
+  const reject = (args.reject as boolean) ?? false;
+  const reason = args.reason as string | undefined;
 
   if (!confirm) {
     return {
@@ -861,8 +986,34 @@ async function handleForget(
     };
   }
 
+  if (reject && !reason) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: "Error: When reject is true, provide a reason. The tool did not delete anything.",
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  if (reject && !id) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: "Error: When reject is true, provide an id. Reject mode does not support filters.",
+        },
+      ],
+      isError: true,
+    };
+  }
+
   let result: DeleteResult;
-  if (id) {
+  if (reject && id) {
+    result = await opts.storage.reject(id, reason!);
+  } else if (id) {
     result = await opts.storage.delete(id);
   } else if (filter) {
     result = await opts.storage.deleteByFilter(filter);
@@ -880,18 +1031,85 @@ async function handleForget(
 
   opts.audit.log({
     tool: "forget",
-    argsHash: AuditLogger.hashArgs({ id, filter }),
+    argsHash: AuditLogger.hashArgs({ id, filter, reject, reason }),
     resultLen: null,
     quotaHit: false,
     redacted: false,
-    mutation: { id, filter, captures: result.captures },
+    mutation: { id, filter, captures: result.captures, reject, reason },
+  });
+
+  const action = reject ? "Rejected" : "Deleted";
+  return {
+    content: [
+      {
+        type: "text",
+        text: `${action}: ${result.captures} captures, ${result.atoms} atoms, ${result.scenarios} scenarios`,
+      },
+    ],
+  };
+}
+
+/** Handle the resolve tool. */
+async function handleResolve(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  const winner = args.winner as string;
+  const loser = args.loser as string;
+  const reason = args.reason as string | undefined;
+
+  if (!winner || !loser) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: "Error: Provide both winner and loser IDs.",
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  if (winner === loser) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: "Error: The winner and loser cannot be the same capture.",
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  const result = await opts.storage.supersede(loser, winner);
+
+  if (result.updated === 0) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Error: Capture ${loser} was not found or is already rejected.`,
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  opts.audit.log({
+    tool: "resolve",
+    argsHash: AuditLogger.hashArgs({ winner, loser, reason }),
+    resultLen: null,
+    quotaHit: false,
+    redacted: false,
+    mutation: { winner, loser, reason },
   });
 
   return {
     content: [
       {
         type: "text",
-        text: `Deleted: ${result.captures} captures, ${result.atoms} atoms, ${result.scenarios} scenarios`,
+        text: `Resolved: ${loser} is now stale (superseded by ${winner}).${reason ? ` Reason: ${reason}` : ""}`,
       },
     ],
   };
