@@ -132,7 +132,7 @@ export function hookRecall(dbPath: string): void {
  * This prevents infinite loops where the agent has nothing to hand off but keeps
  * getting reminded.
  */
-export function hookStop(): void {
+export function hookStop(dbPath?: string): void {
   const chunks: Buffer[] = [];
   process.stdin.setEncoding("utf-8");
   process.stdin.on("data", (chunk) => {
@@ -140,7 +140,7 @@ export function hookStop(): void {
   });
 
   process.stdin.on("end", () => {
-    let input: { stop_hook_active?: boolean } = {};
+    let input: { stop_hook_active?: boolean; session_id?: string; transcript_path?: string } = {};
     let validInput = true;
     try {
       const raw = Buffer.concat(chunks).toString("utf-8");
@@ -153,9 +153,22 @@ export function hookStop(): void {
       validInput = false;
     }
 
-    // Invalid/empty stdin or second+ fire: let the agent stop silently.
-    // This prevents infinite loops on trivial sessions.
-    if (!validInput || input.stop_hook_active) {
+    // Invalid/empty stdin: let the agent stop silently.
+    if (!validInput) {
+      process.stdout.write(JSON.stringify({}));
+      return;
+    }
+
+    // Second+ fire (stop_hook_active): agent already got the reminder.
+    // Try to auto-capture the session transcript before exit.
+    if (input.stop_hook_active) {
+      if (dbPath) {
+        try {
+          captureSessionTranscript(dbPath, input.session_id, input.transcript_path);
+        } catch (err) {
+          logToFile(`Stop: auto-capture error - ${err}`);
+        }
+      }
       process.stdout.write(JSON.stringify({}));
       return;
     }
@@ -197,6 +210,160 @@ function generateId(): string {
 }
 
 /**
+ * Extract user/assistant messages from a transcript file and capture a summary.
+ * Supports Devin CLI (single JSON with steps) and Claude Code (JSONL) formats.
+ * Returns the capture ID, or null if skipped (trivial, duplicate, or no transcript).
+ */
+function captureSessionTranscript(
+  dbPath: string,
+  sessionId?: string,
+  transcriptPath?: string | null,
+): string | null {
+  const sid = sessionId ?? "unknown";
+
+  if (!transcriptPath && !sessionId) {
+    logToFile("Stop: no session_id or transcript_path, skipping auto-capture");
+    return null;
+  }
+
+  // Resolve transcript file path
+  let filePath: string | null = null;
+  if (transcriptPath) {
+    filePath = transcriptPath;
+  } else {
+    filePath = join(defaultTranscriptDir(), `${sid}.json`);
+  }
+
+  if (!existsSync(filePath)) {
+    logToFile(`Stop: transcript not found at ${filePath}`);
+    return null;
+  }
+
+  const raw = readFileSync(filePath, "utf-8");
+  const userMessages: string[] = [];
+  const assistantMessages: string[] = [];
+
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("{") && trimmed.includes('"steps"')) {
+    // Devin CLI: single JSON object with steps array
+    const transcript = JSON.parse(raw);
+    const steps: Array<{ source: string; message: string }> = transcript.steps ?? [];
+    for (const step of steps) {
+      if (step.source === "user" && typeof step.message === "string") {
+        if (
+          !step.message.startsWith("[tdai-memory]") &&
+          !step.message.startsWith("Code was changed")
+        ) {
+          userMessages.push(step.message);
+        }
+      }
+      if (
+        (step.source === "assistant" || step.source === "agent") &&
+        typeof step.message === "string"
+      ) {
+        assistantMessages.push(step.message);
+      }
+    }
+  } else {
+    // Claude Code: JSONL format (one JSON object per line)
+    const lines = raw.split("\n").filter((l) => l.trim());
+    for (const line of lines) {
+      try {
+        const obj = JSON.parse(line);
+        if (obj.type !== "user" && obj.type !== "assistant") continue;
+
+        const msg = obj.message;
+        if (!msg || typeof msg !== "object") continue;
+
+        const role = msg.role ?? obj.type;
+        const content = msg.content;
+
+        let text = "";
+        if (typeof content === "string") {
+          text = content;
+        } else if (Array.isArray(content)) {
+          text = content
+            .filter(
+              (c: unknown) =>
+                typeof c === "object" && c !== null && (c as { type?: string }).type === "text",
+            )
+            .map((c: unknown) => (c as { text?: string }).text ?? "")
+            .join(" ");
+        }
+
+        if (!text.trim()) continue;
+        if (text.startsWith("[tdai-memory]") || text.startsWith("Code was changed")) continue;
+
+        if (role === "user") {
+          userMessages.push(text);
+        } else if (role === "assistant") {
+          assistantMessages.push(text);
+        }
+      } catch {
+        // Skip unparseable lines
+      }
+    }
+  }
+
+  // Skip trivial sessions
+  if (userMessages.length <= 1 && assistantMessages.length === 0) {
+    logToFile(`Stop: trivial session (${userMessages.length} user msgs), skipping auto-capture`);
+    return null;
+  }
+
+  // Build capture content: first user message (task) + last assistant message (outcome)
+  const firstUser = userMessages[0] ?? "";
+  const lastAssistant = assistantMessages[assistantMessages.length - 1] ?? "";
+  const taskText = firstUser.slice(0, 500);
+  const outcomeText = lastAssistant.slice(0, 500);
+
+  const content = `Session: ${sid}\nTask: ${taskText}\nOutcome: ${outcomeText}`;
+  const contentHash = createHash("sha256").update(content).digest("hex");
+
+  const db = new Database(dbPath);
+  const sessionKey = sid.slice(0, 16);
+  const now = Date.now();
+  const id = generateId();
+
+  // Check for duplicate
+  const existing = db.prepare("SELECT id FROM captures WHERE content_hash = ?").get(contentHash) as
+    | { id: string }
+    | undefined;
+
+  if (existing) {
+    db.close();
+    logToFile(`Stop: duplicate capture (hash match), skipping. id=${existing.id}`);
+    return null;
+  }
+
+  db.prepare(`
+    INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    sessionKey,
+    "devin-cli",
+    "conversation",
+    content,
+    contentHash,
+    JSON.stringify(["auto-capture", "stop"]),
+    now,
+    JSON.stringify({
+      session_id: sid,
+      user_messages: userMessages.length,
+      assistant_messages: assistantMessages.length,
+    }),
+  );
+
+  db.close();
+
+  logToFile(
+    `Stop: auto-captured session ${sid} (${userMessages.length} user msgs, ${assistantMessages.length} assistant msgs). id=${id}`,
+  );
+  return id;
+}
+
+/**
  * Hook handler for SessionEnd event.
  * Reads the session transcript, extracts user/assistant messages,
  * and captures a summary directly to the memory DB.
@@ -219,162 +386,10 @@ export function hookSessionEnd(dbPath: string): void {
       const sessionId = input.session_id ?? "unknown";
       const transcriptPath = input.transcript_path ?? null;
 
-      if (!transcriptPath && !sessionId) {
-        logToFile("SessionEnd: no session_id or transcript_path in stdin, skipping");
-        process.stdout.write(JSON.stringify({}));
-        return;
+      const id = captureSessionTranscript(dbPath, sessionId, transcriptPath);
+      if (id) {
+        logToFile(`SessionEnd: captured via shared function. id=${id}`);
       }
-
-      // Resolve transcript file path
-      let filePath: string | null = null;
-      if (transcriptPath) {
-        // Claude Code provides the path directly
-        filePath = transcriptPath;
-      } else {
-        // Devin CLI: construct path from session_id
-        filePath = join(defaultTranscriptDir(), `${sessionId}.json`);
-      }
-
-      if (!existsSync(filePath)) {
-        logToFile(`SessionEnd: transcript not found at ${filePath}`);
-        process.stdout.write(JSON.stringify({}));
-        return;
-      }
-
-      const raw = readFileSync(filePath, "utf-8");
-
-      // Extract user and assistant messages
-      const userMessages: string[] = [];
-      const assistantMessages: string[] = [];
-
-      // Detect format: JSONL (Claude Code) vs single JSON (Devin CLI)
-      const trimmed = raw.trim();
-      if (trimmed.startsWith("{") && trimmed.includes('"steps"')) {
-        // Devin CLI: single JSON object with steps array
-        const transcript = JSON.parse(raw);
-        const steps: Array<{ source: string; message: string }> = transcript.steps ?? [];
-        for (const step of steps) {
-          if (step.source === "user" && typeof step.message === "string") {
-            if (
-              !step.message.startsWith("[tdai-memory]") &&
-              !step.message.startsWith("Code was changed")
-            ) {
-              userMessages.push(step.message);
-            }
-          }
-          if (
-            (step.source === "assistant" || step.source === "agent") &&
-            typeof step.message === "string"
-          ) {
-            assistantMessages.push(step.message);
-          }
-        }
-      } else {
-        // Claude Code: JSONL format (one JSON object per line)
-        const lines = raw.split("\n").filter((l) => l.trim());
-        for (const line of lines) {
-          try {
-            const obj = JSON.parse(line);
-            if (obj.type !== "user" && obj.type !== "assistant") continue;
-
-            const msg = obj.message;
-            if (!msg || typeof msg !== "object") continue;
-
-            const role = msg.role ?? obj.type;
-            const content = msg.content;
-
-            let text = "";
-            if (typeof content === "string") {
-              text = content;
-            } else if (Array.isArray(content)) {
-              text = content
-                .filter(
-                  (c: unknown) =>
-                    typeof c === "object" && c !== null && (c as { type?: string }).type === "text",
-                )
-                .map((c: unknown) => (c as { text?: string }).text ?? "")
-                .join(" ");
-            }
-
-            if (!text.trim()) continue;
-
-            // Skip system-injected messages
-            if (text.startsWith("[tdai-memory]") || text.startsWith("Code was changed")) continue;
-
-            if (role === "user") {
-              userMessages.push(text);
-            } else if (role === "assistant") {
-              assistantMessages.push(text);
-            }
-          } catch {
-            // Skip unparseable lines
-          }
-        }
-      }
-
-      // Skip trivial sessions (1 or fewer user messages)
-      if (userMessages.length <= 1 && assistantMessages.length === 0) {
-        logToFile(
-          `SessionEnd: trivial session (${userMessages.length} user msgs), skipping capture`,
-        );
-        process.stdout.write(JSON.stringify({}));
-        return;
-      }
-
-      // Build capture content: first user message (task) + last assistant message (outcome)
-      const firstUser = userMessages[0] ?? "";
-      const lastAssistant = assistantMessages[assistantMessages.length - 1] ?? "";
-
-      // Truncate to keep capture concise
-      const taskText = firstUser.slice(0, 500);
-      const outcomeText = lastAssistant.slice(0, 500);
-
-      const content = `Session: ${sessionId}\nTask: ${taskText}\nOutcome: ${outcomeText}`;
-      const contentHash = createHash("sha256").update(content).digest("hex");
-
-      // Write directly to SQLite (like hook-recall does)
-      const db = new Database(dbPath);
-      const sessionKey = sessionId.slice(0, 16);
-      const now = Date.now();
-      const id = generateId();
-
-      // Check for duplicate
-      const existing = db
-        .prepare("SELECT id FROM captures WHERE content_hash = ?")
-        .get(contentHash) as { id: string } | undefined;
-
-      if (existing) {
-        db.close();
-        logToFile(`SessionEnd: duplicate capture (hash match), skipping. id=${existing.id}`);
-        process.stdout.write(JSON.stringify({}));
-        return;
-      }
-
-      // Insert capture — FTS5 trigger auto-populates the search index
-      db.prepare(`
-        INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        id,
-        sessionKey,
-        "devin-cli",
-        "conversation",
-        content,
-        contentHash,
-        JSON.stringify(["auto-capture", "session-end"]),
-        now,
-        JSON.stringify({
-          session_id: sessionId,
-          user_messages: userMessages.length,
-          assistant_messages: assistantMessages.length,
-        }),
-      );
-
-      db.close();
-
-      logToFile(
-        `SessionEnd: captured session ${sessionId} (${userMessages.length} user msgs, ${assistantMessages.length} assistant msgs). id=${id}`,
-      );
       process.stdout.write(JSON.stringify({}));
     } catch (err) {
       process.stderr.write(`[tdai-memory hook-session-end] Error: ${err}\n`);

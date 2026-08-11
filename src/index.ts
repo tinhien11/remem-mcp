@@ -196,7 +196,7 @@ async function main(): Promise<void> {
     return;
   }
   if (arg === "hook-stop") {
-    hookStop();
+    hookStop(defaultDbPath());
     return;
   }
   if (arg === "hook-session-end") {
