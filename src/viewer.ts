@@ -144,6 +144,145 @@ export function startViewer(dbPath: string, port: number): Server {
       return;
     }
 
+    // CodeGraph: list symbols
+    if (url.pathname === "/api/codegraph/symbols") {
+      const limit = Math.min(Number(url.searchParams.get("limit") ?? 100), 500);
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      const search = url.searchParams.get("q");
+      let sql = "SELECT * FROM symbols";
+      const params: unknown[] = [];
+      if (search) {
+        sql += " WHERE name LIKE ?";
+        params.push(`%${search}%`);
+      }
+      sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
+      params.push(limit, offset);
+      try {
+        const rows = db.prepare(sql).all(...params);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(rows));
+      } catch {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify([]));
+      }
+      return;
+    }
+
+    // CodeGraph: stats
+    if (url.pathname === "/api/codegraph/stats") {
+      try {
+        const symbols = db.prepare("SELECT COUNT(*) as count FROM symbols").get();
+        const calls = db.prepare("SELECT COUNT(*) as count FROM calls").get();
+        const imports = db.prepare("SELECT COUNT(*) as count FROM imports").get();
+        const byLang = db
+          .prepare(
+            "SELECT language, COUNT(*) as count FROM symbols GROUP BY language ORDER BY count DESC",
+          )
+          .all();
+        const byKind = db
+          .prepare("SELECT kind, COUNT(*) as count FROM symbols GROUP BY kind ORDER BY count DESC")
+          .all();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ symbols, calls, imports, byLang, byKind }));
+      } catch {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            symbols: { count: 0 },
+            calls: { count: 0 },
+            imports: { count: 0 },
+            byLang: [],
+            byKind: [],
+          }),
+        );
+      }
+      return;
+    }
+
+    // CodeGraph: callers of a symbol
+    if (url.pathname === "/api/codegraph/callers") {
+      const symbolId = url.searchParams.get("id");
+      if (!symbolId) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing 'id'" }));
+        return;
+      }
+      try {
+        const rows = db
+          .prepare(
+            "SELECT s.*, c.line FROM calls c JOIN symbols s ON s.id = c.caller_id WHERE c.callee_id = ? ORDER BY c.line",
+          )
+          .all(symbolId);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(rows));
+      } catch {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify([]));
+      }
+      return;
+    }
+
+    // CodeGraph: callees of a symbol
+    if (url.pathname === "/api/codegraph/callees") {
+      const symbolId = url.searchParams.get("id");
+      if (!symbolId) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing 'id'" }));
+        return;
+      }
+      try {
+        const rows = db
+          .prepare(
+            "SELECT s.*, c.line, c.callee_name FROM calls c LEFT JOIN symbols s ON s.id = c.callee_id WHERE c.caller_id = ? ORDER BY c.line",
+          )
+          .all(symbolId);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(rows));
+      } catch {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify([]));
+      }
+      return;
+    }
+
+    // Wiki: list pages
+    if (url.pathname === "/api/wiki/pages") {
+      const limit = Math.min(Number(url.searchParams.get("limit") ?? 100), 500);
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      const search = url.searchParams.get("q");
+      let sql = "SELECT * FROM wiki_pages";
+      const params: unknown[] = [];
+      if (search) {
+        sql += " WHERE title LIKE ? OR content LIKE ?";
+        params.push(`%${search}%`, `%${search}%`);
+      }
+      sql += " ORDER BY ingested_at DESC LIMIT ? OFFSET ?";
+      params.push(limit, offset);
+      try {
+        const rows = db.prepare(sql).all(...params);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(rows));
+      } catch {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify([]));
+      }
+      return;
+    }
+
+    // Wiki: stats
+    if (url.pathname === "/api/wiki/stats") {
+      try {
+        const pages = db.prepare("SELECT COUNT(*) as count FROM wiki_pages").get();
+        const links = db.prepare("SELECT COUNT(*) as count FROM wiki_links").get();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ pages, links }));
+      } catch {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ pages: { count: 0 }, links: { count: 0 } }));
+      }
+      return;
+    }
+
     res.writeHead(404, { "Content-Type": "text/plain" });
     res.end("Not found");
   });
@@ -312,6 +451,25 @@ function renderPage(): string {
 
   .nav-btn:hover { transform: scale(1.02); }
   .nav-btn:active { transform: scale(0.98); }
+
+  .nav-tabs {
+    display: flex;
+    gap: 0.25rem;
+  }
+  .nav-tab {
+    padding: 0.375rem 0.875rem;
+    background: transparent;
+    color: var(--text-dim);
+    border: 1px solid var(--hairline);
+    border-radius: 9999px;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.3s var(--bezier);
+  }
+  .nav-tab:hover { color: var(--text); border-color: var(--hairline-strong); }
+  .nav-tab.active { color: var(--accent); border-color: var(--accent); background: var(--accent-glow); }
 
   .nav-btn-icon {
     width: 28px; height: 28px;
@@ -865,6 +1023,11 @@ function renderPage(): string {
     <span class="nav-brand-dot"></span>
     tdai-memory
   </div>
+  <div class="nav-tabs">
+    <button class="nav-tab active" data-tab="memory" onclick="switchTab('memory')">Memory</button>
+    <button class="nav-tab" data-tab="codegraph" onclick="switchTab('codegraph')">CodeGraph</button>
+    <button class="nav-tab" data-tab="wiki" onclick="switchTab('wiki')">Wiki</button>
+  </div>
   <input class="nav-search" id="search" placeholder="Search captures..." autocomplete="off" />
   <button class="nav-btn" onclick="doSearch()">
     Search
@@ -872,6 +1035,8 @@ function renderPage(): string {
   </button>
 </nav>
 
+<!-- ─── Memory tab ─── -->
+<div id="tab-memory" class="tab-content">
 <!-- ─── Hero ─── -->
 <section class="hero">
   <div class="hero-eyebrow">
@@ -901,6 +1066,43 @@ function renderPage(): string {
 
 <!-- ─── Capture grid ─── -->
 <div class="capture-grid" id="list"></div>
+</div>
+
+<!-- ─── CodeGraph tab ─── -->
+<div id="tab-codegraph" class="tab-content" style="display:none">
+  <section class="hero">
+    <div class="hero-eyebrow">
+      <span class="hero-eyebrow-dot"></span>
+      Code Symbol Index
+    </div>
+    <h1>CodeGraph<br>Tree-sitter powered.</h1>
+    <p class="hero-sub">Functions, classes, methods, and call relationships — indexed from 9 languages, searchable and traceable.</p>
+    <div class="stats-grid" id="cgStatsGrid"></div>
+  </section>
+  <div class="filter-bar">
+    <input class="nav-search" id="cgSearch" placeholder="Search symbols..." autocomplete="off" onkeydown="if(event.key==='Enter')loadSymbols()" />
+    <button class="nav-btn" onclick="loadSymbols()">Search</button>
+  </div>
+  <div class="capture-grid" id="cgList"></div>
+</div>
+
+<!-- ─── Wiki tab ─── -->
+<div id="tab-wiki" class="tab-content" style="display:none">
+  <section class="hero">
+    <div class="hero-eyebrow">
+      <span class="hero-eyebrow-dot"></span>
+      Documentation Index
+    </div>
+    <h1>Wiki<br>Markdown knowledge graph.</h1>
+    <p class="hero-sub">Pages, headings, frontmatter, and links — indexed from your docs, searchable and cross-referenced.</p>
+    <div class="stats-grid" id="wikiStatsGrid"></div>
+  </section>
+  <div class="filter-bar">
+    <input class="nav-search" id="wikiSearch" placeholder="Search wiki..." autocomplete="off" onkeydown="if(event.key==='Enter')loadWiki()" />
+    <button class="nav-btn" onclick="loadWiki()">Search</button>
+  </div>
+  <div class="capture-grid" id="wikiList"></div>
+</div>
 
 <!-- ─── Modal ─── -->
 <div class="modal-overlay" id="modalOverlay">
@@ -997,6 +1199,119 @@ function renderPage(): string {
         + '<div class="stat-value" style="' + (c.color ? 'color:' + c.color : '') + '">' + c.value + '</div>'
         + '<div class="stat-label">' + c.label + '</div>'
         + '</div></div>';
+    }).join('');
+  }
+
+  // ─── Tab switching ───
+  function switchTab(tab) {
+    document.querySelectorAll('.nav-tab').forEach(function(t) { t.classList.remove('active'); });
+    document.querySelector('[data-tab="' + tab + '"]').classList.add('active');
+    document.querySelectorAll('.tab-content').forEach(function(c) { c.style.display = 'none'; });
+    var el = document.getElementById('tab-' + tab);
+    if (el) el.style.display = '';
+    if (tab === 'codegraph') { loadCgStats(); loadSymbols(); }
+    if (tab === 'wiki') { loadWikiStats(); loadWiki(); }
+  }
+
+  // ─── CodeGraph ───
+  async function loadCgStats() {
+    try {
+      var r = await fetch('/api/codegraph/stats');
+      var d = await r.json();
+      var grid = document.getElementById('cgStatsGrid');
+      var cards = [
+        { value: d.symbols.count, label: 'Symbols', color: 'var(--accent)' },
+        { value: d.calls.count, label: 'Calls', color: 'var(--sky)' },
+        { value: d.imports.count, label: 'Imports', color: 'var(--emerald)' }
+      ];
+      (d.byLang || []).forEach(function(l) {
+        cards.push({ value: l.count, label: l.language, color: 'var(--text-dim)' });
+      });
+      grid.innerHTML = cards.map(function(c) {
+        return '<div class="stat-card"><div class="stat-card-inner">'
+          + '<div class="stat-value" style="' + (c.color ? 'color:' + c.color : '') + '">' + c.value + '</div>'
+          + '<div class="stat-label">' + c.label + '</div>'
+          + '</div></div>';
+      }).join('');
+    } catch(e) { document.getElementById('cgStatsGrid').innerHTML = '<p style="color:var(--text-dim);padding:2rem">No CodeGraph data. Run: tdai-memory-mcp index --path src --repo .</p>'; }
+  }
+
+  async function loadSymbols() {
+    var q = document.getElementById('cgSearch').value;
+    var url = '/api/codegraph/symbols?limit=100' + (q ? '&q=' + encodeURIComponent(q) : '');
+    var r = await fetch(url);
+    var rows = await r.json();
+    var list = document.getElementById('cgList');
+    if (!rows || rows.length === 0) {
+      list.innerHTML = '<p style="color:var(--text-dim);padding:2rem">No symbols found.</p>';
+      return;
+    }
+    list.innerHTML = rows.map(function(s) {
+      return '<div class="card" onclick="showSymbolDetails(\\''+s.id+'\\')">'
+        + '<div class="card-header">'
+        + '<span class="card-type" style="color:var(--accent)">' + s.kind + '</span>'
+        + '<span class="card-time">' + s.language + '</span>'
+        + '</div>'
+        + '<div class="card-content">' + s.name + '</div>'
+        + '<div class="card-meta">' + s.file_path + ':' + s.line_start + '</div>'
+        + '</div>';
+    }).join('');
+  }
+
+  async function showSymbolDetails(id) {
+    var r1 = await fetch('/api/codegraph/callers?id=' + id);
+    var callers = await r1.json();
+    var r2 = await fetch('/api/codegraph/callees?id=' + id);
+    var callees = await r2.json();
+    var html = '<div style="font-family:JetBrains Mono,monospace;font-size:0.8rem;line-height:1.6">'
+      + '<h4 style="color:var(--accent);margin-bottom:0.5rem">Callers (' + callers.length + ')</h4>'
+      + (callers.length ? callers.map(function(c) { return '<div>' + c.kind + ' <b>' + c.name + '</b> — ' + c.file_path + ':' + c.line + '</div>'; }).join('') : '<div style="color:var(--text-dim)">None</div>')
+      + '<h4 style="color:var(--sky);margin:1rem 0 0.5rem">Callees (' + callees.length + ')</h4>'
+      + (callees.length ? callees.map(function(c) { return '<div>' + (c.name ? c.kind + ' <b>' + c.name + '</b> — ' + c.file_path + ':' + c.line : '<b>' + c.callee_name + '</b> — <i style="color:var(--text-dim)">unresolved</i>') + '</div>'; }).join('') : '<div style="color:var(--text-dim)">None</div>')
+      + '</div>';
+    document.getElementById('modalTitle').textContent = 'Symbol Details';
+    document.getElementById('modalBody').innerHTML = html;
+    document.getElementById('modalConfirm').style.display = 'none';
+    document.getElementById('modalOverlay').classList.add('active');
+  }
+
+  // ─── Wiki ───
+  async function loadWikiStats() {
+    try {
+      var r = await fetch('/api/wiki/stats');
+      var d = await r.json();
+      var grid = document.getElementById('wikiStatsGrid');
+      var cards = [
+        { value: d.pages.count, label: 'Pages', color: 'var(--accent)' },
+        { value: d.links.count, label: 'Links', color: 'var(--sky)' }
+      ];
+      grid.innerHTML = cards.map(function(c) {
+        return '<div class="stat-card"><div class="stat-card-inner">'
+          + '<div class="stat-value" style="color:' + c.color + '">' + c.value + '</div>'
+          + '<div class="stat-label">' + c.label + '</div>'
+          + '</div></div>';
+      }).join('');
+    } catch(e) { document.getElementById('wikiStatsGrid').innerHTML = '<p style="color:var(--text-dim);padding:2rem">No Wiki data. Run: tdai-memory-mcp wiki ingest --path docs --repo .</p>'; }
+  }
+
+  async function loadWiki() {
+    var q = document.getElementById('wikiSearch').value;
+    var url = '/api/wiki/pages?limit=100' + (q ? '&q=' + encodeURIComponent(q) : '');
+    var r = await fetch(url);
+    var rows = await r.json();
+    var list = document.getElementById('wikiList');
+    if (!rows || rows.length === 0) {
+      list.innerHTML = '<p style="color:var(--text-dim);padding:2rem">No wiki pages found.</p>';
+      return;
+    }
+    list.innerHTML = rows.map(function(p) {
+      return '<div class="card">'
+        + '<div class="card-header">'
+        + '<span class="card-type" style="color:var(--accent)">page</span>'
+        + '</div>'
+        + '<div class="card-content">' + p.title + '</div>'
+        + '<div class="card-meta">' + p.source_file + '</div>'
+        + '</div>';
     }).join('');
   }
 
