@@ -321,11 +321,11 @@ flowchart TD
 
 Run `npx tdai-memory-mcp token-stats` to see live numbers from your own DB and session log.
 
-## Showcase: What makes tdai-memory-mcp different
+## Showcase
 
-### 1. Three knowledge layers in one database
+### Three knowledge layers in one database
 
-Most MCP servers do one thing. Memory servers store text. Code-graph servers index symbols. Wiki servers index docs. tdai-memory-mcp stores all three in one SQLite file. One `recall` call returns matching captures, code symbols, and wiki pages together.
+Memory, CodeGraph, and Wiki share one SQLite file. A `recall` call returns matching captures, code symbols, and wiki pages in one response.
 
 ![Memory tab](docs/screenshots/showcase-3in1-memory.png)
 
@@ -333,11 +333,9 @@ Most MCP servers do one thing. Memory servers store text. Code-graph servers ind
 
 ![Wiki tab](docs/screenshots/showcase-3in1-wiki.png)
 
-The stats bar at the top shows all three layers at once. No other MCP server combines memory, code graph, and documentation in one database.
+### Automatic recall and capture via hooks
 
-### 2. Automatic recall and capture via hooks
-
-Other memory MCP servers require the agent to call `recall` and `capture` manually. tdai-memory-mcp uses lifecycle hooks so memory works without agent involvement:
+Lifecycle hooks run memory operations without agent involvement:
 
 - **SessionStart** — injects recent memories into agent context before the first message
 - **Stop** — prompts the agent to save a handoff packet before the session ends
@@ -345,7 +343,7 @@ Other memory MCP servers require the agent to call `recall` and `capture` manual
 
 ![Hook system](docs/screenshots/showcase-hook-system.png)
 
-The hook log at `~/.local/share/tdai-memory-mcp/session.log` records every automatic recall and capture event. Works with both Devin CLI and Claude Code.
+The hook log at `~/.local/share/tdai-memory-mcp/session.log` records every event. Works with Devin CLI and Claude Code.
 
 ## Configuration
 
