@@ -39,46 +39,44 @@ Everything stays in one SQLite file on your machine. No data leaves your compute
 
 ## Quick start
 
+### Option A: One command (all agents)
+
 ```bash
-# 1. Register MCP server + hooks (one command, 0.2s)
 npx tdai-memory-mcp setup
-
-# 2. Restart your agent
-
-# 3. Use your agent normally — it remembers automatically
 ```
 
-Optional: if you want your agent to recall/capture mid-session (not just on start/stop), install the skill file:
+Auto-detects Claude Code, Devin, Cursor, Codex. Registers MCP server + hooks. Restart your agent — done.
 
+> **Global install** (faster hooks, no npx delay): `npm install -g tdai-memory-mcp` — postinstall auto-runs setup.
+
+### Option B: Per-agent one-liners
+
+**Claude Code:**
 ```bash
-npx tdai-memory-mcp install-skill   # adds ~4K tokens to context
+claude mcp add tdai-memory --scope user -- npx -y tdai-memory-mcp
+npx tdai-memory-mcp install-hooks
 ```
 
-### Claude Code
+**Cursor** — click to install:
 
-Add to `~/.claude.json`:
+[![Install in Cursor](https://img.shields.io/badge/Cursor-Install-blue)](cursor://anysphere.cursor-deeplink/mcp/install?name=tdai-memory&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsInRkYWktbWVtb3J5LW1jcCJdfQ==)
 
+Or manually add to `~/.cursor/mcp.json`:
 ```json
 {
   "mcpServers": {
-    "tdai-memory": {
-      "command": "npx",
-      "args": ["-y", "tdai-memory-mcp"]
-    }
+    "tdai-memory": { "command": "npx", "args": ["-y", "tdai-memory-mcp"] }
   }
 }
 ```
 
-### Devin CLI
-
+**Devin CLI:**
 ```bash
 devin mcp add tdai-memory --scope user -- npx -y tdai-memory-mcp
+npx tdai-memory-mcp install-hooks
 ```
 
-### Codex CLI
-
-Add to `~/.codex/config.toml`:
-
+**Codex CLI** — add to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.tdai-memory]
 command = "npx"
@@ -91,6 +89,20 @@ TDAI_GLOBAL_SESSION_KEY = "global"
 Then run `npx tdai-memory-mcp install-hooks` to wire SessionStart + Stop hooks.
 
 > **Codex sandbox note:** MCP tools require `sandbox_mode = "danger-full-access"`. SessionStart hooks work with `workspace-write` — memory is still injected on startup.
+
+### Verify setup
+
+```bash
+npx tdai-memory-mcp doctor
+```
+
+Checks: binary, MCP configs, hooks, skill, database. Prints `[OK]` or `[FAIL]` for each.
+
+### Optional: mid-session recall/capture skill
+
+```bash
+npx tdai-memory-mcp install-skill   # adds ~4K tokens to context
+```
 
 ## How it works
 

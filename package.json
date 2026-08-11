@@ -1,7 +1,7 @@
 {
   "name": "tdai-memory-mcp",
   "mcpName": "io.github.tinhien11/tdai-memory-mcp",
-  "version": "0.5.12",
+  "version": "0.5.13",
   "description": "Long-term memory for AI coding agents. Memory + CodeGraph + Wiki in one SQLite file. Auto-recall, auto-capture, no API key, no cloud.",
   "type": "module",
   "license": "MIT",
@@ -44,7 +44,8 @@
   },
   "files": [
     "dist",
-    "skills"
+    "skills",
+    "scripts"
   ],
   "engines": {
     "node": ">=22"
@@ -57,6 +58,7 @@
     "lint": "biome check src",
     "format": "biome format --write src",
     "start": "node dist/index.js",
+    "postinstall": "node scripts/postinstall.js",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
