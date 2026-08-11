@@ -1,9 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const BIN = join(process.cwd(), "dist", "index.js");
 
@@ -16,7 +15,10 @@ function runHook(subcommand: string, stdin: string, env?: Record<string, string>
   });
 }
 
-function makeDb(dbPath: string, captures: Array<{ id: string; type: string; content: string; tags?: string }>): void {
+function makeDb(
+  dbPath: string,
+  captures: Array<{ id: string; type: string; content: string; tags?: string }>,
+): void {
   const Database = require("better-sqlite3");
   const db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
@@ -119,9 +121,7 @@ describe("Integration: hook-recall", () => {
 
   it("truncates long content to 200 chars", () => {
     const longContent = "A".repeat(500);
-    makeDb(dbPath, [
-      { id: "1", type: "decision", content: longContent, tags: "[]" },
-    ]);
+    makeDb(dbPath, [{ id: "1", type: "decision", content: longContent, tags: "[]" }]);
 
     const stdin = JSON.stringify({
       hook_event_name: "SessionStart",
@@ -159,37 +159,170 @@ describe("Integration: hook-recall", () => {
   });
 });
 
-describe("Integration: hook-stop", () => {
-  it("outputs handoff reminder", () => {
-    const stdin = JSON.stringify({
-      hook_event_name: "Stop",
-      session_id: "test-session-123",
+describe("Integration: hook-session-end", () => {
+  let tmpDir: string;
+  let dbPath: string;
+  let transcriptDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "tdai-session-end-"));
+    dbPath = join(tmpDir, "memory.db");
+    transcriptDir = join(tmpDir, "transcripts");
+    mkdirSync(transcriptDir, { recursive: true });
+
+    // Create a minimal DB with schema
+    const Database = require("better-sqlite3");
+    const db = new Database(dbPath);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL, applied_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS captures (
+        id TEXT PRIMARY KEY, session_key TEXT NOT NULL, agent_id TEXT NOT NULL,
+        type TEXT NOT NULL, content TEXT NOT NULL, content_hash TEXT, tags TEXT,
+        created_at INTEGER NOT NULL, metadata TEXT, team_id TEXT, user_id TEXT, task_id TEXT
+      );
+      CREATE VIRTUAL TABLE IF NOT EXISTS captures_fts USING fts5(
+        id UNINDEXED, content, tags, type UNINDEXED
+      );
+      CREATE TRIGGER IF NOT EXISTS captures_ai AFTER INSERT ON captures BEGIN
+        INSERT INTO captures_fts (rowid, id, content, tags, type)
+        VALUES (new.rowid, new.id, new.content, new.tags, new.type);
+      END;
+      INSERT INTO schema_version VALUES (3, ${Date.now()});
+    `);
+    db.close();
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("captures session summary from transcript", () => {
+    const sessionId = "test-session-abc";
+    const transcript = {
+      schema_version: "ATIF-v1.7",
+      session_id: sessionId,
+      steps: [
+        { source: "system", message: "system prompt" },
+        { source: "user", message: "Fix the auth bug in login flow" },
+        { source: "assistant", message: "I fixed the JWT refresh token rotation." },
+      ],
+    };
+    writeFileSync(join(transcriptDir, `${sessionId}.json`), JSON.stringify(transcript));
+
+    const stdin = JSON.stringify({ hook_event_name: "SessionEnd", session_id: sessionId });
+    runHook("hook-session-end", stdin, {
+      TDAI_DB_PATH: dbPath,
+      DEVIN_TRANSCRIPTS_DIR: transcriptDir,
     });
 
-    const output = runHook("hook-stop", stdin);
-    const parsed = JSON.parse(output);
+    // Verify capture was written to DB
+    const Database = require("better-sqlite3");
+    const db = new Database(dbPath, { readonly: true });
+    const rows = db.prepare("SELECT * FROM captures WHERE type = ?").all("conversation") as any[];
+    db.close();
 
-    expect(parsed.hookSpecificOutput).toBeDefined();
-    expect(parsed.hookSpecificOutput.hookEventName).toBe("Stop");
-    expect(parsed.hookSpecificOutput.additionalContext).toContain("handoff");
-    expect(parsed.hookSpecificOutput.additionalContext).toContain("task");
-    expect(parsed.hookSpecificOutput.additionalContext).toContain("status");
+    expect(rows.length).toBe(1);
+    expect(rows[0].content).toContain("Fix the auth bug");
+    expect(rows[0].content).toContain("JWT refresh token");
+    expect(JSON.parse(rows[0].tags)).toContain("auto-capture");
   });
 
-  it("works with empty stdin", () => {
-    const output = runHook("hook-stop", "");
-    const parsed = JSON.parse(output);
+  it("skips trivial sessions", () => {
+    const sessionId = "trivial-session";
+    const transcript = {
+      session_id: sessionId,
+      steps: [{ source: "user", message: "hi" }],
+    };
+    writeFileSync(join(transcriptDir, `${sessionId}.json`), JSON.stringify(transcript));
 
-    expect(parsed.hookSpecificOutput).toBeDefined();
-    expect(parsed.hookSpecificOutput.hookEventName).toBe("Stop");
+    const stdin = JSON.stringify({ hook_event_name: "SessionEnd", session_id: sessionId });
+    runHook("hook-session-end", stdin, {
+      TDAI_DB_PATH: dbPath,
+      DEVIN_TRANSCRIPTS_DIR: transcriptDir,
+    });
+
+    const Database = require("better-sqlite3");
+    const db = new Database(dbPath, { readonly: true });
+    const rows = db.prepare("SELECT * FROM captures").all() as any[];
+    db.close();
+
+    expect(rows.length).toBe(0);
   });
 
-  it("works with any stdin content", () => {
-    const output = runHook("hook-stop", "random text not json");
-    const parsed = JSON.parse(output);
+  it("skips when transcript not found", () => {
+    const stdin = JSON.stringify({ hook_event_name: "SessionEnd", session_id: "nonexistent" });
+    const output = runHook("hook-session-end", stdin, {
+      TDAI_DB_PATH: dbPath,
+      DEVIN_TRANSCRIPTS_DIR: transcriptDir,
+    });
 
-    expect(parsed.hookSpecificOutput).toBeDefined();
-    expect(parsed.hookSpecificOutput.additionalContext).toContain("handoff");
+    expect(JSON.parse(output)).toEqual({});
+  });
+
+  it("skips duplicate captures", () => {
+    const sessionId = "dup-session";
+    const transcript = {
+      session_id: sessionId,
+      steps: [
+        { source: "user", message: "Do something" },
+        { source: "assistant", message: "Done." },
+      ],
+    };
+    writeFileSync(join(transcriptDir, `${sessionId}.json`), JSON.stringify(transcript));
+
+    const stdin = JSON.stringify({ hook_event_name: "SessionEnd", session_id: sessionId });
+
+    // Run twice
+    runHook("hook-session-end", stdin, {
+      TDAI_DB_PATH: dbPath,
+      DEVIN_TRANSCRIPTS_DIR: transcriptDir,
+    });
+    runHook("hook-session-end", stdin, {
+      TDAI_DB_PATH: dbPath,
+      DEVIN_TRANSCRIPTS_DIR: transcriptDir,
+    });
+
+    const Database = require("better-sqlite3");
+    const db = new Database(dbPath, { readonly: true });
+    const rows = db.prepare("SELECT * FROM captures WHERE type = ?").all("conversation") as any[];
+    db.close();
+
+    expect(rows.length).toBe(1);
+  });
+
+  it("captures from Claude Code JSONL transcript via transcript_path", () => {
+    const sessionId = "claude-code-session";
+    const transcriptPath = join(transcriptDir, `${sessionId}.jsonl`);
+
+    // Claude Code stores transcripts as JSONL (one JSON object per line)
+    const lines = [
+      JSON.stringify({ type: "system", message: { role: "system", content: "system prompt" } }),
+      JSON.stringify({ type: "user", message: { role: "user", content: "Fix the login bug" } }),
+      JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "I fixed the JWT validation." }] } }),
+      JSON.stringify({ type: "user", message: { role: "user", content: "thanks" } }),
+    ];
+    writeFileSync(transcriptPath, lines.join("\n"));
+
+    // Claude Code SessionEnd stdin includes transcript_path directly
+    const stdin = JSON.stringify({
+      hook_event_name: "SessionEnd",
+      session_id: sessionId,
+      transcript_path: transcriptPath,
+      cwd: "/data/projects/test",
+      reason: "other",
+    });
+
+    runHook("hook-session-end", stdin, { TDAI_DB_PATH: dbPath });
+
+    const Database = require("better-sqlite3");
+    const db = new Database(dbPath, { readonly: true });
+    const rows = db.prepare("SELECT * FROM captures WHERE type = ?").all("conversation") as any[];
+    db.close();
+
+    expect(rows.length).toBe(1);
+    expect(rows[0].content).toContain("Fix the login bug");
+    expect(rows[0].content).toContain("JWT validation");
+    expect(JSON.parse(rows[0].tags)).toContain("auto-capture");
   });
 });
 
@@ -220,9 +353,9 @@ describe("Integration: install-hooks", () => {
     const config = JSON.parse(readFileSync(configPath, "utf-8"));
     expect(config.hooks).toBeDefined();
     expect(config.hooks.SessionStart).toBeDefined();
-    expect(config.hooks.Stop).toBeDefined();
+    expect(config.hooks.SessionEnd).toBeDefined();
     expect(config.hooks.SessionStart[0].hooks[0].command).toContain("hook-recall");
-    expect(config.hooks.Stop[0].hooks[0].command).toContain("hook-stop");
+    expect(config.hooks.SessionEnd[0].hooks[0].command).toContain("hook-session-end");
     // Preserves existing config
     expect(config.agent.model).toBe("test");
   });
@@ -251,16 +384,16 @@ describe("Integration: install-hooks", () => {
     expect(config.hooks.PreToolUse).toBeDefined();
     expect(config.hooks.PreToolUse[0].hooks[0].command).toBe("echo existing");
     expect(config.hooks.SessionStart).toBeDefined();
-    expect(config.hooks.Stop).toBeDefined();
+    expect(config.hooks.SessionEnd).toBeDefined();
   });
 
-  it("uninstall-hooks removes only SessionStart and Stop", () => {
+  it("uninstall-hooks removes only SessionStart and SessionEnd", () => {
     const configPath = join(fakeHome, ".config", "devin", "config.json");
     const configWithHooks = {
       agent: { model: "test" },
       hooks: {
         SessionStart: [{ hooks: [{ type: "command", command: "test" }] }],
-        Stop: [{ hooks: [{ type: "command", command: "test" }] }],
+        SessionEnd: [{ hooks: [{ type: "command", command: "test" }] }],
         PreToolUse: [{ hooks: [{ type: "command", command: "keep-me" }] }],
       },
     };
@@ -273,7 +406,7 @@ describe("Integration: install-hooks", () => {
 
     const config = JSON.parse(readFileSync(configPath, "utf-8"));
     expect(config.hooks.SessionStart).toBeUndefined();
-    expect(config.hooks.Stop).toBeUndefined();
+    expect(config.hooks.SessionEnd).toBeUndefined();
     expect(config.hooks.PreToolUse).toBeDefined();
     expect(config.hooks.PreToolUse[0].hooks[0].command).toBe("keep-me");
   });
@@ -284,7 +417,7 @@ describe("Integration: install-hooks", () => {
       agent: { model: "test" },
       hooks: {
         SessionStart: [{ hooks: [{ type: "command", command: "test" }] }],
-        Stop: [{ hooks: [{ type: "command", command: "test" }] }],
+        SessionEnd: [{ hooks: [{ type: "command", command: "test" }] }],
       },
     };
     writeFileSync(configPath, JSON.stringify(configWithOnlyOurHooks, null, 2));

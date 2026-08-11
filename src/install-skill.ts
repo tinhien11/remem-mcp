@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 
 /** Skill file content. Loaded from the bundled skills/ directory. */
 function loadSkillContent(): string {

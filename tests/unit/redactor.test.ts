@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { redact } from "../../src/security/redactor.js";
 
 describe("redactor", () => {
@@ -11,7 +11,7 @@ describe("redactor", () => {
   });
 
   it("redacts a GitHub personal access token", () => {
-    const text = "Use ghp_" + "a".repeat(36) + " to access the repo.";
+    const text = `Use ghp_${"a".repeat(36)} to access the repo.`;
     const result = redact(text);
     expect(result.redacted).toBe(true);
     expect(result.text).toContain("[REDACTED]");

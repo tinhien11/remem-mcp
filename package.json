@@ -1,7 +1,7 @@
 {
   "name": "tdai-memory-mcp",
   "mcpName": "io.github.tinhien11/tdai-memory-mcp",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "Local-first MCP memory server with TDAI-style layering. No Gateway. No API key required.",
   "type": "module",
   "license": "MIT",
@@ -49,9 +49,10 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
     "@huggingface/transformers": "^4.2.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "better-sqlite3": "^13.0.3",
+    "gpt-tokenizer": "^3.4.0",
     "sqlite-vec": "^0.1.9",
     "ulid": "^3.0.2"
   },

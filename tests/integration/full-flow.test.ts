@@ -1,16 +1,16 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { SQLiteBackend } from "../../src/storage/sqlite.js";
+import { createHash } from "node:crypto";
+import { existsSync, rmSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { Embedder } from "../../src/embedding/types.js";
 import { NoopPipeline } from "../../src/pipeline/noop.js";
 import { AuditLogger } from "../../src/security/audit.js";
-import { redact } from "../../src/security/redactor.js";
 import { enforceQuota } from "../../src/security/quota.js";
-import { generateId } from "../../src/utils/ulid.js";
-import type { Embedder } from "../../src/embedding/types.js";
+import { redact } from "../../src/security/redactor.js";
+import { SQLiteBackend } from "../../src/storage/sqlite.js";
 import type { CaptureEntry, CaptureType } from "../../src/storage/types.js";
-import { join } from "node:path";
-import { homedir } from "node:os";
-import { unlinkSync, existsSync, rmSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { generateId } from "../../src/utils/ulid.js";
 
 const testDir = join(homedir(), ".local", "share", "tdai-memory-mcp", "test-integration");
 const testDbPath = join(testDir, "memory.db");
@@ -80,7 +80,12 @@ async function capture(
 /** Simulate the recall tool logic. */
 async function recall(
   ctx: ToolContext,
-  args: { query: string; sessionKey?: string; limit?: number; mode?: "hybrid" | "keyword" | "vector" },
+  args: {
+    query: string;
+    sessionKey?: string;
+    limit?: number;
+    mode?: "hybrid" | "keyword" | "vector";
+  },
 ) {
   const limit = Math.min(args.limit ?? 10, 50);
   const mode = args.mode ?? "hybrid";
@@ -105,10 +110,7 @@ async function recall(
 }
 
 /** Simulate the forget tool logic. */
-async function forget(
-  ctx: ToolContext,
-  args: { id?: string; confirm?: boolean },
-) {
+async function forget(ctx: ToolContext, args: { id?: string; confirm?: boolean }) {
   if (!args.confirm) {
     return { error: "Set confirm to true to execute the deletion." };
   }
@@ -149,9 +151,21 @@ describe("Integration: capture → recall → search → forget", () => {
   });
 
   it("captures multiple entries and recalls the most relevant", async () => {
-    await capture(ctx, { content: "The RRF constant k is 60.", type: "learning", tags: ["search"] });
-    await capture(ctx, { content: "We use FTS5 for full-text search.", type: "decision", tags: ["search"] });
-    await capture(ctx, { content: "The audit log is append-only JSONL.", type: "decision", tags: ["security"] });
+    await capture(ctx, {
+      content: "The RRF constant k is 60.",
+      type: "learning",
+      tags: ["search"],
+    });
+    await capture(ctx, {
+      content: "We use FTS5 for full-text search.",
+      type: "decision",
+      tags: ["search"],
+    });
+    await capture(ctx, {
+      content: "The audit log is append-only JSONL.",
+      type: "decision",
+      tags: ["security"],
+    });
 
     const results = await recall(ctx, { query: "search FTS5 RRF", mode: "hybrid" });
     expect(results.length).toBeGreaterThan(0);
@@ -197,10 +211,14 @@ describe("Integration: capture → recall → search → forget", () => {
 
   it("searches with a tag filter", async () => {
     await capture(ctx, { content: "Tagged entry about SQLite.", type: "decision", tags: ["db"] });
-    await capture(ctx, { content: "Tagged entry about Postgres.", type: "decision", tags: ["db", "cloud"] });
+    await capture(ctx, {
+      content: "Tagged entry about Postgres.",
+      type: "decision",
+      tags: ["db", "cloud"],
+    });
     await capture(ctx, { content: "Untagged entry about config.", type: "decision" });
 
-    const results = await ctx.storage.search("SQLite Postgres config", null, {
+    const _results = await ctx.storage.search("SQLite Postgres config", null, {
       sessionKey: "test-session",
       limit: 10,
       offset: 0,
@@ -287,8 +305,16 @@ describe("Integration: capture → recall → search → forget", () => {
       sessionKey: "project-b",
     });
 
-    const resultsA = await recall(ctx, { query: "decision", sessionKey: "project-a", mode: "keyword" });
-    const resultsB = await recall(ctx, { query: "decision", sessionKey: "project-b", mode: "keyword" });
+    const resultsA = await recall(ctx, {
+      query: "decision",
+      sessionKey: "project-a",
+      mode: "keyword",
+    });
+    const resultsB = await recall(ctx, {
+      query: "decision",
+      sessionKey: "project-b",
+      mode: "keyword",
+    });
 
     expect(resultsA.length).toBe(1);
     expect(resultsA[0].entry.content).toContain("project A");

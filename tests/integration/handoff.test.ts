@@ -1,14 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { SQLiteBackend } from "../../src/storage/sqlite.js";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { Embedder } from "../../src/embedding/types.js";
 import { NoopPipeline } from "../../src/pipeline/noop.js";
 import { AuditLogger } from "../../src/security/audit.js";
 import { createServer } from "../../src/server.js";
-import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { createHash } from "node:crypto";
-import type { Embedder } from "../../src/embedding/types.js";
-import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { SQLiteBackend } from "../../src/storage/sqlite.js";
 
 /** Mock embedder. Returns a deterministic vector based on the text hash. */
 class MockEmbedder implements Embedder {
@@ -37,9 +37,11 @@ async function callTool(
   // Access the internal handler via the server's request handler
   // We use the server's internal _handlers via setRequestHandler
   // Instead, we call the handler directly through the server object
-  const handler = (server as unknown as {
-    _requestHandlers: Map<string, (req: unknown) => Promise<unknown>>;
-  })._requestHandlers.get("tools/call");
+  const handler = (
+    server as unknown as {
+      _requestHandlers: Map<string, (req: unknown) => Promise<unknown>>;
+    }
+  )._requestHandlers.get("tools/call");
   if (!handler) throw new Error("No tools/call handler found");
 
   const result = (await handler({
@@ -52,9 +54,11 @@ async function callTool(
 
 /** Helper: list tools on the server. */
 async function listTools(server: Server): Promise<string[]> {
-  const handler = (server as unknown as {
-    _requestHandlers: Map<string, (req: unknown) => Promise<unknown>>;
-  })._requestHandlers.get("tools/list");
+  const handler = (
+    server as unknown as {
+      _requestHandlers: Map<string, (req: unknown) => Promise<unknown>>;
+    }
+  )._requestHandlers.get("tools/list");
   if (!handler) throw new Error("No tools/list handler found");
 
   const result = (await handler({ method: "tools/list" })) as {
@@ -126,21 +130,19 @@ describe("Integration: handoff tool", () => {
     });
 
     expect(results.length).toBeGreaterThan(0);
-    const handoffEntry = results.find(
-      (r) => r.entry.tags.includes("handoff"),
-    );
+    const handoffEntry = results.find((r) => r.entry.tags.includes("handoff"));
     expect(handoffEntry).toBeDefined();
-    expect(handoffEntry!.entry.type).toBe("task");
-    expect(handoffEntry!.entry.content).toContain("# Handoff: Fix auth bug in login flow");
-    expect(handoffEntry!.entry.content).toContain("Status: in_progress");
-    expect(handoffEntry!.entry.content).toContain("## Progress");
-    expect(handoffEntry!.entry.content).toContain("JWT refresh token not rotating");
-    expect(handoffEntry!.entry.content).toContain("## Decisions");
-    expect(handoffEntry!.entry.content).toContain("Rotate refresh tokens");
-    expect(handoffEntry!.entry.content).toContain("## Files");
-    expect(handoffEntry!.entry.content).toContain("src/auth/jwt.ts:45-60");
-    expect(handoffEntry!.entry.content).toContain("## Next steps");
-    expect(handoffEntry!.entry.content).toContain("Implement rotation logic");
+    expect(handoffEntry?.entry.type).toBe("task");
+    expect(handoffEntry?.entry.content).toContain("# Handoff: Fix auth bug in login flow");
+    expect(handoffEntry?.entry.content).toContain("Status: in_progress");
+    expect(handoffEntry?.entry.content).toContain("## Progress");
+    expect(handoffEntry?.entry.content).toContain("JWT refresh token not rotating");
+    expect(handoffEntry?.entry.content).toContain("## Decisions");
+    expect(handoffEntry?.entry.content).toContain("Rotate refresh tokens");
+    expect(handoffEntry?.entry.content).toContain("## Files");
+    expect(handoffEntry?.entry.content).toContain("src/auth/jwt.ts:45-60");
+    expect(handoffEntry?.entry.content).toContain("## Next steps");
+    expect(handoffEntry?.entry.content).toContain("Implement rotation logic");
   });
 
   it("saves a handoff with only required fields", async () => {
@@ -162,10 +164,10 @@ describe("Integration: handoff tool", () => {
 
     const handoffEntry = results.find((r) => r.entry.tags.includes("handoff"));
     expect(handoffEntry).toBeDefined();
-    expect(handoffEntry!.entry.content).toContain("# Handoff: Quick task");
-    expect(handoffEntry!.entry.content).not.toContain("## Decisions");
-    expect(handoffEntry!.entry.content).not.toContain("## Files");
-    expect(handoffEntry!.entry.content).not.toContain("## Next steps");
+    expect(handoffEntry?.entry.content).toContain("# Handoff: Quick task");
+    expect(handoffEntry?.entry.content).not.toContain("## Decisions");
+    expect(handoffEntry?.entry.content).not.toContain("## Files");
+    expect(handoffEntry?.entry.content).not.toContain("## Next steps");
   });
 
   it("stores structured metadata in the handoff capture", async () => {
@@ -187,14 +189,17 @@ describe("Integration: handoff tool", () => {
 
     const handoffEntry = results.find((r) => r.entry.tags.includes("handoff"));
     expect(handoffEntry).toBeDefined();
-    expect(handoffEntry!.entry.metadata).toBeDefined();
-    expect(handoffEntry!.entry.metadata!.handoff).toBe(true);
-    expect(handoffEntry!.entry.metadata!.task).toBe("Refactor payment module");
-    expect(handoffEntry!.entry.metadata!.status).toBe("blocked");
-    expect(handoffEntry!.entry.metadata!.progress).toBe("Waiting on API spec from team.");
-    expect(handoffEntry!.entry.metadata!.decisions).toEqual(["Use strategy pattern"]);
-    expect(handoffEntry!.entry.metadata!.files).toEqual(["src/payment/service.ts"]);
-    expect(handoffEntry!.entry.metadata!.nextSteps).toEqual(["Get API spec", "Implement StripeStrategy"]);
+    expect(handoffEntry?.entry.metadata).toBeDefined();
+    expect(handoffEntry?.entry.metadata?.handoff).toBe(true);
+    expect(handoffEntry?.entry.metadata?.task).toBe("Refactor payment module");
+    expect(handoffEntry?.entry.metadata?.status).toBe("blocked");
+    expect(handoffEntry?.entry.metadata?.progress).toBe("Waiting on API spec from team.");
+    expect(handoffEntry?.entry.metadata?.decisions).toEqual(["Use strategy pattern"]);
+    expect(handoffEntry?.entry.metadata?.files).toEqual(["src/payment/service.ts"]);
+    expect(handoffEntry?.entry.metadata?.nextSteps).toEqual([
+      "Get API spec",
+      "Implement StripeStrategy",
+    ]);
   });
 
   it("tags handoff with status tag", async () => {
@@ -213,8 +218,8 @@ describe("Integration: handoff tool", () => {
 
     const handoffEntry = results.find((r) => r.entry.tags.includes("handoff"));
     expect(handoffEntry).toBeDefined();
-    expect(handoffEntry!.entry.tags).toContain("handoff");
-    expect(handoffEntry!.entry.tags).toContain("status:needs_review");
+    expect(handoffEntry?.entry.tags).toContain("handoff");
+    expect(handoffEntry?.entry.tags).toContain("status:needs_review");
   });
 
   it("rejects duplicate handoff with same content", async () => {
@@ -313,8 +318,8 @@ describe("Integration: handoff tool", () => {
 
     const handoffEntry = results.find((r) => r.entry.tags.includes("handoff"));
     expect(handoffEntry).toBeDefined();
-    expect(handoffEntry!.entry.content).not.toContain("## Decisions");
-    expect(handoffEntry!.entry.content).not.toContain("## Files");
-    expect(handoffEntry!.entry.content).not.toContain("## Next steps");
+    expect(handoffEntry?.entry.content).not.toContain("## Decisions");
+    expect(handoffEntry?.entry.content).not.toContain("## Files");
+    expect(handoffEntry?.entry.content).not.toContain("## Next steps");
   });
 });

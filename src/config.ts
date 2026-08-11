@@ -1,6 +1,6 @@
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { join } from "node:path";
 
 /**
  * Configuration for the tdai-memory-mcp server.
@@ -50,7 +50,7 @@ export interface SecurityConfig {
 }
 
 /** Current schema version. Increment when the schema changes. */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 3;
 
 /** Default data directory. */
 function defaultDataDir(): string {
@@ -77,7 +77,7 @@ function parseBool(val: string | undefined, defaultVal: boolean): boolean {
 }
 
 /** Parse an integer environment variable. */
-function parseInt(val: string | undefined, defaultVal: number): number {
+function parseEnvInt(val: string | undefined, defaultVal: number): number {
   if (val === undefined) return defaultVal;
   const num = Number.parseInt(val, 10);
   return Number.isNaN(num) ? defaultVal : num;
@@ -106,9 +106,13 @@ export function loadConfig(): Config {
 
   const env = process.env;
 
-  const apiKey = env.TDAI_LLM_API_KEY ?? (file?.llm as Record<string, unknown>)?.apiKey as string | undefined;
-  const baseUrl = env.TDAI_LLM_BASE_URL ?? (file?.llm as Record<string, unknown>)?.baseUrl as string | undefined;
-  const model = env.TDAI_LLM_MODEL ?? (file?.llm as Record<string, unknown>)?.model as string | undefined;
+  const apiKey =
+    env.TDAI_LLM_API_KEY ?? ((file?.llm as Record<string, unknown>)?.apiKey as string | undefined);
+  const baseUrl =
+    env.TDAI_LLM_BASE_URL ??
+    ((file?.llm as Record<string, unknown>)?.baseUrl as string | undefined);
+  const model =
+    env.TDAI_LLM_MODEL ?? ((file?.llm as Record<string, unknown>)?.model as string | undefined);
 
   const llm: LlmConfig | undefined = apiKey
     ? {
@@ -127,11 +131,23 @@ export function loadConfig(): Config {
     auditLogPath: env.TDAI_AUDIT_LOG_PATH ?? (file?.auditLogPath as string) ?? defaultAuditPath,
     llm,
     security: {
-      redactSecrets: parseBool(env.TDAI_REDACT_SECRETS, fileSecurity.redactSecrets as boolean ?? true),
-      maxTokensRecall: parseInt(env.TDAI_MAX_TOKENS_RECALL, fileSecurity.maxTokensRecall as number ?? 4000),
-      maxTokensSearch: parseInt(env.TDAI_MAX_TOKENS_SEARCH, fileSecurity.maxTokensSearch as number ?? 8000),
-      maxContentLength: parseInt(env.TDAI_MAX_CONTENT_LENGTH, fileSecurity.maxContentLength as number ?? 50000),
-      auditLog: parseBool(env.TDAI_AUDIT_LOG, fileSecurity.auditLog as boolean ?? true),
+      redactSecrets: parseBool(
+        env.TDAI_REDACT_SECRETS,
+        (fileSecurity.redactSecrets as boolean) ?? true,
+      ),
+      maxTokensRecall: parseEnvInt(
+        env.TDAI_MAX_TOKENS_RECALL,
+        (fileSecurity.maxTokensRecall as number) ?? 4000,
+      ),
+      maxTokensSearch: parseEnvInt(
+        env.TDAI_MAX_TOKENS_SEARCH,
+        (fileSecurity.maxTokensSearch as number) ?? 8000,
+      ),
+      maxContentLength: parseEnvInt(
+        env.TDAI_MAX_CONTENT_LENGTH,
+        (fileSecurity.maxContentLength as number) ?? 50000,
+      ),
+      auditLog: parseBool(env.TDAI_AUDIT_LOG, (fileSecurity.auditLog as boolean) ?? true),
     },
   };
 }

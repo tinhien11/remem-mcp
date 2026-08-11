@@ -1,13 +1,11 @@
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
-import { join, dirname, basename } from "node:path";
-import { homedir } from "node:os";
+import { basename, dirname, join } from "node:path";
 
 /** Backup the database and audit log to a timestamped directory. */
 export function backup(dbPath: string, auditPath: string, outputDir: string): void {
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const backupDir = outputDir === "-"
-    ? join(dirname(dbPath), "backups", timestamp)
-    : join(outputDir, timestamp);
+  const backupDir =
+    outputDir === "-" ? join(dirname(dbPath), "backups", timestamp) : join(outputDir, timestamp);
 
   if (!existsSync(backupDir)) {
     mkdirSync(backupDir, { recursive: true });

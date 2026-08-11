@@ -1,21 +1,30 @@
+import { createHash } from "node:crypto";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
-import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { type RankedResult, rrfMerge } from "../utils/rrf.js";
+import { generateId } from "../utils/ulid.js";
 import type {
+  AtomEntry,
   CaptureEntry,
   DeleteFilter,
   DeleteResult,
+  KnowledgeEntry,
+  MessageRow,
+  PersonaEntry,
   QueryOptions,
+  ScenarioEntry,
   SearchResult,
+  SkillEntry,
   StorageBackend,
 } from "./types.js";
-import { rrfMerge, type RankedResult } from "../utils/rrf.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/** Current schema version. */
+const CURRENT_SCHEMA_VERSION = 3;
 
 /**
  * SQLite storage backend.
@@ -34,6 +43,7 @@ export class SQLiteBackend implements StorageBackend {
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("synchronous = NORMAL");
     this.db.pragma("busy_timeout = 5000");
+    this.db.pragma("foreign_keys = ON");
 
     // Load the sqlite-vec extension
     sqliteVec.load(this.db);
@@ -44,11 +54,6 @@ export class SQLiteBackend implements StorageBackend {
 
   /**
    * Detect the database state and run the correct migration path.
-   *
-   * 1. If the database does not exist: create the full schema.
-   * 2. If the database exists and the schema version is current: do nothing.
-   * 3. If the database exists and the schema version is older: backup, migrate, update version.
-   * 4. If the database exists but has no schema_version table: treat as version 0, backup, migrate all.
    */
   private detectAndMigrate(dbPath: string): void {
     const hasVersionTable = this.db
@@ -57,19 +62,24 @@ export class SQLiteBackend implements StorageBackend {
 
     if (!hasVersionTable) {
       // Fresh database or old database without versioning
-      // Check if there are any existing tables (besides sqlite internal)
       const tables = this.db
         .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
         .all() as { name: string }[];
 
-      if (tables.length > 0) {
-        // Old database without versioning. Backup first.
+      if (tables.length === 0) {
+        // Fresh database: run the full schema, write current version
+        this.runSchema();
+        this.writeSchemaVersion(CURRENT_SCHEMA_VERSION);
+      } else {
+        // Old database without versioning. Backup, then run incremental migrations
+        // to add missing columns before running the full schema (which creates new tables).
         this.backupDatabase(dbPath);
+        this.migrateV1ToV2();
+        this.migrateV2ToV3();
+        // Now run the full schema to create any remaining tables/triggers/indexes
+        this.runSchema();
+        this.writeSchemaVersion(CURRENT_SCHEMA_VERSION);
       }
-
-      // Run the full schema
-      this.runSchema();
-      this.writeSchemaVersion(1);
       return;
     }
 
@@ -89,14 +99,17 @@ export class SQLiteBackend implements StorageBackend {
       this.migrateV1ToV2();
       this.writeSchemaVersion(2);
     }
-    // If currentVersion >= 2, the schema is current. Do nothing.
+    if (currentVersion < 3) {
+      this.backupDatabase(dbPath);
+      this.migrateV2ToV3();
+      this.writeSchemaVersion(3);
+    }
   }
 
   /** Backup the database to a .bak file. */
   private backupDatabase(dbPath: string): void {
     const backupPath = `${dbPath}.bak`;
     try {
-      // Close the WAL files first by checkpointing
       this.db.pragma("wal_checkpoint(FULL)");
       copyFileSync(dbPath, backupPath);
       console.error(`[tdai-memory] Backed up database to ${backupPath}`);
@@ -107,7 +120,6 @@ export class SQLiteBackend implements StorageBackend {
 
   /** Run the schema.sql file. Idempotent. */
   private runSchema(): void {
-    // Try multiple locations: dist/storage/, dist/, src/storage/
     const candidates = [
       join(__dirname, "storage", "schema.sql"),
       join(__dirname, "schema.sql"),
@@ -132,10 +144,9 @@ export class SQLiteBackend implements StorageBackend {
 
   /** Write the schema version to the schema_version table. */
   private writeSchemaVersion(version: number): void {
-    this.db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (?, ?)").run(
-      version,
-      Date.now(),
-    );
+    this.db
+      .prepare("INSERT INTO schema_version (version, applied_at) VALUES (?, ?)")
+      .run(version, Date.now());
   }
 
   /** Migrate schema v1 → v2: add content_hash column + index. */
@@ -166,11 +177,90 @@ export class SQLiteBackend implements StorageBackend {
     }
   }
 
+  /** Migrate schema v2 → v3: add multi-tenant columns + new tables (messages, knowledge, skills, persona). */
+  private migrateV2ToV3(): void {
+    // Helper: add a column to a table if the table exists and the column is missing
+    const addColumnIfMissing = (table: string, column: string, definition: string) => {
+      const tableExists = this.db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+        .get(table) as { name: string } | undefined;
+      if (!tableExists) return;
+      const cols = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+      if (!cols.some((c) => c.name === column)) {
+        this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+      }
+    };
+
+    // Add multi-tenant columns to captures
+    addColumnIfMissing("captures", "team_id", "TEXT");
+    addColumnIfMissing("captures", "user_id", "TEXT");
+    addColumnIfMissing("captures", "task_id", "TEXT");
+
+    // Add multi-tenant columns to atoms
+    addColumnIfMissing("atoms", "team_id", "TEXT");
+    addColumnIfMissing("atoms", "agent_id", "TEXT");
+    addColumnIfMissing("atoms", "user_id", "TEXT");
+
+    // Add multi-tenant columns to scenarios
+    addColumnIfMissing("scenarios", "team_id", "TEXT");
+    addColumnIfMissing("scenarios", "agent_id", "TEXT");
+    addColumnIfMissing("scenarios", "user_id", "TEXT");
+
+    // Create new tables (idempotent — schema.sql also has them, but run here for migration path
+    // before schema.sql so that index creation in schema.sql doesn't fail)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS messages (
+        id          TEXT PRIMARY KEY,
+        capture_id  TEXT NOT NULL REFERENCES captures(id) ON DELETE CASCADE,
+        role        TEXT NOT NULL,
+        content     TEXT NOT NULL,
+        seq         INTEGER NOT NULL,
+        created_at  INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS persona (
+        team_id    TEXT NOT NULL,
+        agent_id   TEXT NOT NULL,
+        user_id    TEXT NOT NULL,
+        content    TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (team_id, agent_id, user_id)
+      );
+      CREATE TABLE IF NOT EXISTS knowledge (
+        id          TEXT PRIMARY KEY,
+        team_id     TEXT NOT NULL,
+        name        TEXT NOT NULL,
+        type        TEXT NOT NULL,
+        summary     TEXT,
+        service_url TEXT,
+        repo_url    TEXT,
+        branch      TEXT,
+        created_at  INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS skills (
+        id          TEXT PRIMARY KEY,
+        team_id     TEXT NOT NULL,
+        agent_id    TEXT,
+        name        TEXT NOT NULL,
+        description TEXT,
+        content     TEXT,
+        version     INTEGER NOT NULL DEFAULT 1,
+        created_at  INTEGER NOT NULL,
+        updated_at  INTEGER NOT NULL
+      );
+    `);
+    // Indexes are created by the full schema.sql run, not here.
+
+    console.error(
+      "[tdai-memory] Migrated schema v2 → v3 (multi-tenant + messages + knowledge + skills + persona)",
+    );
+  }
+
   async put(entry: CaptureEntry): Promise<void> {
-    const contentHash = entry.contentHash ?? createHash("sha256").update(entry.content).digest("hex");
+    const contentHash =
+      entry.contentHash ?? createHash("sha256").update(entry.content).digest("hex");
     const stmt = this.db.prepare(`
-      INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata, team_id, user_id, task_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
       entry.id,
@@ -182,7 +272,21 @@ export class SQLiteBackend implements StorageBackend {
       JSON.stringify(entry.tags),
       entry.createdAt,
       entry.metadata ? JSON.stringify(entry.metadata) : null,
+      entry.teamId ?? null,
+      entry.userId ?? null,
+      entry.taskId ?? null,
     );
+
+    // Store role-based messages if provided
+    if (entry.messages && entry.messages.length > 0) {
+      const msgStmt = this.db.prepare(
+        "INSERT INTO messages (id, capture_id, role, content, seq, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      );
+      for (let i = 0; i < entry.messages.length; i++) {
+        const msg = entry.messages[i];
+        msgStmt.run(generateId(), entry.id, msg.role, msg.content, i, entry.createdAt);
+      }
+    }
   }
 
   async putVector(id: string, embedding: number[]): Promise<void> {
@@ -192,11 +296,23 @@ export class SQLiteBackend implements StorageBackend {
   }
 
   async get(id: string): Promise<CaptureEntry | null> {
-    const row = this.db.prepare("SELECT * FROM captures WHERE id = ?").get(id) as
-      | DbRow
-      | undefined;
+    const row = this.db.prepare("SELECT * FROM captures WHERE id = ?").get(id) as DbRow | undefined;
     if (!row) return null;
     return rowToEntry(row);
+  }
+
+  async getMessages(captureId: string): Promise<MessageRow[]> {
+    const rows = this.db
+      .prepare("SELECT * FROM messages WHERE capture_id = ? ORDER BY seq ASC")
+      .all(captureId) as MessageDbRow[];
+    return rows.map((r) => ({
+      id: r.id,
+      captureId: r.capture_id,
+      role: r.role,
+      content: r.content,
+      seq: r.seq,
+      createdAt: r.created_at,
+    }));
   }
 
   async findByContentHash(contentHash: string, sessionKey?: string): Promise<CaptureEntry[]> {
@@ -230,7 +346,6 @@ export class SQLiteBackend implements StorageBackend {
       vecResults = this.vectorSearch(queryEmbedding, limit * 2, sessionKey, filters);
     }
 
-    // If only one mode has results, return them directly
     if (mode === "keyword") {
       return this.fetchEntries(bm25Results, limit, offset);
     }
@@ -251,7 +366,6 @@ export class SQLiteBackend implements StorageBackend {
     sessionKey?: string,
     filters?: QueryOptions["filters"],
   ): RankedResult[] {
-    // Escape the query for FTS5
     const ftsQuery = this.escapeFtsQuery(query);
     if (!ftsQuery) return [];
 
@@ -274,6 +388,18 @@ export class SQLiteBackend implements StorageBackend {
     if (filters?.agentId) {
       sql += " AND c.agent_id = ?";
       params.push(filters.agentId);
+    }
+    if (filters?.teamId) {
+      sql += " AND c.team_id = ?";
+      params.push(filters.teamId);
+    }
+    if (filters?.userId) {
+      sql += " AND c.user_id = ?";
+      params.push(filters.userId);
+    }
+    if (filters?.taskId) {
+      sql += " AND c.task_id = ?";
+      params.push(filters.taskId);
     }
     if (filters?.dateFrom) {
       sql += " AND c.created_at >= ?";
@@ -319,6 +445,18 @@ export class SQLiteBackend implements StorageBackend {
       sql += " AND c.agent_id = ?";
       params.push(filters.agentId);
     }
+    if (filters?.teamId) {
+      sql += " AND c.team_id = ?";
+      params.push(filters.teamId);
+    }
+    if (filters?.userId) {
+      sql += " AND c.user_id = ?";
+      params.push(filters.userId);
+    }
+    if (filters?.taskId) {
+      sql += " AND c.task_id = ?";
+      params.push(filters.taskId);
+    }
     if (filters?.dateFrom) {
       sql += " AND c.created_at >= ?";
       params.push(new Date(filters.dateFrom).getTime());
@@ -346,7 +484,9 @@ export class SQLiteBackend implements StorageBackend {
   }
 
   /** Fetch capture entries by ID, preserving the order of the input list. Applies memory decay. */
-  private async fetchEntriesById(results: { id: string; score: number }[]): Promise<SearchResult[]> {
+  private async fetchEntriesById(
+    results: { id: string; score: number }[],
+  ): Promise<SearchResult[]> {
     if (results.length === 0) return [];
     const ids = results.map((r) => r.id);
     const placeholders = ids.map(() => "?").join(",");
@@ -360,10 +500,8 @@ export class SQLiteBackend implements StorageBackend {
       .map((r) => {
         const row = rowMap.get(r.id);
         if (!row) return null;
-        // Memory decay: reduce score for old captures.
-        // A capture from 30 days ago gets 0.5x weight, 60 days gets 0.25x, etc.
         const ageMs = now - row.created_at;
-        const decay = Math.pow(0.5, ageMs / HALF_LIFE_MS);
+        const decay = 0.5 ** (ageMs / HALF_LIFE_MS);
         return { entry: rowToEntry(row), score: r.score * decay };
       })
       .filter((r): r is SearchResult => r !== null);
@@ -371,7 +509,6 @@ export class SQLiteBackend implements StorageBackend {
 
   /** Escape a query string for FTS5 MATCH. */
   private escapeFtsQuery(query: string): string {
-    // FTS5 MATCH uses special syntax. Wrap each token in double quotes.
     const tokens = query.trim().split(/\s+/).filter(Boolean);
     if (tokens.length === 0) return "";
     return tokens.map((t) => `"${t.replace(/"/g, '""')}"`).join(" ");
@@ -382,6 +519,7 @@ export class SQLiteBackend implements StorageBackend {
     const scenarioCount = this.db
       .prepare("DELETE FROM scenarios WHERE atom_ids LIKE ?")
       .run(`%${id}%`).changes;
+    this.db.prepare("DELETE FROM messages WHERE capture_id = ?").run(id);
     const captureCount = this.db.prepare("DELETE FROM captures WHERE id = ?").run(id).changes;
     this.db.prepare("DELETE FROM captures_vec WHERE id = ?").run(id);
     return {
@@ -403,8 +541,19 @@ export class SQLiteBackend implements StorageBackend {
       sql += " AND created_at < ?";
       params.push(new Date(filter.dateBefore).getTime());
     }
+    if (filter.teamId) {
+      sql += " AND team_id = ?";
+      params.push(filter.teamId);
+    }
+    if (filter.userId) {
+      sql += " AND user_id = ?";
+      params.push(filter.userId);
+    }
+    if (filter.taskId) {
+      sql += " AND task_id = ?";
+      params.push(filter.taskId);
+    }
     if (filter.tags && filter.tags.length > 0) {
-      // Match captures that have at least one of the tags
       const tagConditions = filter.tags.map(() => "tags LIKE ?").join(" OR ");
       sql += ` AND (${tagConditions})`;
       params.push(...filter.tags.map((t) => `%"${t}"%`));
@@ -425,22 +574,395 @@ export class SQLiteBackend implements StorageBackend {
     return { captures, atoms, scenarios };
   }
 
+  // ─── L1 atoms ───────────────────────────────────────────────
+
+  async putAtom(atom: AtomEntry): Promise<void> {
+    this.db
+      .prepare(
+        "INSERT INTO atoms (id, capture_id, fact, confidence, created_at, team_id, agent_id, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        atom.id,
+        atom.captureId,
+        atom.fact,
+        atom.confidence,
+        atom.createdAt,
+        atom.teamId ?? null,
+        atom.agentId ?? null,
+        atom.userId ?? null,
+      );
+  }
+
+  async listAtoms(opts: {
+    teamId?: string;
+    agentId?: string;
+    userId?: string;
+    captureId?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<AtomEntry[]> {
+    let sql = "SELECT * FROM atoms WHERE 1=1";
+    const params: unknown[] = [];
+    if (opts.teamId) {
+      sql += " AND team_id = ?";
+      params.push(opts.teamId);
+    }
+    if (opts.agentId) {
+      sql += " AND agent_id = ?";
+      params.push(opts.agentId);
+    }
+    if (opts.userId) {
+      sql += " AND user_id = ?";
+      params.push(opts.userId);
+    }
+    if (opts.captureId) {
+      sql += " AND capture_id = ?";
+      params.push(opts.captureId);
+    }
+    sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
+    params.push(opts.limit ?? 20, opts.offset ?? 0);
+    const rows = this.db.prepare(sql).all(...params) as AtomDbRow[];
+    return rows.map((r) => ({
+      id: r.id,
+      captureId: r.capture_id,
+      fact: r.fact,
+      confidence: r.confidence,
+      createdAt: r.created_at,
+      teamId: r.team_id ?? undefined,
+      agentId: r.agent_id ?? undefined,
+      userId: r.user_id ?? undefined,
+    }));
+  }
+
+  async searchAtoms(
+    query: string,
+    opts: { teamId?: string; agentId?: string; userId?: string; limit?: number } = {},
+  ): Promise<AtomEntry[]> {
+    // Atoms don't have FTS — use LIKE for keyword search
+    let sql = "SELECT * FROM atoms WHERE fact LIKE ?";
+    const params: unknown[] = [`%${query}%`];
+    if (opts.teamId) {
+      sql += " AND team_id = ?";
+      params.push(opts.teamId);
+    }
+    if (opts.agentId) {
+      sql += " AND agent_id = ?";
+      params.push(opts.agentId);
+    }
+    if (opts.userId) {
+      sql += " AND user_id = ?";
+      params.push(opts.userId);
+    }
+    sql += " ORDER BY created_at DESC LIMIT ?";
+    params.push(opts.limit ?? 20);
+    const rows = this.db.prepare(sql).all(...params) as AtomDbRow[];
+    return rows.map((r) => ({
+      id: r.id,
+      captureId: r.capture_id,
+      fact: r.fact,
+      confidence: r.confidence,
+      createdAt: r.created_at,
+      teamId: r.team_id ?? undefined,
+      agentId: r.agent_id ?? undefined,
+      userId: r.user_id ?? undefined,
+    }));
+  }
+
+  // ─── L2 scenarios ───────────────────────────────────────────
+
+  async putScenario(scenario: ScenarioEntry): Promise<void> {
+    this.db
+      .prepare(
+        "INSERT INTO scenarios (id, atom_ids, summary, persona_tags, created_at, team_id, agent_id, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        scenario.id,
+        JSON.stringify(scenario.atomIds),
+        scenario.summary,
+        scenario.personaTags ? JSON.stringify(scenario.personaTags) : null,
+        scenario.createdAt,
+        scenario.teamId ?? null,
+        scenario.agentId ?? null,
+        scenario.userId ?? null,
+      );
+  }
+
+  async listScenarios(opts: {
+    teamId?: string;
+    agentId?: string;
+    userId?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<ScenarioEntry[]> {
+    let sql = "SELECT * FROM scenarios WHERE 1=1";
+    const params: unknown[] = [];
+    if (opts.teamId) {
+      sql += " AND team_id = ?";
+      params.push(opts.teamId);
+    }
+    if (opts.agentId) {
+      sql += " AND agent_id = ?";
+      params.push(opts.agentId);
+    }
+    if (opts.userId) {
+      sql += " AND user_id = ?";
+      params.push(opts.userId);
+    }
+    sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
+    params.push(opts.limit ?? 20, opts.offset ?? 0);
+    const rows = this.db.prepare(sql).all(...params) as ScenarioDbRow[];
+    return rows.map((r) => ({
+      id: r.id,
+      atomIds: JSON.parse(r.atom_ids) as string[],
+      summary: r.summary,
+      personaTags: r.persona_tags ? (JSON.parse(r.persona_tags) as string[]) : undefined,
+      createdAt: r.created_at,
+      teamId: r.team_id ?? undefined,
+      agentId: r.agent_id ?? undefined,
+      userId: r.user_id ?? undefined,
+    }));
+  }
+
+  async getScenario(id: string): Promise<ScenarioEntry | null> {
+    const row = this.db.prepare("SELECT * FROM scenarios WHERE id = ?").get(id) as
+      | ScenarioDbRow
+      | undefined;
+    if (!row) return null;
+    return {
+      id: row.id,
+      atomIds: JSON.parse(row.atom_ids) as string[],
+      summary: row.summary,
+      personaTags: row.persona_tags ? (JSON.parse(row.persona_tags) as string[]) : undefined,
+      createdAt: row.created_at,
+      teamId: row.team_id ?? undefined,
+      agentId: row.agent_id ?? undefined,
+      userId: row.user_id ?? undefined,
+    };
+  }
+
+  // ─── L3 persona ─────────────────────────────────────────────
+
+  async readPersona(teamId: string, agentId: string, userId: string): Promise<PersonaEntry | null> {
+    const row = this.db
+      .prepare("SELECT * FROM persona WHERE team_id = ? AND agent_id = ? AND user_id = ?")
+      .get(teamId, agentId, userId) as PersonaDbRow | undefined;
+    if (!row) return null;
+    return {
+      teamId: row.team_id,
+      agentId: row.agent_id,
+      userId: row.user_id,
+      content: row.content,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  async writePersona(
+    teamId: string,
+    agentId: string,
+    userId: string,
+    content: string,
+  ): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO persona (team_id, agent_id, user_id, content, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(team_id, agent_id, user_id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
+      )
+      .run(teamId, agentId, userId, content, Date.now());
+  }
+
+  // ─── Knowledge ──────────────────────────────────────────────
+
+  async putKnowledge(entry: KnowledgeEntry): Promise<void> {
+    this.db
+      .prepare(
+        "INSERT INTO knowledge (id, team_id, name, type, summary, service_url, repo_url, branch, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        entry.id,
+        entry.teamId,
+        entry.name,
+        entry.type,
+        entry.summary ?? null,
+        entry.serviceUrl ?? null,
+        entry.repoUrl ?? null,
+        entry.branch ?? null,
+        entry.createdAt,
+      );
+  }
+
+  async getKnowledge(id: string): Promise<KnowledgeEntry | null> {
+    const row = this.db.prepare("SELECT * FROM knowledge WHERE id = ?").get(id) as
+      | KnowledgeDbRow
+      | undefined;
+    if (!row) return null;
+    return knowledgeRowToEntry(row);
+  }
+
+  async listKnowledge(teamId: string, type?: string): Promise<KnowledgeEntry[]> {
+    let sql = "SELECT * FROM knowledge WHERE team_id = ?";
+    const params: unknown[] = [teamId];
+    if (type) {
+      sql += " AND type = ?";
+      params.push(type);
+    }
+    sql += " ORDER BY created_at DESC";
+    const rows = this.db.prepare(sql).all(...params) as KnowledgeDbRow[];
+    return rows.map(knowledgeRowToEntry);
+  }
+
+  async deleteKnowledge(ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    const placeholders = ids.map(() => "?").join(",");
+    const result = this.db
+      .prepare(`DELETE FROM knowledge WHERE id IN (${placeholders})`)
+      .run(...ids);
+    return result.changes;
+  }
+
+  // ─── Skills ─────────────────────────────────────────────────
+
+  async putSkill(entry: SkillEntry): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO skills (id, team_id, agent_id, name, description, content, version, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, content = excluded.content, version = excluded.version, updated_at = excluded.updated_at`,
+      )
+      .run(
+        entry.id,
+        entry.teamId,
+        entry.agentId ?? null,
+        entry.name,
+        entry.description ?? null,
+        entry.content ?? null,
+        entry.version,
+        entry.createdAt,
+        entry.updatedAt,
+      );
+  }
+
+  async getSkill(id: string): Promise<SkillEntry | null> {
+    const row = this.db.prepare("SELECT * FROM skills WHERE id = ?").get(id) as
+      | SkillDbRow
+      | undefined;
+    if (!row) return null;
+    return skillRowToEntry(row);
+  }
+
+  async listSkills(teamId: string, agentId?: string): Promise<SkillEntry[]> {
+    let sql = "SELECT * FROM skills WHERE team_id = ?";
+    const params: unknown[] = [teamId];
+    if (agentId) {
+      sql += " AND (agent_id = ? OR agent_id IS NULL)";
+      params.push(agentId);
+    }
+    sql += " ORDER BY updated_at DESC";
+    const rows = this.db.prepare(sql).all(...params) as SkillDbRow[];
+    return rows.map(skillRowToEntry);
+  }
+
+  async searchSkills(
+    teamId: string,
+    agentId: string,
+    query: string,
+    topK?: number,
+  ): Promise<SkillEntry[]> {
+    let sql =
+      "SELECT * FROM skills WHERE team_id = ? AND (agent_id = ? OR agent_id IS NULL) AND (name LIKE ? OR description LIKE ?)";
+    const params: unknown[] = [teamId, agentId, `%${query}%`, `%${query}%`];
+    sql += " ORDER BY updated_at DESC LIMIT ?";
+    params.push(topK ?? 10);
+    const rows = this.db.prepare(sql).all(...params) as SkillDbRow[];
+    return rows.map(skillRowToEntry);
+  }
+
   close(): void {
     this.db.close();
   }
 }
 
-/** Database row type. */
+// ─── Database row types ────────────────────────────────────────
+
 interface DbRow {
   id: string;
   session_key: string;
   agent_id: string;
   type: string;
   content: string;
+  content_hash: string | null;
   tags: string | null;
   created_at: number;
   metadata: string | null;
+  team_id: string | null;
+  user_id: string | null;
+  task_id: string | null;
 }
+
+interface MessageDbRow {
+  id: string;
+  capture_id: string;
+  role: string;
+  content: string;
+  seq: number;
+  created_at: number;
+}
+
+interface AtomDbRow {
+  id: string;
+  capture_id: string;
+  fact: string;
+  confidence: number;
+  created_at: number;
+  team_id: string | null;
+  agent_id: string | null;
+  user_id: string | null;
+}
+
+interface ScenarioDbRow {
+  id: string;
+  atom_ids: string;
+  summary: string;
+  persona_tags: string | null;
+  created_at: number;
+  team_id: string | null;
+  agent_id: string | null;
+  user_id: string | null;
+}
+
+interface PersonaDbRow {
+  team_id: string;
+  agent_id: string;
+  user_id: string;
+  content: string;
+  updated_at: number;
+}
+
+interface KnowledgeDbRow {
+  id: string;
+  team_id: string;
+  name: string;
+  type: string;
+  summary: string | null;
+  service_url: string | null;
+  repo_url: string | null;
+  branch: string | null;
+  created_at: number;
+}
+
+interface SkillDbRow {
+  id: string;
+  team_id: string;
+  agent_id: string | null;
+  name: string;
+  description: string | null;
+  content: string | null;
+  version: number;
+  created_at: number;
+  updated_at: number;
+}
+
+// ─── Row → Entry converters ────────────────────────────────────
 
 /** Convert a database row to a CaptureEntry. */
 function rowToEntry(row: DbRow): CaptureEntry {
@@ -453,5 +975,36 @@ function rowToEntry(row: DbRow): CaptureEntry {
     tags: row.tags ? JSON.parse(row.tags) : [],
     createdAt: row.created_at,
     metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+    teamId: row.team_id ?? undefined,
+    userId: row.user_id ?? undefined,
+    taskId: row.task_id ?? undefined,
+  };
+}
+
+function knowledgeRowToEntry(row: KnowledgeDbRow): KnowledgeEntry {
+  return {
+    id: row.id,
+    teamId: row.team_id,
+    name: row.name,
+    type: row.type,
+    summary: row.summary ?? undefined,
+    serviceUrl: row.service_url ?? undefined,
+    repoUrl: row.repo_url ?? undefined,
+    branch: row.branch ?? undefined,
+    createdAt: row.created_at,
+  };
+}
+
+function skillRowToEntry(row: SkillDbRow): SkillEntry {
+  return {
+    id: row.id,
+    teamId: row.team_id,
+    agentId: row.agent_id ?? undefined,
+    name: row.name,
+    description: row.description ?? undefined,
+    content: row.content ?? undefined,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }

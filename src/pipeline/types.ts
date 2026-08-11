@@ -6,8 +6,8 @@
  * https://github.com/TencentCloud/TencentDB-Agent-Memory
  */
 
-import type { StorageBackend } from "../storage/types.js";
 import type { Embedder } from "../embedding/types.js";
+import type { StorageBackend } from "../storage/types.js";
 
 export interface CaptureInput {
   id: string;
@@ -15,6 +15,10 @@ export interface CaptureInput {
   type: string;
   tags: string[];
   sessionKey: string;
+  /** Multi-tenant isolation. */
+  teamId?: string;
+  userId?: string;
+  taskId?: string;
 }
 
 export interface Atom {

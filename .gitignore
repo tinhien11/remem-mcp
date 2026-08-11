@@ -16,3 +16,4 @@ coverage/
 .playwright-mcp/
 mcpb-build/
 *.mcpb
+.serena/

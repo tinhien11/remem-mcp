@@ -1,12 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import Database from "better-sqlite3";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { exportData } from "../../src/export.js";
 import { importData } from "../../src/import.js";
 import { SQLiteBackend } from "../../src/storage/sqlite.js";
 import { generateId } from "../../src/utils/ulid.js";
-import { join } from "node:path";
-import { homedir } from "node:os";
-import { existsSync, rmSync, readFileSync, unlinkSync } from "node:fs";
-import Database from "better-sqlite3";
 
 const testDir = join(homedir(), ".local", "share", "tdai-memory-mcp", "test-export-import");
 const testDbPath = join(testDir, "memory.db");
@@ -16,14 +16,16 @@ function cleanup() {
   if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
 }
 
-function makeEntry(overrides: Partial<{
-  id: string;
-  sessionKey: string;
-  agentId: string;
-  type: string;
-  content: string;
-  tags: string[];
-}> = {}) {
+function makeEntry(
+  overrides: Partial<{
+    id: string;
+    sessionKey: string;
+    agentId: string;
+    type: string;
+    content: string;
+    tags: string[];
+  }> = {},
+) {
   return {
     id: generateId(),
     sessionKey: "test-session",
@@ -50,7 +52,7 @@ describe("Integration: export and import", () => {
 
     expect(existsSync(exportPath)).toBe(true);
     const data = JSON.parse(readFileSync(exportPath, "utf-8"));
-    expect(data.version).toBe(1);
+    expect(data.version).toBe(2);
     expect(data.count).toBe(2);
     expect(data.captures.length).toBe(2);
     expect(data.captures[0].content).toContain("Decision");
@@ -142,7 +144,7 @@ describe("Integration: export and import", () => {
     const originalLog = console.log;
     let captured = "";
     console.log = (...args: unknown[]) => {
-      captured += args.join(" ") + "\n";
+      captured += `${args.join(" ")}\n`;
     };
 
     importData(testDbPath, exportPath);

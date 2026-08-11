@@ -1,14 +1,10 @@
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import type { StorageBackend, DeleteFilter } from "../storage/types.js";
 import type { AuditLogger } from "../security/audit.js";
+import type { DeleteFilter, DeleteResult, StorageBackend } from "../storage/types.js";
 
 /** Register the forget tool on the MCP server. */
-export function registerForget(
-  server: Server,
-  storage: StorageBackend,
-  audit: AuditLogger,
-): void {
+export function registerForget(server: Server, storage: StorageBackend, audit: AuditLogger): void {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (request.params.name !== "forget") return null;
 
@@ -31,7 +27,7 @@ export function registerForget(
       };
     }
 
-    let result;
+    let result: DeleteResult;
     if (args.id) {
       result = await storage.delete(args.id);
     } else if (args.filter) {

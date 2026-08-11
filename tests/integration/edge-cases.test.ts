@@ -1,11 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { SQLiteBackend } from "../../src/storage/sqlite.js";
-import { generateId } from "../../src/utils/ulid.js";
-import type { CaptureEntry, CaptureType } from "../../src/storage/types.js";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { SQLiteBackend } from "../../src/storage/sqlite.js";
+import type { CaptureEntry, CaptureType } from "../../src/storage/types.js";
+import { generateId } from "../../src/utils/ulid.js";
 
 function makeEntry(opts: {
   content: string;
@@ -92,7 +92,7 @@ describe("Edge cases: empty database", () => {
     });
 
     expect(results.length).toBe(1);
-    expect(results[0]!.entry.content).toBe("First entry");
+    expect(results[0]?.entry.content).toBe("First entry");
   });
 
   it("stats on empty DB returns zeros", async () => {
@@ -137,7 +137,7 @@ describe("Edge cases: large content", () => {
     });
 
     expect(results.length).toBe(1);
-    expect(results[0]!.entry.content.length).toBeGreaterThan(9_000);
+    expect(results[0]?.entry.content.length).toBeGreaterThan(9_000);
   });
 
   it("handles 100KB content", async () => {
@@ -153,7 +153,7 @@ describe("Edge cases: large content", () => {
     });
 
     expect(results.length).toBe(1);
-    expect(results[0]!.entry.content.length).toBeGreaterThan(90_000);
+    expect(results[0]?.entry.content.length).toBeGreaterThan(90_000);
   });
 
   it("handles 1MB content", async () => {
@@ -169,7 +169,7 @@ describe("Edge cases: large content", () => {
     });
 
     expect(results.length).toBe(1);
-    expect(results[0]!.entry.content.length).toBeGreaterThan(900_000);
+    expect(results[0]?.entry.content.length).toBeGreaterThan(900_000);
   });
 
   it("handles many small entries (1000)", async () => {
@@ -205,7 +205,7 @@ describe("Edge cases: large content", () => {
     });
 
     expect(results.length).toBe(1);
-    expect(results[0]!.entry.content.split("\n").length).toBe(5000);
+    expect(results[0]?.entry.content.split("\n").length).toBe(5000);
   });
 });
 
@@ -238,7 +238,7 @@ describe("Edge cases: special characters", () => {
     });
 
     expect(results.length).toBe(1);
-    expect(results[0]!.entry.content).toBe(content);
+    expect(results[0]?.entry.content).toBe(content);
   });
 
   it("handles Unicode (Japanese)", async () => {
@@ -268,8 +268,8 @@ describe("Edge cases: special characters", () => {
     });
 
     expect(results.length).toBe(1);
-    expect(results[0]!.entry.content).toContain("🚀");
-    expect(results[0]!.entry.content).toContain("🎉");
+    expect(results[0]?.entry.content).toContain("🚀");
+    expect(results[0]?.entry.content).toContain("🎉");
   });
 
   it("handles SQL injection attempts in content", async () => {
@@ -286,7 +286,7 @@ describe("Edge cases: special characters", () => {
     });
 
     expect(results.length).toBe(1);
-    expect(results[0]!.entry.content).toBe("'; DROP TABLE captures; --");
+    expect(results[0]?.entry.content).toBe("'; DROP TABLE captures; --");
   });
 
   it("handles SQL injection in search query", async () => {
@@ -341,11 +341,11 @@ describe("Edge cases: special characters", () => {
     });
 
     expect(results.length).toBe(1);
-    expect(results[0]!.entry.content).toBe(content);
+    expect(results[0]?.entry.content).toBe(content);
   });
 
   it("handles quotes and backslashes", async () => {
-    const content = 'He said "hello" and \\left\\ with a \'smile\'';
+    const content = "He said \"hello\" and \\left\\ with a 'smile'";
     const entry = makeEntry({ content });
     await storage.put(entry);
 
@@ -357,7 +357,7 @@ describe("Edge cases: special characters", () => {
     });
 
     expect(results.length).toBe(1);
-    expect(results[0]!.entry.content).toBe(content);
+    expect(results[0]?.entry.content).toBe(content);
   });
 
   it("handles HTML/XML tags", async () => {
@@ -373,11 +373,12 @@ describe("Edge cases: special characters", () => {
     });
 
     expect(results.length).toBe(1);
-    expect(results[0]!.entry.content).toBe(content);
+    expect(results[0]?.entry.content).toBe(content);
   });
 
   it("handles markdown formatting", async () => {
-    const content = "## Decision\n\nWe chose **SQLite** because:\n- Fast\n- `embedded`\n- [link](url)";
+    const content =
+      "## Decision\n\nWe chose **SQLite** because:\n- Fast\n- `embedded`\n- [link](url)";
     const entry = makeEntry({ content });
     await storage.put(entry);
 
@@ -389,7 +390,7 @@ describe("Edge cases: special characters", () => {
     });
 
     expect(results.length).toBe(1);
-    expect(results[0]!.entry.content).toContain("**SQLite**");
+    expect(results[0]?.entry.content).toContain("**SQLite**");
   });
 
   it("handles empty string content", async () => {
@@ -434,7 +435,7 @@ describe("Edge cases: special characters", () => {
     });
 
     expect(results.length).toBe(1);
-    expect(results[0]!.entry.content).toBe(content);
+    expect(results[0]?.entry.content).toBe(content);
   });
 });
 
@@ -486,7 +487,7 @@ describe("Edge cases: concurrent writes", () => {
 
     const content = "Same content for dedup test";
     const promises = backends.map(() =>
-      backends[0]!.put(makeEntry({ content, sessionKey: "conc-dedup" })),
+      backends[0]?.put(makeEntry({ content, sessionKey: "conc-dedup" })),
     );
 
     await Promise.all(promises);
@@ -529,10 +530,15 @@ describe("Edge cases: concurrent writes", () => {
 
     const writePromises: Promise<void>[] = [];
     for (let i = 0; i < 10; i++) {
-      writePromises.push(writer.put(makeEntry({ content: `Concurrent write ${i}`, sessionKey: "rw-test" })));
+      writePromises.push(
+        writer.put(makeEntry({ content: `Concurrent write ${i}`, sessionKey: "rw-test" })),
+      );
     }
 
-    const [readResults] = await Promise.all([Promise.all(readPromises), Promise.all(writePromises)]);
+    const [readResults] = await Promise.all([
+      Promise.all(readPromises),
+      Promise.all(writePromises),
+    ]);
 
     // All reads should succeed
     expect(readResults.length).toBe(5);
@@ -611,7 +617,7 @@ describe("Edge cases: tags and metadata", () => {
     });
 
     expect(results.length).toBe(1);
-    expect(results[0]!.entry.tags.length).toBe(100);
+    expect(results[0]?.entry.tags.length).toBe(100);
   });
 
   it("handles entry with no tags", async () => {
@@ -626,11 +632,17 @@ describe("Edge cases: tags and metadata", () => {
     });
 
     expect(results.length).toBe(1);
-    expect(results[0]!.entry.tags).toEqual([]);
+    expect(results[0]?.entry.tags).toEqual([]);
   });
 
   it("handles tags with special characters", async () => {
-    const tags = ["tag with spaces", "tag-with-dashes", "tag_with_underscores", "tag.with.dots", "tag/with/slashes"];
+    const tags = [
+      "tag with spaces",
+      "tag-with-dashes",
+      "tag_with_underscores",
+      "tag.with.dots",
+      "tag/with/slashes",
+    ];
     const entry = makeEntry({ content: "Special tags", tags });
     await storage.put(entry);
 
@@ -642,7 +654,7 @@ describe("Edge cases: tags and metadata", () => {
     });
 
     expect(results.length).toBe(1);
-    expect(results[0]!.entry.tags).toEqual(tags);
+    expect(results[0]?.entry.tags).toEqual(tags);
   });
 
   it("handles tags with Unicode", async () => {
@@ -658,7 +670,7 @@ describe("Edge cases: tags and metadata", () => {
     });
 
     expect(results.length).toBe(1);
-    expect(results[0]!.entry.tags).toEqual(tags);
+    expect(results[0]?.entry.tags).toEqual(tags);
   });
 
   it("handles metadata with nested JSON", async () => {
@@ -683,12 +695,20 @@ describe("Edge cases: tags and metadata", () => {
     });
 
     expect(results.length).toBe(1);
-    expect(results[0]!.entry.metadata).toBeDefined();
-    expect((results[0]!.entry.metadata as any).level1.level2.level3).toBe("deep value");
+    expect(results[0]?.entry.metadata).toBeDefined();
+    expect((results[0]?.entry.metadata as any).level1.level2.level3).toBe("deep value");
   });
 
   it("handles all capture types", async () => {
-    const types: CaptureType[] = ["decision", "learning", "error", "fix", "summary", "atom", "task"];
+    const types: CaptureType[] = [
+      "decision",
+      "learning",
+      "error",
+      "fix",
+      "summary",
+      "atom",
+      "task",
+    ];
 
     for (const type of types) {
       const entry = makeEntry({ content: `Type: ${type}`, type });
@@ -743,9 +763,9 @@ describe("Edge cases: session keys", () => {
     });
 
     expect(resultsA.length).toBe(1);
-    expect(resultsA[0]!.entry.content).toBe("Session A content");
+    expect(resultsA[0]?.entry.content).toBe("Session A content");
     expect(resultsB.length).toBe(1);
-    expect(resultsB[0]!.entry.content).toBe("Session B content");
+    expect(resultsB[0]?.entry.content).toBe("Session B content");
   });
 
   it("handles very long session key", async () => {

@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { enforceQuota, checkContentLength } from "../../src/security/quota.js";
+import { describe, expect, it } from "vitest";
+import { checkContentLength, enforceQuota } from "../../src/security/quota.js";
 
 describe("quota", () => {
   it("does not truncate text within the limit", () => {

@@ -1,9 +1,9 @@
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
-import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { createHash } from "node:crypto";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -41,6 +41,9 @@ interface ExportRow {
   tags: string | null;
   created_at: number;
   metadata: string | null;
+  team_id: string | null;
+  user_id: string | null;
+  task_id: string | null;
 }
 
 interface ArtifactFormat {
@@ -130,8 +133,8 @@ export function importArtifact(dbPath: string, projectRoot: string): number {
   let skipped = 0;
 
   const insertStmt = db.prepare(`
-    INSERT OR IGNORE INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata, team_id, user_id, task_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const transaction = db.transaction(() => {
@@ -146,6 +149,9 @@ export function importArtifact(dbPath: string, projectRoot: string): number {
         row.tags,
         row.created_at,
         row.metadata,
+        row.team_id ?? null,
+        row.user_id ?? null,
+        row.task_id ?? null,
       );
 
       if (result.changes > 0) {
@@ -160,7 +166,9 @@ export function importArtifact(dbPath: string, projectRoot: string): number {
   db.close();
 
   if (inserted > 0) {
-    console.log(`[tdai-memory] Imported ${inserted} captures from team artifact (${skipped} already exist).`);
+    console.log(
+      `[tdai-memory] Imported ${inserted} captures from team artifact (${skipped} already exist).`,
+    );
   }
 
   return inserted;

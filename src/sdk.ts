@@ -12,17 +12,33 @@
  * ```
  */
 
-import { SQLiteBackend } from "./storage/sqlite.js";
-import { LocalEmbedder } from "./embedding/local.js";
-import { generateId } from "./utils/ulid.js";
-import { redact } from "./security/redactor.js";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
 import { homedir } from "node:os";
-import type { CaptureType, CaptureEntry, SearchResult, DeleteFilter, DeleteResult, SearchMode, SearchFilters } from "./storage/types.js";
+import { join } from "node:path";
+import { LocalEmbedder } from "./embedding/local.js";
+import { redact } from "./security/redactor.js";
+import { SQLiteBackend } from "./storage/sqlite.js";
+import type {
+  CaptureEntry,
+  CaptureType,
+  DeleteFilter,
+  DeleteResult,
+  SearchFilters,
+  SearchMode,
+  SearchResult,
+} from "./storage/types.js";
+import { generateId } from "./utils/ulid.js";
 
-export { SQLiteBackend, LocalEmbedder };
-export type { CaptureType, CaptureEntry, SearchResult, DeleteFilter, DeleteResult, SearchMode, SearchFilters };
+export type {
+  CaptureEntry,
+  CaptureType,
+  DeleteFilter,
+  DeleteResult,
+  SearchFilters,
+  SearchMode,
+  SearchResult,
+};
+export { LocalEmbedder, SQLiteBackend };
 
 /** High-level memory API. */
 export class Memory {
@@ -36,10 +52,12 @@ export class Memory {
     sessionKey?: string;
     redactSecrets?: boolean;
   }) {
-    const dbPath = opts?.dbPath ?? join(homedir(), ".local", "share", "tdai-memory-mcp", "memory.db");
+    const dbPath =
+      opts?.dbPath ?? join(homedir(), ".local", "share", "tdai-memory-mcp", "memory.db");
     this.storage = new SQLiteBackend(dbPath);
     this.embedder = new LocalEmbedder();
-    this.sessionKey = opts?.sessionKey ?? createHash("sha256").update(process.cwd()).digest("hex").slice(0, 16);
+    this.sessionKey =
+      opts?.sessionKey ?? createHash("sha256").update(process.cwd()).digest("hex").slice(0, 16);
     this.redactSecrets = opts?.redactSecrets ?? true;
   }
 
@@ -76,7 +94,10 @@ export class Memory {
   }
 
   /** Recall relevant memory. */
-  async recall(query: string, opts?: { limit?: number; mode?: SearchMode }): Promise<SearchResult[]> {
+  async recall(
+    query: string,
+    opts?: { limit?: number; mode?: SearchMode },
+  ): Promise<SearchResult[]> {
     const limit = Math.min(opts?.limit ?? 10, 50);
     const mode = opts?.mode ?? "hybrid";
 
@@ -94,7 +115,10 @@ export class Memory {
   }
 
   /** Search with filters. */
-  async search(query: string, opts?: { mode?: SearchMode; filters?: SearchFilters; limit?: number }): Promise<SearchResult[]> {
+  async search(
+    query: string,
+    opts?: { mode?: SearchMode; filters?: SearchFilters; limit?: number },
+  ): Promise<SearchResult[]> {
     const limit = Math.min(opts?.limit ?? 20, 100);
     const mode = opts?.mode ?? "hybrid";
 
@@ -146,7 +170,9 @@ export class Memory {
     }
     if (opts.nextSteps && opts.nextSteps.length > 0) {
       lines.push("## Next steps");
-      opts.nextSteps.forEach((s, i) => lines.push(`${i + 1}. ${s}`));
+      opts.nextSteps.forEach((s, i) => {
+        lines.push(`${i + 1}. ${s}`);
+      });
       lines.push("");
     }
 

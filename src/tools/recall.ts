@@ -1,9 +1,9 @@
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import type { StorageBackend } from "../storage/types.js";
 import type { Embedder } from "../embedding/types.js";
 import type { AuditLogger } from "../security/audit.js";
 import { enforceQuota } from "../security/quota.js";
+import type { StorageBackend } from "../storage/types.js";
 import { formatResults } from "./format.js";
 
 /** Register the recall tool on the MCP server. */

@@ -1,13 +1,13 @@
+import { createHash } from "node:crypto";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import type { StorageBackend, CaptureType, CaptureEntry } from "../storage/types.js";
 import type { Embedder } from "../embedding/types.js";
+import type { PipelineContext, PipelineStage } from "../pipeline/types.js";
 import type { AuditLogger } from "../security/audit.js";
-import type { PipelineStage, PipelineContext } from "../pipeline/types.js";
-import { redact } from "../security/redactor.js";
 import { checkContentLength } from "../security/quota.js";
+import { redact } from "../security/redactor.js";
+import type { CaptureEntry, CaptureType, StorageBackend } from "../storage/types.js";
 import { generateId } from "../utils/ulid.js";
-import { createHash } from "node:crypto";
 
 /** Default session key: hash of the current working directory. */
 function defaultSessionKey(): string {

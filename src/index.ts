@@ -1,28 +1,56 @@
 #!/usr/bin/env node
 
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { join, dirname } from "node:path";
-import { homedir } from "node:os";
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { exportArtifact, importArtifact } from "./artifact.js";
+import { backup } from "./backup.js";
+import { atomsCommand } from "./cli/atoms.js";
+import { extractCommand } from "./cli/extract.js";
+import { knowledgeCommand } from "./cli/knowledge.js";
+import { personaCommand } from "./cli/persona.js";
+import { scenariosCommand } from "./cli/scenarios.js";
+import { skillsCommand } from "./cli/skills.js";
 import { loadConfig } from "./config.js";
-import { SQLiteBackend } from "./storage/sqlite.js";
 import { LocalEmbedder } from "./embedding/local.js";
+import { exportData } from "./export.js";
+import { hookRecall, hookSessionEnd, hookStop } from "./hook-handlers.js";
+import { installHooks, uninstallHooks } from "./hooks.js";
+import { importData } from "./import.js";
+import { installSkill } from "./install-skill.js";
+import { AtomPipeline } from "./pipeline/atom.js";
+import { OpenAILLMClient } from "./pipeline/llm.js";
 import { NoopPipeline } from "./pipeline/noop.js";
+import type { PipelineStage } from "./pipeline/types.js";
 import { AuditLogger } from "./security/audit.js";
 import { createServer } from "./server.js";
-import { installSkill } from "./install-skill.js";
-import { exportData } from "./export.js";
-import { importData } from "./import.js";
 import { stats } from "./stats.js";
+import { tokenStats } from "./token-stats.js";
+import { SQLiteBackend } from "./storage/sqlite.js";
 import { startViewer } from "./viewer.js";
-import { backup } from "./backup.js";
-import { installHooks, uninstallHooks } from "./hooks.js";
-import { exportArtifact, importArtifact, hasArtifact } from "./artifact.js";
-import { hookRecall, hookStop } from "./hook-handlers.js";
+
+/** Default DB path. */
+function defaultDbPath(): string {
+  return (
+    process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "tdai-memory-mcp", "memory.db")
+  );
+}
+
+/** Parse --flag value pairs from argv after the subcommand. */
+function parseFlags(argv: string[]): Record<string, string> {
+  const flags: Record<string, string> = {};
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i]?.startsWith("--") && argv[i + 1]) {
+      flags[argv[i].slice(2)] = argv[i + 1];
+      i++;
+    }
+  }
+  return flags;
+}
 
 async function main(): Promise<void> {
-  // Check for CLI subcommands
   const arg = process.argv[2];
   if (arg === "install-skill") {
     await installSkill();
@@ -37,10 +65,9 @@ async function main(): Promise<void> {
     return;
   }
   if (arg === "export") {
-    const dbPath = process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "tdai-memory-mcp", "memory.db");
+    const dbPath = defaultDbPath();
     const output = process.argv[3] ?? "-";
 
-    // Parse optional filters: --session-key <key> --type <type>
     const filters: { sessionKey?: string; type?: string } = {};
     for (let i = 3; i < process.argv.length; i++) {
       if (process.argv[i] === "--session-key" && process.argv[i + 1]) {
@@ -57,7 +84,7 @@ async function main(): Promise<void> {
     return;
   }
   if (arg === "import") {
-    const dbPath = process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "tdai-memory-mcp", "memory.db");
+    const dbPath = defaultDbPath();
     const input = process.argv[3];
     if (!input) {
       console.error("Error: Provide a file path. Usage: tdai-memory-mcp import <file.json>");
@@ -67,32 +94,34 @@ async function main(): Promise<void> {
     return;
   }
   if (arg === "stats") {
-    const dbPath = process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "tdai-memory-mcp", "memory.db");
-    stats(dbPath);
+    stats(defaultDbPath());
+    return;
+  }
+  if (arg === "token-stats") {
+    tokenStats(defaultDbPath());
     return;
   }
   if (arg === "viewer") {
-    const dbPath = process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "tdai-memory-mcp", "memory.db");
     const port = Number(process.argv[4] ?? process.env.TDAI_VIEWER_PORT ?? 7331);
-    startViewer(dbPath, port);
+    startViewer(defaultDbPath(), port);
     return;
   }
   if (arg === "backup") {
-    const dbPath = process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "tdai-memory-mcp", "memory.db");
+    const dbPath = defaultDbPath();
     const auditPath = process.env.TDAI_AUDIT_LOG_PATH ?? join(dirname(dbPath), "audit.jsonl");
     const outputDir = process.argv[3] ?? "-";
     backup(dbPath, auditPath, outputDir);
     return;
   }
   if (arg === "sync-export") {
-    const dbPath = process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "tdai-memory-mcp", "memory.db");
+    const dbPath = defaultDbPath();
     const projectRoot = process.cwd();
     const sessionKey = process.argv[4] ?? undefined;
     exportArtifact(dbPath, projectRoot, sessionKey);
     return;
   }
   if (arg === "sync-import") {
-    const dbPath = process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "tdai-memory-mcp", "memory.db");
+    const dbPath = defaultDbPath();
     const projectRoot = process.cwd();
     const count = importArtifact(dbPath, projectRoot);
     if (count === 0) {
@@ -101,14 +130,50 @@ async function main(): Promise<void> {
     return;
   }
   if (arg === "hook-recall") {
-    const dbPath = process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "tdai-memory-mcp", "memory.db");
-    hookRecall(dbPath);
+    hookRecall(defaultDbPath());
     return;
   }
   if (arg === "hook-stop") {
     hookStop();
     return;
   }
+  if (arg === "hook-session-end") {
+    hookSessionEnd(defaultDbPath());
+    return;
+  }
+
+  // ─── L1-L3 CLI commands ──────────────────────────────────────
+  if (arg === "atoms") {
+    const flags = parseFlags(process.argv.slice(3));
+    await atomsCommand(defaultDbPath(), flags);
+    return;
+  }
+  if (arg === "scenarios") {
+    const flags = parseFlags(process.argv.slice(3));
+    await scenariosCommand(defaultDbPath(), flags);
+    return;
+  }
+  if (arg === "persona") {
+    const flags = parseFlags(process.argv.slice(3));
+    await personaCommand(defaultDbPath(), flags);
+    return;
+  }
+  if (arg === "extract") {
+    const flags = parseFlags(process.argv.slice(3));
+    await extractCommand(defaultDbPath(), flags);
+    return;
+  }
+  if (arg === "knowledge") {
+    const flags = parseFlags(process.argv.slice(3));
+    await knowledgeCommand(defaultDbPath(), flags);
+    return;
+  }
+  if (arg === "skills") {
+    const flags = parseFlags(process.argv.slice(3));
+    await skillsCommand(defaultDbPath(), flags);
+    return;
+  }
+
   if (arg === "version" || arg === "--version" || arg === "-v") {
     try {
       const pkgPath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
@@ -125,21 +190,42 @@ async function main(): Promise<void> {
 Usage:
   tdai-memory-mcp                Start the MCP server (stdio)
   tdai-memory-mcp install-skill  Install the agent skill for Devin CLI
-  tdai-memory-mcp install-hooks  Install lifecycle hooks (SessionStart, Stop)
+  tdai-memory-mcp install-hooks  Install lifecycle hooks (SessionStart, SessionEnd)
   tdai-memory-mcp uninstall-hooks  Remove lifecycle hooks
   tdai-memory-mcp export [file]  Export captures to JSON (default: stdout)
   tdai-memory-mcp import <file>  Import captures from JSON
   tdai-memory-mcp stats          Print memory statistics
+  tdai-memory-mcp token-stats    Print token savings report
   tdai-memory-mcp viewer [port]  Start web viewer (default port: 7331)
   tdai-memory-mcp backup [dir]   Backup database and audit log
   tdai-memory-mcp sync-export    Export memory to .tdai-memory/ in the project root
   tdai-memory-mcp sync-import    Import memory from .tdai-memory/ (auto on startup)
+
+L1-L3 pipeline commands (require TDAI_LLM_API_KEY for extract):
+  tdai-memory-mcp extract        Run L1 atom extraction on existing captures
+  tdai-memory-mcp atoms          List or search L1 atoms
+  tdai-memory-mcp scenarios      List L2 scenarios
+  tdai-memory-mcp persona        Read or write L3 persona
+
+Knowledge and skills commands:
+  tdai-memory-mcp knowledge      List knowledge assets for a team
+  tdai-memory-mcp skills         List skills for a team
+
   tdai-memory-mcp version        Print the version
   tdai-memory-mcp help           Print this help
 
 Export options:
   --session-key <key>  Export only captures from this session
   --type <type>        Export only captures of this type
+
+Common flags for L1-L3 and knowledge/skills commands:
+  --team-id <id>       Team ID (required for persona, knowledge, skills)
+  --agent-id <id>      Agent ID
+  --user-id <id>       User ID
+  --query <text>       Search query (for atoms, skills)
+  --limit <n>          Max results (default 20)
+  --write <content>    Write persona content (for persona command)
+  --type <type>        Filter by type (for knowledge: wiki, code-graph)
 
 The server runs as a stdio process. Add it to your MCP client configuration:
   Claude Code: ~/.claude.json
@@ -164,7 +250,9 @@ To install the skill (Devin CLI only):
 
   // Initialize the storage backend
   if (config.storage !== "sqlite") {
-    console.error(`[tdai-memory] Storage backend "${config.storage}" is not implemented yet. Using sqlite.`);
+    console.error(
+      `[tdai-memory] Storage backend "${config.storage}" is not implemented yet. Using sqlite.`,
+    );
   }
   const storage = new SQLiteBackend(config.dbPath);
 
@@ -172,17 +260,41 @@ To install the skill (Devin CLI only):
   const embedder = new LocalEmbedder();
 
   // Initialize the pipeline
-  const pipeline = new NoopPipeline();
+  let pipeline: PipelineStage;
+  if (config.pipeline === "atom" && config.llm) {
+    const llmClient = new OpenAILLMClient({
+      apiKey: config.llm.apiKey,
+      baseUrl: config.llm.baseUrl,
+      model: config.llm.model,
+    });
+    pipeline = new AtomPipeline();
+    (pipeline as unknown as { _llmClient: unknown })._llmClient = llmClient;
+  } else {
+    pipeline = new NoopPipeline();
+  }
 
   // Initialize the audit logger
   const audit = new AuditLogger(config.auditLogPath, config.security.auditLog);
+
+  // Build pipeline context
+  const pipelineCtx = {
+    llmClient: config.llm
+      ? new OpenAILLMClient({
+          apiKey: config.llm.apiKey,
+          baseUrl: config.llm.baseUrl,
+          model: config.llm.model,
+        })
+      : undefined,
+    storage,
+    embedder,
+  };
 
   // Create the MCP server
   const server = createServer({
     storage,
     embedder,
     pipeline,
-    pipelineCtx: { llmClient: undefined, storage, embedder },
+    pipelineCtx,
     audit,
     redactSecrets: config.security.redactSecrets,
     maxContentLength: config.security.maxContentLength,

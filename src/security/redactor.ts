@@ -27,7 +27,7 @@ const SECRET_PATTERNS: RegExp[] = [
   // Google API key
   /AIza[0-9A-Za-z\-_]{35}/g,
   // Generic bearer token
-  /Bearer\s+[a-zA-Z0-9\-._~+\/]+=*/g,
+  /Bearer\s+[a-zA-Z0-9\-._~+/]+=*/g,
 ];
 
 /** Minimum length for high-entropy detection. */
@@ -57,7 +57,8 @@ function findHighEntropyStrings(text: string): string[] {
   // Match long strings of alphanumeric, +, /, =
   const regex = /[a-zA-Z0-9+/=]{40,}/g;
   let match: RegExpExecArray | null;
-  while ((match = regex.exec(text)) !== null) {
+  match = regex.exec(text);
+  while (match !== null) {
     const str = match[0];
     if (str.length >= MIN_LENGTH) {
       const entropy = shannonEntropy(str);
@@ -65,6 +66,7 @@ function findHighEntropyStrings(text: string): string[] {
         results.push(str);
       }
     }
+    match = regex.exec(text);
   }
   return results;
 }

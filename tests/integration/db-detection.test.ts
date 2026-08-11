@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { SQLiteBackend } from "../../src/storage/sqlite.js";
-import { join } from "node:path";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { existsSync, rmSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import Database from "better-sqlite3";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { SQLiteBackend } from "../../src/storage/sqlite.js";
 
 const testDir = join(homedir(), ".local", "share", "tdai-memory-mcp", "test-detection");
 const testDbPath = join(testDir, "memory.db");
@@ -24,12 +24,12 @@ describe("Integration: database detection and migration", () => {
     // The database file must exist now.
     expect(existsSync(testDbPath)).toBe(true);
 
-    // The schema_version table must exist and have version 1.
+    // The schema_version table must exist and have version 3.
     const db = new Database(testDbPath);
     const row = db.prepare("SELECT MAX(version) as version FROM schema_version").get() as
       | { version: number }
       | undefined;
-    expect(row?.version).toBe(1);
+    expect(row?.version).toBe(3);
 
     // All tables must exist.
     const tables = db
@@ -41,6 +41,10 @@ describe("Integration: database detection and migration", () => {
     expect(tableNames).toContain("scenarios");
     expect(tableNames).toContain("audit_log");
     expect(tableNames).toContain("schema_version");
+    expect(tableNames).toContain("messages");
+    expect(tableNames).toContain("persona");
+    expect(tableNames).toContain("knowledge");
+    expect(tableNames).toContain("skills");
 
     db.close();
     backend.close();
@@ -105,7 +109,7 @@ describe("Integration: database detection and migration", () => {
     const row = db2.prepare("SELECT MAX(version) as version FROM schema_version").get() as
       | { version: number }
       | undefined;
-    expect(row?.version).toBe(1);
+    expect(row?.version).toBe(3);
 
     // The old data must still be there.
     const oldRow = db2.prepare("SELECT content FROM captures WHERE id = 'old-1'").get() as

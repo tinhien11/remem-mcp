@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, dirname } from "node:path";
 import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 
 /**
  * Wire hooks into agent config files.
@@ -10,7 +10,7 @@ import { homedir } from "node:os";
  *
  * Hooks installed:
  * - SessionStart: runs `tdai-memory-mcp hook-recall` → injects recent memory into agent context
- * - Stop: runs `tdai-memory-mcp hook-stop` → reminds agent to call handoff before stopping
+ * - SessionEnd: runs `tdai-memory-mcp hook-session-end` → silently captures session summary to memory DB
  */
 
 /** The npx command to run the hook handler. */
@@ -31,13 +31,13 @@ const HOOKS_CONFIG = {
       ],
     },
   ],
-  Stop: [
+  SessionEnd: [
     {
       hooks: [
         {
           type: "command",
-          command: hookCommand("hook-stop"),
-          timeout: 5,
+          command: hookCommand("hook-session-end"),
+          timeout: 10,
         },
       ],
     },
@@ -58,7 +58,7 @@ function readJsonConfig(path: string): Record<string, unknown> {
 function writeJsonConfig(path: string, data: unknown): void {
   const dir = dirname(path);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(path, JSON.stringify(data, null, 2) + "\n", "utf-8");
+  writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, "utf-8");
 }
 
 /** Merge hooks into an existing config object without overwriting other keys. */
@@ -128,7 +128,7 @@ export async function installHooks(): Promise<void> {
   console.log(`\nHooks wired to ${installed} agent(s).`);
   console.log("\nHooks installed:");
   console.log("  SessionStart → auto-recall recent memory into agent context");
-  console.log("  Stop         → remind agent to call handoff before stopping");
+  console.log("  SessionEnd   → silently capture session summary to memory DB");
   console.log("\nRestart your agent for hooks to take effect.");
   console.log("\nTo verify: run /hooks in your agent.");
 }
@@ -146,7 +146,7 @@ export async function uninstallHooks(): Promise<void> {
     if (config.hooks) {
       const hooks = config.hooks as Record<string, unknown>;
       delete hooks.SessionStart;
-      delete hooks.Stop;
+      delete hooks.SessionEnd;
       if (Object.keys(hooks).length === 0) {
         delete config.hooks;
       }
@@ -163,7 +163,7 @@ export async function uninstallHooks(): Promise<void> {
     if (config.hooks) {
       const hooks = config.hooks as Record<string, unknown>;
       delete hooks.SessionStart;
-      delete hooks.Stop;
+      delete hooks.SessionEnd;
       if (Object.keys(hooks).length === 0) {
         delete config.hooks;
       }

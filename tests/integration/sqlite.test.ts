@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { existsSync, unlinkSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SQLiteBackend } from "../../src/storage/sqlite.js";
 import type { CaptureEntry } from "../../src/storage/types.js";
 import { generateId } from "../../src/utils/ulid.js";
-import { join } from "node:path";
-import { homedir } from "node:os";
-import { unlinkSync, existsSync } from "node:fs";
 
 const testDbPath = join(homedir(), ".local", "share", "tdai-memory-mcp", "test-memory.db");
 

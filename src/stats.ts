@@ -1,14 +1,7 @@
 import Database from "better-sqlite3";
-import { join } from "node:path";
-import { homedir } from "node:os";
 
 interface TypeCount {
   type: string;
-  count: number;
-}
-
-interface TagCount {
-  tag: string;
   count: number;
 }
 
@@ -59,9 +52,7 @@ export function stats(dbPath: string): void {
   }
 
   if (tagCounts.size > 0) {
-    const topTags = [...tagCounts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 15);
+    const topTags = [...tagCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15);
 
     console.log(`\nTop tags:`);
     const maxCount = topTags[0][1];
@@ -79,7 +70,9 @@ export function stats(dbPath: string): void {
 
   // Agents
   const agents = db
-    .prepare("SELECT agent_id, COUNT(*) as count FROM captures GROUP BY agent_id ORDER BY count DESC")
+    .prepare(
+      "SELECT agent_id, COUNT(*) as count FROM captures GROUP BY agent_id ORDER BY count DESC",
+    )
     .all() as TypeCount[];
   if (agents.length > 0) {
     console.log(`\nBy agent:`);
@@ -100,17 +93,95 @@ export function stats(dbPath: string): void {
   }
 
   // L0 vs L1
-  const l0 = db
-    .prepare("SELECT COUNT(*) as count FROM captures WHERE type != 'atom'")
-    .get() as { count: number };
-  const l1 = db
-    .prepare("SELECT COUNT(*) as count FROM captures WHERE type = 'atom'")
-    .get() as { count: number };
+  const l0 = db.prepare("SELECT COUNT(*) as count FROM captures WHERE type != 'atom'").get() as {
+    count: number;
+  };
+  const l1 = db.prepare("SELECT COUNT(*) as count FROM captures WHERE type = 'atom'").get() as {
+    count: number;
+  };
 
   if (l1.count > 0) {
     console.log(`\nLayer breakdown:`);
     console.log(`  L0 (raw):     ${String(l0.count).padStart(4)}`);
     console.log(`  L1 (atoms):   ${String(l1.count).padStart(4)}`);
+  }
+
+  // L1 atoms table (populated by pipeline)
+  try {
+    const atomsCount = db.prepare("SELECT COUNT(*) as count FROM atoms").get() as { count: number };
+    if (atomsCount.count > 0) {
+      console.log(`  L1 (atoms table): ${String(atomsCount.count).padStart(4)}`);
+    }
+  } catch {
+    // atoms table may not exist in old databases
+  }
+
+  // L2 scenarios
+  try {
+    const scenariosCount = db.prepare("SELECT COUNT(*) as count FROM scenarios").get() as {
+      count: number;
+    };
+    if (scenariosCount.count > 0) {
+      console.log(`  L2 (scenarios):   ${String(scenariosCount.count).padStart(4)}`);
+    }
+  } catch {
+    // scenarios table may not exist in old databases
+  }
+
+  // Messages
+  try {
+    const msgCount = db.prepare("SELECT COUNT(*) as count FROM messages").get() as {
+      count: number;
+    };
+    if (msgCount.count > 0) {
+      console.log(`\nMessages: ${msgCount.count}`);
+    }
+  } catch {
+    // messages table may not exist in old databases
+  }
+
+  // Multi-tenant: teams
+  try {
+    const teamsCount = db
+      .prepare("SELECT COUNT(DISTINCT team_id) as count FROM captures WHERE team_id IS NOT NULL")
+      .get() as { count: number };
+    if (teamsCount.count > 0) {
+      console.log(`\nTeams: ${teamsCount.count}`);
+      const teamBreakdown = db
+        .prepare(
+          "SELECT team_id, COUNT(*) as count FROM captures WHERE team_id IS NOT NULL GROUP BY team_id ORDER BY count DESC",
+        )
+        .all() as TypeCount[];
+      for (const row of teamBreakdown) {
+        console.log(`  ${row.team_id.padEnd(20)} ${String(row.count).padStart(4)}`);
+      }
+    }
+  } catch {
+    // team_id column may not exist in old databases
+  }
+
+  // Knowledge assets
+  try {
+    const knowledgeCount = db.prepare("SELECT COUNT(*) as count FROM knowledge").get() as {
+      count: number;
+    };
+    if (knowledgeCount.count > 0) {
+      console.log(`\nKnowledge assets: ${knowledgeCount.count}`);
+    }
+  } catch {
+    // knowledge table may not exist in old databases
+  }
+
+  // Skills
+  try {
+    const skillsCount = db.prepare("SELECT COUNT(*) as count FROM skills").get() as {
+      count: number;
+    };
+    if (skillsCount.count > 0) {
+      console.log(`Skills: ${skillsCount.count}`);
+    }
+  } catch {
+    // skills table may not exist in old databases
   }
 
   console.log("");

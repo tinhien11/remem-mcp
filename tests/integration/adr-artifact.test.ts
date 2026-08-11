@@ -1,15 +1,15 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { SQLiteBackend } from "../../src/storage/sqlite.js";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { artifactPath, exportArtifact, hasArtifact, importArtifact } from "../../src/artifact.js";
+import type { Embedder } from "../../src/embedding/types.js";
 import { NoopPipeline } from "../../src/pipeline/noop.js";
 import { AuditLogger } from "../../src/security/audit.js";
 import { createServer } from "../../src/server.js";
-import { exportArtifact, importArtifact, hasArtifact, artifactPath } from "../../src/artifact.js";
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { createHash } from "node:crypto";
-import type { Embedder } from "../../src/embedding/types.js";
-import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { SQLiteBackend } from "../../src/storage/sqlite.js";
 
 class MockEmbedder implements Embedder {
   readonly dimension = 384;
@@ -32,9 +32,11 @@ async function callTool(
   name: string,
   args: Record<string, unknown>,
 ): Promise<string> {
-  const handler = (server as unknown as {
-    _requestHandlers: Map<string, (req: unknown) => Promise<unknown>>;
-  })._requestHandlers.get("tools/call");
+  const handler = (
+    server as unknown as {
+      _requestHandlers: Map<string, (req: unknown) => Promise<unknown>>;
+    }
+  )._requestHandlers.get("tools/call");
   if (!handler) throw new Error("No tools/call handler found");
 
   const result = (await handler({
@@ -46,9 +48,11 @@ async function callTool(
 }
 
 async function listTools(server: Server): Promise<string[]> {
-  const handler = (server as unknown as {
-    _requestHandlers: Map<string, (req: unknown) => Promise<unknown>>;
-  })._requestHandlers.get("tools/list");
+  const handler = (
+    server as unknown as {
+      _requestHandlers: Map<string, (req: unknown) => Promise<unknown>>;
+    }
+  )._requestHandlers.get("tools/list");
   if (!handler) throw new Error("No tools/list handler found");
 
   const result = (await handler({ method: "tools/list" })) as {
@@ -118,16 +122,16 @@ describe("Integration: ADR tool", () => {
 
     const adrEntry = results.find((r) => r.entry.tags.includes("adr"));
     expect(adrEntry).toBeDefined();
-    expect(adrEntry!.entry.type).toBe("decision");
-    expect(adrEntry!.entry.content).toContain("# ADR: Use SQLite for local storage");
-    expect(adrEntry!.entry.content).toContain("## Context");
-    expect(adrEntry!.entry.content).toContain("zero-setup");
-    expect(adrEntry!.entry.content).toContain("## Decision");
-    expect(adrEntry!.entry.content).toContain("SQLite with FTS5");
-    expect(adrEntry!.entry.content).toContain("## Alternatives considered");
-    expect(adrEntry!.entry.content).toContain("Postgres with pgvector");
-    expect(adrEntry!.entry.content).toContain("## Consequences");
-    expect(adrEntry!.entry.content).toContain("Single-writer limitation");
+    expect(adrEntry?.entry.type).toBe("decision");
+    expect(adrEntry?.entry.content).toContain("# ADR: Use SQLite for local storage");
+    expect(adrEntry?.entry.content).toContain("## Context");
+    expect(adrEntry?.entry.content).toContain("zero-setup");
+    expect(adrEntry?.entry.content).toContain("## Decision");
+    expect(adrEntry?.entry.content).toContain("SQLite with FTS5");
+    expect(adrEntry?.entry.content).toContain("## Alternatives considered");
+    expect(adrEntry?.entry.content).toContain("Postgres with pgvector");
+    expect(adrEntry?.entry.content).toContain("## Consequences");
+    expect(adrEntry?.entry.content).toContain("Single-writer limitation");
   });
 
   it("saves an ADR with only required fields", async () => {
@@ -148,8 +152,8 @@ describe("Integration: ADR tool", () => {
 
     const adrEntry = results.find((r) => r.entry.tags.includes("adr"));
     expect(adrEntry).toBeDefined();
-    expect(adrEntry!.entry.content).not.toContain("## Alternatives considered");
-    expect(adrEntry!.entry.content).not.toContain("## Consequences");
+    expect(adrEntry?.entry.content).not.toContain("## Alternatives considered");
+    expect(adrEntry?.entry.content).not.toContain("## Consequences");
   });
 
   it("stores structured metadata", async () => {
@@ -171,11 +175,11 @@ describe("Integration: ADR tool", () => {
 
     const adrEntry = results.find((r) => r.entry.tags.includes("adr"));
     expect(adrEntry).toBeDefined();
-    expect(adrEntry!.entry.metadata).toBeDefined();
-    expect(adrEntry!.entry.metadata!.adr).toBe(true);
-    expect(adrEntry!.entry.metadata!.title).toBe("Use ONNX for embeddings");
-    expect(adrEntry!.entry.metadata!.decision).toBe("Use all-MiniLM-L6-v2 via ONNX Runtime.");
-    expect(adrEntry!.entry.metadata!.alternatives).toEqual([
+    expect(adrEntry?.entry.metadata).toBeDefined();
+    expect(adrEntry?.entry.metadata?.adr).toBe(true);
+    expect(adrEntry?.entry.metadata?.title).toBe("Use ONNX for embeddings");
+    expect(adrEntry?.entry.metadata?.decision).toBe("Use all-MiniLM-L6-v2 via ONNX Runtime.");
+    expect(adrEntry?.entry.metadata?.alternatives).toEqual([
       "OpenAI API — rejected: requires API key",
     ]);
   });
@@ -197,8 +201,8 @@ describe("Integration: ADR tool", () => {
 
     const adrEntry = results.find((r) => r.entry.tags.includes("adr"));
     expect(adrEntry).toBeDefined();
-    expect(adrEntry!.entry.tags).toContain("adr");
-    expect(adrEntry!.entry.tags).toContain("custom-tag");
+    expect(adrEntry?.entry.tags).toContain("adr");
+    expect(adrEntry?.entry.tags).toContain("custom-tag");
   });
 
   it("rejects duplicate ADR", async () => {
@@ -349,7 +353,7 @@ describe("Integration: team-shared artifact", () => {
           type: "decision",
           content: "Duplicate test",
           content_hash: "hash-dup",
-          tags: '[]',
+          tags: "[]",
           created_at: Date.now(),
           metadata: null,
         },

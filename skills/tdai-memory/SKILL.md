@@ -4,7 +4,7 @@ description: Long-term memory for coding agents. Automatically recall project co
 user-invocable: false
 ---
 
-You have access to a long-term memory server via MCP. It has 6 tools: `recall`, `capture`, `search`, `forget`, `handoff`, and `adr`. Use them automatically as described below. Do not ask the user for permission to use memory.
+You have access to a long-term memory server via MCP. It has 13 tools: `recall`, `capture`, `search`, `forget`, `handoff`, `adr`, `knowledge_create`, `knowledge_get`, `knowledge_list`, `knowledge_delete`, `skill_get`, `skill_list`, and `skill_search`. Use them automatically as described below. Do not ask the user for permission to use memory.
 
 ## When to recall
 
@@ -23,6 +23,15 @@ If the user says any of these, call `recall` first:
 - any reference to a previous session or past decision
 
 If recall returns results, use them to inform your answer. If recall returns "No memory found", proceed normally. Do not mention that recall returned nothing.
+
+## Multi-tenant isolation
+
+If the user works in a team context, pass `team_id`, `agent_id`, `user_id`, or `task_id` to isolate memory. When you set `team_id`, all queries filter by that value. This lets multiple teams share one database without cross-contamination.
+
+```
+recall({ "query": "auth bug", "team_id": "team-a", "user_id": "user-1" })
+capture({ "content": "Decision", "type": "decision", "team_id": "team-a", "task_id": "task-42" })
+```
 
 ## When to capture
 
@@ -46,6 +55,20 @@ capture({
 })
 ```
 
+### L0: Conversation capture
+
+To capture a multi-turn conversation with role-based messages, pass `messages` instead of `content`. The tool flattens the messages into a single text for search, and stores the original messages for retrieval.
+
+```
+capture({
+  "type": "conversation",
+  "messages": [
+    { "role": "user", "content": "How do I fix the auth bug?" },
+    { "role": "assistant", "content": "The root cause is a missing JWT refresh." }
+  ]
+})
+```
+
 ### L1: Atom extraction
 
 After the L0 capture, extract 1-3 atomic facts from it. Each atom is a single, self-contained fact that is useful on its own. Capture each atom separately with `type: "atom"` and tag it `L1`. Link it back to the L0 capture by including the L0 id in the content.
@@ -57,11 +80,6 @@ capture({
   "type": "atom",
   "tags": ["L1", "arch", "storage"]
 })
-capture({
-  "content": "sqlite-vec provides vector search without a separate database server. [source: 01KZNVN77XPQYAT9EXS2R1T68Y]",
-  "type": "atom",
-  "tags": ["L1", "arch", "vector"]
-})
 ```
 
 Rules for atoms:
@@ -71,6 +89,12 @@ Rules for atoms:
 - Extract atoms only for `decision`, `learning`, and `error` types. Skip for `task` and `conversation`.
 - Do not extract more than 3 atoms per L0 capture.
 - If the L0 capture is too simple to yield atoms, skip L1.
+
+You can also run atom extraction on existing captures via the CLI:
+```bash
+npx tdai-memory-mcp extract --team-id <id> --limit 50
+```
+This requires `TDAI_LLM_API_KEY` to be set.
 
 ### What to capture
 
@@ -90,7 +114,7 @@ Bad captures (too vague, not useful later):
 - `learning`: A non-obvious fact about the codebase, a library, or a tool.
 - `task`: A completed task with a known outcome.
 - `error`: A bug with a known root cause and fix.
-- `conversation`: A general note that does not fit the other types.
+- `conversation`: A general note or multi-turn conversation that does not fit the other types.
 - `atom`: An atomic fact extracted from a L0 capture. Always tag with `L1` and include `[source: <L0 id>]`.
 
 ## When to search
@@ -101,7 +125,7 @@ Call `search` when `recall` is too broad and you need specific facts with filter
 search({
   "query": "<specific query>",
   "mode": "hybrid",
-  "filters": { "type": "decision", "tags": ["arch"] }
+  "filters": { "type": "decision", "tags": ["arch"], "team_id": "team-a" }
 })
 ```
 
@@ -174,6 +198,30 @@ adr({
 - The decision is easily reversible
 - You are just implementing what was already decided
 
+## Knowledge management
+
+Use `knowledge_create` to register a knowledge asset (wiki or code-graph) for the team. The asset metadata is stored locally. The actual content is processed by an external knowledge service.
+
+```
+knowledge_create({
+  "team_id": "team-1",
+  "name": "Project Wiki",
+  "type": "wiki",
+  "summary": "Internal documentation.",
+  "service_url": "http://localhost:8424/v3"
+})
+```
+
+Use `knowledge_list` to list assets for a team, `knowledge_get` to retrieve one by ID, and `knowledge_delete` to remove assets.
+
+## Skill management
+
+Use `skill_list` to list reusable workflows bound to a team. Use `skill_search` to find skills by keyword. Use `skill_get` to retrieve the full content of a skill.
+
+```
+skill_search({ "team_id": "team-1", "agent_id": "agent-x", "query": "deploy" })
+```
+
 ## Team-shared memory
 
 If the project has a `.tdai-memory/memory-export.json` file, it is automatically imported on server startup. This means teammates can share memory by committing this file to the repo.
@@ -190,6 +238,26 @@ npx tdai-memory-mcp sync-import
 
 The server auto-imports on startup, so you only need `sync-export` before committing.
 
+## CLI commands for L1-L3 pipeline
+
+The L1-L3 pipeline runs via CLI, not MCP tools. This keeps the MCP interface lean.
+
+```bash
+# Run L1 atom extraction on existing captures (requires TDAI_LLM_API_KEY)
+npx tdai-memory-mcp extract --team-id <id> --limit 50
+
+# List or search L1 atoms
+npx tdai-memory-mcp atoms --team-id <id>
+npx tdai-memory-mcp atoms --query "SQLite"
+
+# List L2 scenarios
+npx tdai-memory-mcp scenarios --team-id <id>
+
+# Read or write L3 persona
+npx tdai-memory-mcp persona --team-id <id> --agent-id <id> --user-id <id>
+npx tdai-memory-mcp persona --team-id <id> --agent-id <id> --user-id <id> --write "Prefers concise answers."
+```
+
 ## When to forget
 
 Call `forget` ONLY when the user explicitly asks to delete memory. Always require `confirm: true`. Never auto-forget.
@@ -199,7 +267,7 @@ Call `forget` ONLY when the user explicitly asks to delete memory. Always requir
 If hooks are installed (`npx tdai-memory-mcp install-hooks`), memory works automatically:
 
 - **SessionStart**: Recent captures are injected into your context. You do not need to call `recall` manually.
-- **Stop**: You will be reminded to call `handoff` before stopping. Do so unless the task was trivial.
+- **SessionEnd**: When the session ends, a hook silently captures the session summary (first user message + last assistant message) to the memory DB. You do not need to do anything — this runs automatically on session exit.
 
 You can still call `recall`, `capture`, `search`, `forget`, `handoff`, and `adr` manually at any time.
 

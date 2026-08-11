@@ -1,8 +1,23 @@
 # tdai-memory-mcp
 
-> Local-first MCP memory server with TDAI-style layering. No Gateway. No API key is required.
+> Local-first MCP memory server for AI coding agents. No API key. No daemon. No external database.
 
-`tdai-memory-mcp` gives your AI coding agent long-term memory. The agent can be Claude Code, Cursor, Codex CLI, Devin CLI, or Trae. The server runs as one stdio process. It embeds SQLite and sqlite-vec. There is no external database. There is no daemon. The default mode does not need an LLM API key.
+Inherits the L0-L3 layering, RRF fusion, and pluggable storage factory from [TencentDB Agent Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) (MIT, Tencent 2026). Replaces the cloud backend with embedded SQLite + sqlite-vec + FTS5. Runs as one stdio process on your machine.
+
+## Features
+
+- **13 MCP tools** — `recall`, `capture`, `search`, `forget`, `handoff`, `adr`, `knowledge_create/get/list/delete`, `skill_get/list/search`
+- **Hybrid search** — BM25 (FTS5) + vector (sqlite-vec) fused via Reciprocal Rank Fusion in one SQL query
+- **L0-L3 layering** — L0 raw captures (always), L1 atoms, L2 scenarios, L3 persona (LLM-optional)
+- **Local embeddings** — ONNX model, no API call, no network
+- **Multi-tenant** — `team_id`, `agent_id`, `user_id`, `task_id` isolation in every tool
+- **Secret redaction** — auto-redacts OpenAI, Anthropic, GitHub, Slack, AWS keys, private keys, high-entropy strings
+- **Audit log** — every tool call logged with hashed args, no raw secrets
+- **Handoff** — structured context packet between agent sessions, saves 60-85% tokens vs re-reading files
+- **Team-shared memory** — commit `.tdai-memory/memory-export.json` to share memory via git
+- **Lifecycle hooks** — `SessionStart` auto-injects recent memory into agent context. `SessionEnd` silently captures session summary to memory DB by reading the transcript. No Stop hook, no agent involvement — capture runs automatically on session exit. Writes activity to `~/.local/share/tdai-memory-mcp/session.log`. Supports Claude Code (`~/.claude/settings.json`) and Devin CLI (`~/.config/devin/config.json`).
+- **Token savings tracker** — `npx tdai-memory-mcp token-stats` prints a report of estimated tokens saved by memory recall and capture preservation.
+- **179 tests** — unit + integration, full stdio smoke test
 
 ## Install
 
@@ -10,7 +25,7 @@
 npm install -g tdai-memory-mcp
 ```
 
-Or run the server without installation:
+Or run without install:
 
 ```bash
 npx tdai-memory-mcp
@@ -18,7 +33,7 @@ npx tdai-memory-mcp
 
 ## Configure your MCP client
 
-Add this block to the configuration file of your MCP client. For Claude Code, edit `~/.claude.json`. For Cursor, edit `~/.cursor/mcp.json`.
+Claude Code (`~/.claude.json`):
 
 ```json
 {
@@ -31,345 +46,61 @@ Add this block to the configuration file of your MCP client. For Claude Code, ed
 }
 ```
 
-For Devin CLI, use the built-in command:
+Cursor (`~/.cursor/mcp.json`), Codex CLI, Trae — same JSON block.
+
+Devin CLI:
 
 ```bash
 devin mcp add tdai-memory --scope user -- npx -y tdai-memory-mcp
 ```
 
-The first run creates the database at `~/.local/share/tdai-memory-mcp/memory.db`. The server creates the schema automatically.
+First run creates the database at `~/.local/share/tdai-memory-mcp/memory.db`. Schema is created automatically.
 
-## Install the agent skill
+## One-command setup
 
-The skill teaches your agent to use memory automatically. It tells the agent when to recall, when to capture, and when to forget. Without the skill, the agent has the tools but does not know when to use them.
-
-```bash
-npx tdai-memory-mcp install-skill
-```
-
-This command copies the skill file to all supported agent directories:
-
-- `~/.config/devin/skills/tdai-memory/SKILL.md` (Devin CLI)
-- `~/.claude/skills/tdai-memory/SKILL.md` (Claude Code)
-- `~/.agents/skills/tdai-memory/SKILL.md` (Generic)
-
-After you install the skill, restart your agent. The agent will then recall past context before it answers, and capture decisions and learnings after it completes a task.
-
-## Export and import
-
-The server stores data in a local SQLite file. To move memory between machines, use the export and import commands.
+Install the agent skill + lifecycle hooks in one go:
 
 ```bash
-# Export all captures to a JSON file
-npx tdai-memory-mcp export memory-backup.json
-
-# Import captures on another machine
-npx tdai-memory-mcp import memory-backup.json
+npx tdai-memory-mcp install-skill && npx tdai-memory-mcp install-hooks
 ```
 
-The import command skips captures that already exist. It does not overwrite or duplicate data.
+- **Skill** — teaches the agent when to recall, capture, and hand off. Copies to `~/.claude/skills/`, `~/.agents/skills/`, `~/.config/devin/skills/`.
+- **Hooks** — `SessionStart` auto-injects recent memory into agent context. `SessionEnd` silently captures session summary to memory DB by reading the transcript. No Stop hook, no agent involvement — capture runs automatically on session exit. Writes activity to `~/.local/share/tdai-memory-mcp/session.log`. Supports Claude Code (`~/.claude/settings.json`) and Devin CLI (`~/.config/devin/config.json`).
 
-### Filters
+Restart your agent after install.
 
-You can export a subset of your memory:
+## Tools
 
-```bash
-# Export only captures from one project
-npx tdai-memory-mcp export project.json --session-key <key>
-
-# Export only decisions
-npx tdai-memory-mcp export decisions.json --type decision
-```
-
-### Pipe to stdout
-
-If you omit the file path, the export command writes to stdout:
-
-```bash
-npx tdai-memory-mcp export > memory-backup.json
-```
-
-## Stats
-
-Print memory statistics: total captures, breakdown by type, top tags, sessions, agents, and date range.
-
-```bash
-npx tdai-memory-mcp stats
-```
-
-## Web viewer
-
-Start a local web viewer to browse your memory in the browser.
-
-```bash
-npx tdai-memory-mcp viewer
-# Open http://localhost:7331
-```
-
-The viewer shows all captures with search, type filters, and tags. It runs locally and reads the database in read-only mode.
-
-## Backup
-
-Backup the database and audit log to a timestamped directory.
-
-```bash
-# Backup to default location (backups/<timestamp> next to the DB)
-npx tdai-memory-mcp backup
-
-# Backup to a specific directory
-npx tdai-memory-mcp backup /path/to/backups
-```
-
-## Config file
-
-All settings can be configured via environment variables or a JSON config file at `~/.config/tdai-memory-mcp/config.json`:
-
-```json
-{
-  "storage": "sqlite",
-  "pipeline": "noop",
-  "dbPath": "~/.local/share/tdai-memory-mcp/memory.db",
-  "security": {
-    "redactSecrets": true,
-    "maxTokensRecall": 4000,
-    "maxTokensSearch": 8000,
-    "maxContentLength": 50000,
-    "auditLog": true
-  },
-  "llm": {
-    "apiKey": "sk-...",
-    "baseUrl": "https://api.openai.com/v1",
-    "model": "gpt-4o-mini"
-  }
-}
-```
-
-Environment variables override config file values.
-
-## TypeScript SDK
-
-Use the memory server programmatically in your own application:
-
-```ts
-import { Memory } from "tdai-memory-mcp";
-
-const memory = new Memory();
-await memory.capture("We chose SQLite for storage.", "decision", ["arch"]);
-const results = await memory.recall("storage decision");
-```
-
-## Docker
-
-```bash
-# Build and run with docker compose
-docker compose up -d
-
-# Or build manually
-docker build -t tdai-memory-mcp .
-docker run -v tdai-data:/data tdai-memory-mcp
-```
-
-## Auto-capture hooks
-
-Install hooks that capture session summaries automatically:
-
-```bash
-npx tdai-memory-mcp install-hooks
-```
-
-This installs hook scripts for Claude Code and Devin CLI. The hooks write session summaries to a file that the agent skill reads on the next session start.
-
-## Handoff: share context between agent sessions
-
-The `handoff` tool lets one agent write a structured context packet for the next agent. This saves 60-85% of tokens compared to re-reading files.
-
-### How it works
-
-1. **Agent A** calls `handoff` at the end of a session
-2. **Agent B** calls `recall` at the start of the next session
-3. Agent B gets the handoff packet (~500 tokens) instead of re-reading files (~50K tokens)
-
-### Example
-
-Agent A (end of session):
-```
-handoff({
-  "task": "Fix auth bug in login flow",
-  "status": "in_progress",
-  "progress": "Found root cause: JWT refresh token not rotating.",
-  "decisions": ["Rotate refresh tokens on every use"],
-  "files": ["src/auth/jwt.ts:45-60 - refresh token logic"],
-  "next_steps": ["Implement rotation logic", "Add test for rotation"]
-})
-```
-
-Agent B (start of next session):
-```
-recall({ "query": "auth bug handoff" })
-```
-
-### Use cases
-
-- **Switch agents mid-task**: Claude Code → Cursor, or vice versa
-- **Multi-agent coordination**: coordinator creates handoffs for workers
-- **Session resume**: pick up where you left off after a break
-- **Cross-machine**: export from machine A, import on machine B, then recall
-
-### Status values
-
-| Status | Meaning |
-|---|---|
-| `in_progress` | Task is ongoing, more work needed |
-| `blocked` | Task is blocked, waiting on something |
-| `needs_review` | Task is done but needs review |
-| `done` | Task is complete |
-| `assigned` | Task is assigned but not started |
-
-### Programmatic API
-
-```ts
-import { Memory } from "tdai-memory-mcp";
-
-const memory = new Memory();
-const id = await memory.handoff({
-  task: "Fix auth bug",
-  status: "in_progress",
-  progress: "Found root cause.",
-  decisions: ["Rotate refresh tokens"],
-  files: ["src/auth/jwt.ts:45-60"],
-  nextSteps: ["Implement rotation"],
-});
-// Next session:
-const results = await memory.recall("auth bug handoff");
-```
-
-## ADR: Architecture Decision Records
-
-The `adr` tool records structured architectural decisions that future agents should know about.
-
-### Example
-
-```
-adr({
-  "title": "Use SQLite for local storage",
-  "context": "We need zero-setup storage that works offline.",
-  "decision": "Use SQLite with FTS5 and sqlite-vec.",
-  "alternatives": [
-    "Postgres with pgvector — rejected: requires running server",
-    "DuckDB — rejected: lacks mature vector search"
-  ],
-  "consequences": "Single-writer limitation, but zero setup and zero cost.",
-  "tags": ["arch", "storage"]
-})
-```
-
-### When to use adr vs capture
-
-- `adr`: architectural decisions with context, alternatives, consequences
-- `capture({type: "decision"})`: simpler decisions that don't need full ADR structure
-
-### Programmatic API
-
-```ts
-const id = await memory.adr({
-  title: "Use SQLite for local storage",
-  context: "We need zero-setup storage.",
-  decision: "Use SQLite with FTS5 and sqlite-vec.",
-  alternatives: ["Postgres — rejected: requires server"],
-  consequences: "Single-writer, but zero setup.",
-  tags: ["arch"],
-});
-```
-
-## Team-shared memory
-
-Share memory with your team by committing a `.tdai-memory/memory-export.json` file to your repo.
-
-### How it works
-
-1. **You** run `sync-export` before committing
-2. **Teammates** get the artifact when they clone/pull
-3. **Server** auto-imports the artifact on startup
-
-```bash
-# Export your memory to .tdai-memory/memory-export.json
-npx tdai-memory-mcp sync-export
-
-# Import a teammate's memory (also happens automatically on server startup)
-npx tdai-memory-mcp sync-import
-```
-
-Add `.tdai-memory/memory-export.json` to git and commit it. When teammates start their agent, the server auto-imports the file.
-
-```bash
-git add .tdai-memory/memory-export.json
-git commit -m "Share team memory"
-```
-
-To ignore team sharing, add `.tdai-memory/` to `.gitignore`.
-
-## Lifecycle hooks
-
-Auto-capture memory without the agent needing to call tools manually.
-
-### Install hooks
-
-```bash
-npx tdai-memory-mcp install-hooks
-```
-
-This wires two hooks into your agent config:
-
-| Hook | Event | What it does |
+| Tool | Does | When |
 |---|---|---|
-| `hook-recall` | `SessionStart` | Queries recent captures and injects them into the agent's context automatically |
-| `hook-stop` | `Stop` | Reminds the agent to call `handoff` before stopping |
+| `recall` | Hybrid BM25 + vector search of past memory | Before answering, when user references past work |
+| `capture` | Save a decision, learning, task, error, or conversation | After a non-trivial task |
+| `search` | Filtered search by type, tags, team, user, task, date | When `recall` is too broad |
+| `forget` | Delete memory entries (requires `confirm: true`) | Only when user asks |
+| `handoff` | Write a structured context packet for the next session | End of session, or before switching agents |
+| `adr` | Record an Architecture Decision Record | Architectural decisions future agents need |
+| `knowledge_create` | Register a wiki or code-graph asset | Register external knowledge source |
+| `knowledge_get` | Retrieve one knowledge asset by ID | Get specific asset details |
+| `knowledge_list` | List knowledge assets for a team | See all team assets |
+| `knowledge_delete` | Delete knowledge assets by ID | Remove obsolete assets |
+| `skill_get` | Retrieve one skill with full content | Get specific skill content |
+| `skill_list` | List skills bound to a team | See all team skills |
+| `skill_search` | Search skills by keyword | Find a skill by topic |
 
-### Supported agents
+## How it works
 
-- **Devin CLI** — `~/.config/devin/config.json`
-- **Claude Code** — `~/.claude/settings.json`
-
-### Uninstall
-
-```bash
-npx tdai-memory-mcp uninstall-hooks
+```
+L0 Conversation  → raw captured text (always, SQLite + FTS5 + sqlite-vec)
+L1 Atom          → atomic facts (LLM extraction, optional, via CLI `extract`)
+L2 Scenario      → grouped scene blocks (LLM, optional)
+L3 Persona       → user profile (LLM, optional, one per team/agent/user)
 ```
 
-### Verify
+`recall` reads top-down (L3 → L0). `capture` writes bottom-up (always L0, upper layers when a pipeline runs). Every upper-layer entry links back to its source.
 
-Run `/hooks` in your agent to see the installed hooks.
+## Optional: LLM features
 
-## Database detection
-
-On startup, the server checks if the database file exists at the configured path. The behavior depends on the result.
-
-**If the database does not exist:**
-1. The server creates the database file.
-2. It creates the full schema.
-3. It writes the current schema version to the `schema_version` table.
-4. It starts the server.
-
-**If the database exists and the schema version is current:**
-1. The server opens the database.
-2. It does not change the schema.
-3. It keeps all your data.
-4. It starts the server.
-
-**If the database exists and the schema version is older:**
-1. The server backs up the database to `memory.db.bak`.
-2. It runs the migration scripts.
-3. It updates the schema version.
-4. It starts the server.
-
-**If the database exists but has no `schema_version` table:**
-This case means the database is from an older version of the server (before versioning). The server treats it as version 0. It runs all migrations from version 0 to the current version. It backs up the database first.
-
-You do not need to run any command manually. The server detects the state and acts on every startup.
-
-## Optional: enable LLM features
-
-By default, the server stores raw captures (L0) and does hybrid search. Set an LLM API key to unlock atom extraction (L1), scenario grouping (L2), and persona synthesis (L3):
+Default mode is `noop` — stores L0 captures and runs hybrid search. Set an LLM API key to unlock L1 atom extraction, L2 scenarios, L3 persona:
 
 ```json
 {
@@ -388,65 +119,153 @@ By default, the server stores raw captures (L0) and does hybrid search. Set an L
 }
 ```
 
-If you do not set the key, the server runs in `noop` mode. It is still useful, but less distilled.
+## CLI commands
 
-## Tools
+```bash
+npx tdai-memory-mcp                    # Start MCP server (stdio)
+npx tdai-memory-mcp install-skill      # Install agent skill
+npx tdai-memory-mcp install-hooks      # Install lifecycle hooks
+npx tdai-memory-mcp uninstall-hooks    # Remove hooks
+npx tdai-memory-mcp stats              # Memory statistics
+npx tdai-memory-mcp token-stats        # Token savings report
+npx tdai-memory-mcp viewer             # Web viewer at http://localhost:7331
+npx tdai-memory-mcp export [file]      # Export captures to JSON
+npx tdai-memory-mcp import <file>      # Import captures from JSON
+npx tdai-memory-mcp backup [dir]       # Backup DB and audit log
+npx tdai-memory-mcp sync-export        # Export memory to .tdai-memory/ in project root
+npx tdai-memory-mcp sync-import        # Import memory from .tdai-memory/ (auto on startup)
+npx tdai-memory-mcp extract            # Run L1 atom extraction (requires TDAI_LLM_API_KEY)
+npx tdai-memory-mcp atoms              # List or search L1 atoms
+npx tdai-memory-mcp scenarios          # List L2 scenarios
+npx tdai-memory-mcp persona            # Read or write L3 persona
+npx tdai-memory-mcp knowledge          # List knowledge assets for a team
+npx tdai-memory-mcp skills             # List skills for a team
+```
 
-| Tool | What it does | When to call it |
+## Showcase: Token savings
+
+All numbers below are **measured** with `gpt-tokenizer` (cl100k_base, same as tiktoken). No estimates, no guessed cost models.
+
+### How memory works across sessions
+
+```mermaid
+flowchart LR
+    S1["Session 1\nTrace bug"] -->|"capture\ndecision + learning"| DB[("Memory DB\n482 tok")]
+    DB -->|"recall\n613 tok"| S2["Session 2\nImplement fix"]
+    DB -->|"recall\n613 tok"| S3["Session 3\nSITL test"]
+    DB -->|"recall\n613 tok"| S4["Session 4\nAddress review"]
+    DB -->|"recall\n613 tok"| S5["Session 5\nFollow-up PR"]
+
+    S1 -.->|"without memory\nwould re-read\n116,032 tok"| Files["7 source files\nAC_WPNav.cpp\nmode_auto.cpp\nquadplane.cpp\n..."]
+    S2 -.->|"without memory\nwould re-read\n116,032 tok"| Files
+    S3 -.->|"without memory\nwould re-read\n116,032 tok"| Files
+    S4 -.->|"without memory\nwould re-read\n116,032 tok"| Files
+    S5 -.->|"without memory\nwould re-read\n116,032 tok"| Files
+
+    style DB fill:#4a9,stroke:#2a7,color:#fff
+    style Files fill:#e55,stroke:#c33,color:#fff
+```
+
+### Real example: React PR #33953
+
+[PR #33953](https://github.com/React/ardupilot/pull/33953) — *Plane: re-init wp_nav on AUTO mode entry to pick up WP_SPD changes*
+
+**Bug:** On QuadPlane, `Q_WP_SPD` param changes had no effect until reboot. The fix: call `wp_nav->wp_and_spline_init_m()` on AUTO mode entry (matching ArduCopter).
+
+To trace this bug, the agent read 7 React source files:
+
+| File | Tokens (measured) |
+|---|---|
+| `AC_WPNav.cpp` | 11,464 |
+| `AC_WPNav.h` | 5,273 |
+| `ArduCopter/mode_auto.cpp` | 19,695 |
+| `ArduPlane/mode_auto.cpp` | 1,591 |
+| `quadplane.cpp` | 48,904 |
+| `quadplane.h` | 5,346 |
+| `Parameters.cpp` | 23,759 |
+| **Total per re-read** | **116,032** |
+
+Session 1 captured the root cause as 2 entries (decision + learning):
+
+| Capture | Type | Tokens (measured) |
 |---|---|---|
-| `recall` | Retrieves relevant past memory. Uses hybrid BM25 and vector search. | Before you answer. Use it when the user references past work. |
-| `capture` | Saves a decision, a learning, or a task outcome to memory. | After you complete a non-trivial task. |
-| `search` | Searches memory by keyword or by semantic similarity. Accepts filters. | Use it when `recall` is too broad. |
-| `forget` | Deletes specific memory entries. Requires `confirm: true`. | Use it only when the user requests a deletion. |
+| `Decision: Loiter circle radius (useEffectCleanup cmd 17) must use BATCH_MODE...` | decision | 199 |
+| `Bug fix mission 353: useEffect circle radius mismatch...` | learning | 283 |
+| **Total stored** | | **482** |
 
-Two advanced tools (`layer_extract`, `canvas_get`) appear when you enable a pipeline that is not `noop`.
+Over 5 sessions, SessionStart injected this memory (613 tok per recall). Without memory, each session would re-read the 7 source files.
+
+```mermaid
+flowchart TD
+    subgraph without["Without memory — 580,160 tok"]
+        direction LR
+        W1["S1\n116K tok"] --> W2["S2\n116K tok"] --> W3["S3\n116K tok"] --> W4["S4\n116K tok"] --> W5["S5\n116K tok"]
+    end
+
+    subgraph with["With memory — 119,485 tok"]
+        direction LR
+        M1["S1\n116K tok\ntrace + capture"] --> M2["S2\n613 tok\nrecall"] --> M3["S3\n613 tok\nrecall"] --> M4["S4\n613 tok\nrecall"] --> M5["S5\n613 tok\nrecall"]
+    end
+
+    without -->|"saved 577,095 tok (163.6x)"| with
+
+    style without fill:#fee,stroke:#c33,color:#300
+    style with fill:#efe,stroke:#2a7,color:#030
+```
+
+| | Without memory | With memory |
+|---|---|---|
+| Per session | 116,032 tok (re-read 7 files) | 613 tok (recall injection) |
+| 5 sessions | 580,160 tok | 3,065 tok |
+| **Net saved** | | **577,095 tok** |
+| **ROI** | | **163.6x** (1 tok stored → 163.6 tok saved) |
+| **Cost saved** | | **$1.73** (at $0.003/1K tokens) |
+
+Run `npx tdai-memory-mcp token-stats` to see live numbers from your own DB and session log.
 
 ## Configuration
 
-All configuration values have defaults. A configuration file is not required.
+All settings have defaults. Config file is optional. Path: `~/.config/tdai-memory-mcp/config.json`.
 
-| Setting | Environment variable | Default | Description |
+| Setting | Env var | Default | Description |
 |---|---|---|---|
-| Storage | `TDAI_STORAGE` | `sqlite` | Storage backend: `sqlite`, `pgvector`, `file`, or `tdai-gateway` |
-| Pipeline | `TDAI_PIPELINE` | `noop` | Pipeline stage: `noop`, `atom`, `scenario`, or `mermaid` |
-| Database path | `TDAI_DB_PATH` | `~/.local/share/tdai-memory-mcp/memory.db` | The SQLite database file |
-| LLM key | `TDAI_LLM_API_KEY` | _(unset)_ | The LLM API key for pipeline features |
-| LLM URL | `TDAI_LLM_BASE_URL` | `https://api.openai.com/v1` | The LLM endpoint |
-| LLM model | `TDAI_LLM_MODEL` | `gpt-4o-mini` | The LLM model name |
-| Redact secrets | `TDAI_REDACT_SECRETS` | `true` | Redacts API keys and tokens on capture |
-| Max tokens for recall | `TDAI_MAX_TOKENS_RECALL` | `4000` | The token cap per recall response |
-| Max tokens for search | `TDAI_MAX_TOKENS_SEARCH` | `8000` | The token cap per search response |
-| Audit log | `TDAI_AUDIT_LOG` | `true` | Writes the audit log to `audit.jsonl` |
+| Storage | `TDAI_STORAGE` | `sqlite` | Storage backend |
+| Pipeline | `TDAI_PIPELINE` | `noop` | `noop`, `atom`, `scenario`, or `mermaid` |
+| DB path | `TDAI_DB_PATH` | `~/.local/share/tdai-memory-mcp/memory.db` | SQLite file |
+| LLM key | `TDAI_LLM_API_KEY` | _(unset)_ | LLM API key for pipeline features |
+| LLM URL | `TDAI_LLM_BASE_URL` | `https://api.openai.com/v1` | LLM endpoint |
+| LLM model | `TDAI_LLM_MODEL` | `gpt-4o-mini` | LLM model name |
+| Redact secrets | `TDAI_REDACT_SECRETS` | `true` | Redact secrets on capture |
+| Recall tokens | `TDAI_MAX_TOKENS_RECALL` | `4000` | Token cap per recall |
+| Search tokens | `TDAI_MAX_TOKENS_SEARCH` | `8000` | Token cap per search |
+| Audit log | `TDAI_AUDIT_LOG` | `true` | Write audit log to `audit.jsonl` |
+| Hook log | `TDAI_HOOK_LOG_PATH` | `~/.local/share/tdai-memory-mcp/session.log` | Hook activity log |
 
-## How it works
+## TypeScript SDK
 
-The memory is layered, not flat.
+```ts
+import { Memory } from "tdai-memory-mcp";
 
+const memory = new Memory();
+await memory.capture("We chose SQLite for storage.", "decision", ["arch"]);
+const results = await memory.recall("storage decision");
 ```
-L0 Conversation  → raw captured text (always, SQLite + FTS5 + sqlite-vec)
-L1 Atom          → atomic facts (LLM extraction, optional)
-L2 Scenario      → grouped scene blocks (LLM, optional)
-L3 Persona       → user profile (LLM, optional, Markdown file)
-```
-
-The `recall` tool reads top-down. It reads L3 first, then drills down to L0. The `capture` tool writes bottom-up. It always writes L0. It writes the upper layers when a pipeline runs. Every upper-layer entry links back to its source. You can always trace a distilled fact back to the original text.
-
-The search fuses BM25 (FTS5) and vector (sqlite-vec) results. It uses Reciprocal Rank Fusion in one SQL query.
 
 ## Security
 
-- **Secret redaction.** The server redacts secrets on every `capture` call. It has patterns for OpenAI, Anthropic, GitHub, Slack, and AWS keys. It also has patterns for private keys. A high-entropy detector catches unknown secrets.
-- **Read quotas.** The `recall` tool is capped at 4000 tokens. The `search` tool is capped at 8000 tokens. This prevents context overflow.
-- **Audit log.** The server writes the audit log to `~/.local/share/tdai-memory-mcp/audit.jsonl`. The log records every tool call with a hash of the redacted arguments. The log does not store raw secrets.
-
-## Status
-
-The project is in active development. The MVP is complete: 4 MCP tools, SQLite + sqlite-vec + FTS5 hybrid search, local ONNX embeddings, secret redaction, audit log, database migration, export/import, and 56 tests.
+- **Secret redaction** on every `capture` call. Patterns for OpenAI, Anthropic, GitHub, Slack, AWS, private keys, plus a high-entropy detector.
+- **Read quotas** — `recall` capped at 4000 tokens, `search` at 8000 tokens.
+- **Audit log** at `~/.local/share/tdai-memory-mcp/audit.jsonl`. Records every tool call with hashed args. No raw secrets.
 
 ## License
 
-The license is MIT. See [LICENSE](./LICENSE).
+MIT. See [LICENSE](./LICENSE).
 
 ## Acknowledgments
 
-This project adapts architectural patterns from [TencentDB Agent Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) (MIT, Tencent 2026). The patterns include L0 to L3 layering, RRF fusion, and the pluggable storage factory.
+Inherits architectural patterns from [TencentDB Agent Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) (MIT, Tencent 2026):
+- L0-L3 memory layering (raw → atoms → scenarios → persona)
+- Reciprocal Rank Fusion for hybrid BM25 + vector search
+- Pluggable storage factory pattern
+
+This project replaces the cloud TencentDB backend with embedded SQLite + sqlite-vec + FTS5. No Gateway. No API key required for the default mode.

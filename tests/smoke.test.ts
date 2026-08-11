@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { spawn, type ChildProcess } from "node:child_process";
-import { join } from "node:path";
+import { type ChildProcess, spawn } from "node:child_process";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { rmSync, existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const testDir = join(homedir(), ".local", "share", "tdai-memory-mcp", "test-smoke");
 const dbPath = join(testDir, "memory.db");
@@ -15,7 +15,7 @@ let msgId = 0;
 /** Send a JSON-RPC message to the server stdin. */
 function send(method: string, params: unknown = {}): Promise<any> {
   const id = ++msgId;
-  const msg = JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n";
+  const msg = `${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`;
 
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -46,7 +46,7 @@ function send(method: string, params: unknown = {}): Promise<any> {
 
 /** Send a notification (no response expected). */
 function notify(method: string, params: unknown = {}): void {
-  const msg = JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n";
+  const msg = `${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`;
   proc.stdin?.write(msg);
 }
 
@@ -109,7 +109,7 @@ describe("Smoke test: full server over stdio", () => {
     if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
   });
 
-  it("lists all 6 tools", async () => {
+  it("lists all 13 tools", async () => {
     const response = await send("tools/list", {});
     const toolNames = response.result.tools.map((t: any) => t.name);
 
@@ -117,7 +117,16 @@ describe("Smoke test: full server over stdio", () => {
     expect(toolNames).toContain("capture");
     expect(toolNames).toContain("search");
     expect(toolNames).toContain("forget");
-    expect(toolNames.length).toBe(6);
+    expect(toolNames).toContain("handoff");
+    expect(toolNames).toContain("adr");
+    expect(toolNames).toContain("knowledge_create");
+    expect(toolNames).toContain("knowledge_get");
+    expect(toolNames).toContain("knowledge_list");
+    expect(toolNames).toContain("knowledge_delete");
+    expect(toolNames).toContain("skill_get");
+    expect(toolNames).toContain("skill_list");
+    expect(toolNames).toContain("skill_search");
+    expect(toolNames.length).toBe(13);
   });
 
   it("captures a decision", async () => {
@@ -135,7 +144,8 @@ describe("Smoke test: full server over stdio", () => {
 
   it("captures a learning", async () => {
     const response = await callTool("capture", {
-      content: "The RRF fusion constant k is 60. This is the standard value from the original paper.",
+      content:
+        "The RRF fusion constant k is 60. This is the standard value from the original paper.",
       type: "learning",
       tags: ["search"],
     });

@@ -1,8 +1,8 @@
-import Database from "better-sqlite3";
-import { readFileSync, existsSync } from "node:fs";
-import * as sqliteVec from "sqlite-vec";
-import { join, dirname } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import Database from "better-sqlite3";
+import * as sqliteVec from "sqlite-vec";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -12,9 +12,22 @@ interface ImportRow {
   agent_id: string;
   type: string;
   content: string;
+  content_hash: string | null;
   tags: string | null;
   created_at: number;
   metadata: string | null;
+  team_id: string | null;
+  user_id: string | null;
+  task_id: string | null;
+}
+
+interface ImportMessage {
+  id: string;
+  capture_id: string;
+  role: string;
+  content: string;
+  seq: number;
+  created_at: number;
 }
 
 interface ImportFormat {
@@ -22,6 +35,7 @@ interface ImportFormat {
   exported_at: number;
   count: number;
   captures: ImportRow[];
+  messages?: ImportMessage[];
 }
 
 /** Run the schema if the database is new. */
@@ -77,15 +91,17 @@ export function importData(dbPath: string, inputPath: string): void {
 
   let inserted = 0;
   let skipped = 0;
+  let messagesInserted = 0;
 
   const insertStmt = db.prepare(`
-    INSERT OR IGNORE INTO captures (id, session_key, agent_id, type, content, tags, created_at, metadata)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata, team_id, user_id, task_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  const insertVecStmt = db.prepare(
-    "INSERT OR IGNORE INTO captures_vec (id, embedding) VALUES (?, ?)",
-  );
+  const insertMsgStmt = db.prepare(`
+    INSERT OR IGNORE INTO messages (id, capture_id, role, content, seq, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
 
   const transaction = db.transaction(() => {
     for (const row of data.captures) {
@@ -95,9 +111,13 @@ export function importData(dbPath: string, inputPath: string): void {
         row.agent_id,
         row.type,
         row.content,
+        row.content_hash ?? null,
         row.tags,
         row.created_at,
         row.metadata,
+        row.team_id ?? null,
+        row.user_id ?? null,
+        row.task_id ?? null,
       );
 
       if (result.changes > 0) {
@@ -106,10 +126,28 @@ export function importData(dbPath: string, inputPath: string): void {
         skipped++;
       }
     }
+
+    // Import messages if present (export format v2+)
+    if (data.messages && Array.isArray(data.messages)) {
+      for (const msg of data.messages) {
+        const result = insertMsgStmt.run(
+          msg.id,
+          msg.capture_id,
+          msg.role,
+          msg.content,
+          msg.seq,
+          msg.created_at,
+        );
+        if (result.changes > 0) {
+          messagesInserted++;
+        }
+      }
+    }
   });
 
   transaction();
   db.close();
 
-  console.log(`Imported ${inserted} captures, skipped ${skipped} (already exist).`);
+  const msgNote = messagesInserted > 0 ? `, ${messagesInserted} messages` : "";
+  console.log(`Imported ${inserted} captures${msgNote}, skipped ${skipped} (already exist).`);
 }

@@ -1,6 +1,6 @@
-import { appendFileSync, mkdirSync, existsSync } from "node:fs";
-import { dirname } from "node:path";
 import { createHash } from "node:crypto";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 
 /** Audit log entry. */
 export interface AuditEntry {
@@ -37,7 +37,7 @@ export class AuditLogger {
 
     const line = JSON.stringify(fullEntry);
     try {
-      appendFileSync(this.logPath, line + "\n");
+      appendFileSync(this.logPath, `${line}\n`);
     } catch (err) {
       // The audit log must not crash the server
       console.error(`[tdai-memory] Audit log write failed: ${err}`);

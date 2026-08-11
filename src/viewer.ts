@@ -1,11 +1,9 @@
-import Database from "better-sqlite3";
 import { createServer as createHttpServer, type Server } from "node:http";
-import { join, dirname } from "node:path";
-import { homedir } from "node:os";
+import Database from "better-sqlite3";
 
 /** Start a local web viewer for the memory database. */
 export function startViewer(dbPath: string, port: number): Server {
-  const db = new Database(dbPath, { readonly: true });
+  const db = new Database(dbPath);
 
   const server = createHttpServer((req, res) => {
     const url = new URL(req.url ?? "/", `http://localhost:${port}`);
@@ -35,7 +33,7 @@ export function startViewer(dbPath: string, port: number): Server {
         params.push(sessionKey);
       }
       if (conditions.length > 0) {
-        sql += " WHERE " + conditions.join(" AND ");
+        sql += ` WHERE ${conditions.join(" AND ")}`;
       }
       sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
       params.push(limit, offset);
@@ -79,6 +77,70 @@ export function startViewer(dbPath: string, port: number): Server {
         .all(ftsQuery);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(rows));
+      return;
+    }
+
+    // Delete a single capture by ID
+    if (url.pathname === "/api/delete" && req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk;
+      });
+      req.on("end", () => {
+        try {
+          const { id } = JSON.parse(body) as { id: string };
+          if (!id) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "Missing 'id'" }));
+            return;
+          }
+          // FTS5 trigger auto-removes from search index
+          const info = db.prepare("DELETE FROM captures WHERE id = ?").run(id);
+          if (info.changes === 0) {
+            res.writeHead(404, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "Capture not found" }));
+            return;
+          }
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ deleted: id }));
+        } catch (err) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: String(err) }));
+        }
+      });
+      return;
+    }
+
+    // Delete all captures of a given type
+    if (url.pathname === "/api/delete-by-type" && req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk;
+      });
+      req.on("end", () => {
+        try {
+          const { type } = JSON.parse(body) as { type: string };
+          if (!type) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "Missing 'type'" }));
+            return;
+          }
+          const info = db.prepare("DELETE FROM captures WHERE type = ?").run(type);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ deleted: info.changes }));
+        } catch (err) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: String(err) }));
+        }
+      });
+      return;
+    }
+
+    // Delete all captures (clear memory)
+    if (url.pathname === "/api/clear-all" && req.method === "POST") {
+      const info = db.prepare("DELETE FROM captures").run();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ deleted: info.changes }));
       return;
     }
 
@@ -127,9 +189,16 @@ function renderPage(): string {
   .type-task { background: #bf870033; color: #d29922; }
   .type-conversation { background: #8b949e33; color: #8b949e; }
   .type-atom { background: #bc8cff33; color: #bc8cff; }
-  .item-content { font-size: 14px; line-height: 1.5; }
+  .item-content { font-size: 14px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
   .item-tags { margin-top: 4px; display: flex; gap: 4px; flex-wrap: wrap; }
   .tag { padding: 1px 6px; background: #21262d; border-radius: 4px; font-size: 11px; color: #8b949e; }
+  .item-actions { margin-top: 6px; display: flex; gap: 8px; }
+  .btn-delete { padding: 2px 10px; background: #da363333; border: 1px solid #da363355; border-radius: 4px; color: #f85149; cursor: pointer; font-size: 12px; }
+  .btn-delete:hover { background: #da363366; }
+  .btn-clear { padding: 4px 12px; background: #da363333; border: 1px solid #da363355; border-radius: 4px; color: #f85149; cursor: pointer; font-size: 13px; }
+  .btn-clear:hover { background: #da363366; }
+  .btn-deltype { padding: 4px 12px; background: #21262d; border: 1px solid #30363d; border-radius: 4px; color: #d29922; cursor: pointer; font-size: 13px; }
+  .btn-deltype:hover { background: #30363d; }
   .empty { padding: 48px; text-align: center; color: #8b949e; }
 </style>
 </head>
@@ -149,6 +218,8 @@ function renderPage(): string {
     <option value="conversation">conversation</option>
     <option value="atom">atom</option>
   </select>
+  <button class="btn-deltype" onclick="deleteByType()">Delete this type</button>
+  <button class="btn-clear" onclick="clearAll()">Clear all memory</button>
 </div>
 <div class="stats" id="stats"></div>
 <div class="list" id="list"></div>
@@ -188,12 +259,13 @@ function renderList(rows) {
       + '<span class="item-type type-' + r.type + '">' + r.type + '</span>'
       + '<span>' + date + '</span>'
       + '<span>' + r.agent_id + '</span>'
-      + '<span>' + r.id + '</span>'
+      + '<span>' + r.id.slice(0,12) + '</span>'
       + '</div>'
       + '<div class="item-content">' + escapeHtml(r.content) + '</div>'
       + (tags.length > 0 ? '<div class="item-tags">' + tags.map(function(t) {
         return '<span class="tag">' + escapeHtml(t) + '</span>';
       }).join('') + '</div>' : '')
+      + '<div class="item-actions"><button class="btn-delete" onclick="deleteCapture(\\'' + r.id + '\\')">Delete</button></div>'
       + '</div>';
   }).join('');
 }
@@ -201,6 +273,57 @@ function escapeHtml(s) {
   var d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
+}
+async function deleteCapture(id) {
+  if (!confirm('Delete this capture? This cannot be undone.')) return;
+  const r = await fetch('/api/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: id }),
+  });
+  if (r.ok) {
+    loadStats();
+    loadCaptures();
+  } else {
+    const err = await r.json();
+    alert('Delete failed: ' + (err.error || 'unknown error'));
+  }
+}
+async function deleteByType() {
+  const type = document.getElementById('typeFilter').value;
+  if (!type) {
+    alert('Select a type first.');
+    return;
+  }
+  if (!confirm('Delete ALL captures of type "' + type + '"? This cannot be undone.')) return;
+  const r = await fetch('/api/delete-by-type', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: type }),
+  });
+  if (r.ok) {
+    const d = await r.json();
+    alert('Deleted ' + d.deleted + ' capture(s).');
+    loadStats();
+    loadCaptures();
+  } else {
+    const err = await r.json();
+    alert('Delete failed: ' + (err.error || 'unknown error'));
+  }
+}
+async function clearAll() {
+  if (!confirm('Delete ALL memory? This cannot be undone.')) return;
+  if (!confirm('Are you absolutely sure? All captures will be permanently deleted.')) return;
+  const r = await fetch('/api/clear-all', { method: 'POST' });
+  if (r.ok) {
+    const d = await r.json();
+    alert('Deleted ' + d.deleted + ' capture(s).');
+    loadStats();
+    loadCaptures();
+  } else {
+    const err = await r.json();
+    alert('Clear failed: ' + (err.error || 'unknown error'));
+  }
 }
 document.getElementById('search').addEventListener('keydown', function(e) {
   if (e.key === 'Enter') doSearch();
