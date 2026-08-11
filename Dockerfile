@@ -15,7 +15,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY package.json package-lock.json ./
 
 # Install all dependencies (including dev for build)
-RUN npm ci || npm install
+# --ignore-scripts: skip postinstall (auto-setup) since no agent configs exist in Docker
+RUN npm ci --ignore-scripts || npm install --ignore-scripts
 
 # Copy source and build
 COPY . .
