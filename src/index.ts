@@ -26,7 +26,13 @@ import {
 import { loadConfig } from "./config.js";
 import { LocalEmbedder } from "./embedding/local.js";
 import { exportData } from "./export.js";
-import { hookPostCommit, hookRecall, hookSessionEnd, hookStop } from "./hook-handlers.js";
+import {
+  hookPostCommit,
+  hookRecall,
+  hookSessionEnd,
+  hookStop,
+  waitAndCapture,
+} from "./hook-handlers.js";
 import { installHooks, uninstallHooks } from "./hooks.js";
 import { importData } from "./import.js";
 import { installSkill } from "./install-skill.js";
@@ -197,6 +203,15 @@ async function main(): Promise<void> {
   }
   if (arg === "hook-stop") {
     hookStop(defaultDbPath());
+    return;
+  }
+  if (arg === "--wait-and-capture") {
+    // Internal: spawned by hook-stop to capture transcript after Devin CLI writes it.
+    // Args: node dist/index.js --wait-and-capture <dbPath> <sessionId> [transcriptPath]
+    const dbPath = process.argv[3] ?? defaultDbPath();
+    const sessionId = process.argv[4] ?? "unknown";
+    const transcriptPath = process.argv[5] || null;
+    await waitAndCapture(dbPath, sessionId, transcriptPath);
     return;
   }
   if (arg === "hook-session-end") {

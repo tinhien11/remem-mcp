@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -160,12 +161,19 @@ export function hookStop(dbPath?: string): void {
     }
 
     // Auto-capture on every fire (Devin CLI may only fire once).
-    if (dbPath) {
-      try {
-        captureSessionTranscript(dbPath, input.session_id, input.transcript_path);
-      } catch (err) {
-        logToFile(`Stop: auto-capture error - ${err}`);
-      }
+    // Devin CLI writes transcript AFTER Stop hook fires, so we fork a
+    // background process that waits for the transcript file to appear.
+    if (dbPath && input.session_id) {
+      const sid = input.session_id;
+      const tpath = input.transcript_path ?? null;
+      const scriptPath = process.argv[1];
+      const child = spawn(
+        process.execPath,
+        [scriptPath, "--wait-and-capture", dbPath, sid, tpath ?? ""],
+        { detached: true, stdio: "ignore" },
+      );
+      child.unref();
+      logToFile(`Stop: spawned background capture for session ${sid}`);
     }
 
     // Second+ fire (stop_hook_active): agent already got the reminder, let it stop.
@@ -398,6 +406,58 @@ export function hookSessionEnd(dbPath: string): void {
       process.stdout.write(JSON.stringify({}));
     }
   });
+}
+
+/**
+ * Wait for transcript file to appear, then capture it.
+ * Spawned as a detached background process by hookStop, because Devin CLI
+ * writes the transcript file AFTER the Stop hook fires.
+ *
+ * Waits up to 10 seconds (polling every 500ms), then captures or gives up.
+ */
+export async function waitAndCapture(
+  dbPath: string,
+  sessionId: string,
+  transcriptPath: string | null,
+): Promise<void> {
+  let filePath: string | null = null;
+  if (transcriptPath) {
+    filePath = transcriptPath;
+  } else {
+    filePath = join(defaultTranscriptDir(), `${sessionId}.json`);
+  }
+
+  // Wait up to 10 seconds for transcript file to appear
+  const maxWait = 10000;
+  const interval = 500;
+  const start = Date.now();
+
+  while (Date.now() - start < maxWait) {
+    if (existsSync(filePath)) {
+      // Wait a bit more for the file to be fully written
+      await sleep(500);
+      break;
+    }
+    await sleep(interval);
+  }
+
+  if (!existsSync(filePath)) {
+    logToFile(`Stop: transcript never appeared at ${filePath} after 10s`);
+    return;
+  }
+
+  try {
+    const id = captureSessionTranscript(dbPath, sessionId, transcriptPath);
+    if (id) {
+      logToFile(`Stop: background capture succeeded. id=${id}`);
+    }
+  } catch (err) {
+    logToFile(`Stop: background capture error - ${err}`);
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
