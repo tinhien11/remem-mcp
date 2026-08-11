@@ -35,6 +35,7 @@ import {
 } from "./hook-handlers.js";
 import { installHooks, uninstallHooks } from "./hooks.js";
 import { importData } from "./import.js";
+import { installMcpServer } from "./install-mcp.js";
 import { installSkill } from "./install-skill.js";
 import { AtomPipeline } from "./pipeline/atom.js";
 import { OpenAILLMClient } from "./pipeline/llm.js";
@@ -108,7 +109,9 @@ async function main(): Promise<void> {
   }
   if (arg === "setup") {
     console.log("tdai-memory-mcp setup\n");
-    console.log("This will install the skill, hooks, and run a test capture.\n");
+    console.log("This will register the MCP server, install the skill, hooks, and run a test capture.\n");
+    await installMcpServer();
+    console.log("");
     await installSkill();
     console.log("");
     await installHooks();

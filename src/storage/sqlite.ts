@@ -480,7 +480,9 @@ export class SQLiteBackend implements StorageBackend {
     const ftsQuery = this.escapeFtsQuery(query);
     if (!ftsQuery) return [];
 
-    let sql = `
+    let sql: string;
+    try {
+      sql = `
       SELECT fts.id as id, bm25(captures_fts) as score
       FROM captures_fts fts
       JOIN captures c ON c.id = fts.id
@@ -526,6 +528,16 @@ export class SQLiteBackend implements StorageBackend {
 
     const rows = this.db.prepare(sql).all(...params) as { id: string; score: number }[];
     return rows.map((r) => ({ id: r.id, score: r.score }));
+    } catch (err: unknown) {
+      // FTS5 external content tables can get out of sync after schema changes
+      // or crashes. Rebuild the index and retry once.
+      if (err instanceof Error && err.message.includes("missing row")) {
+        this.db.exec("INSERT INTO captures_fts(captures_fts) VALUES('rebuild')");
+        const rows = this.db.prepare(sql).all(...params) as { id: string; score: number }[];
+        return rows.map((r) => ({ id: r.id, score: r.score }));
+      }
+      throw err;
+    }
   }
 
   /** Run a vector search via sqlite-vec. */
