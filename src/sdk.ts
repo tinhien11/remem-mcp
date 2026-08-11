@@ -57,7 +57,9 @@ export class Memory {
     this.storage = new SQLiteBackend(dbPath);
     this.embedder = new LocalEmbedder();
     this.sessionKey =
-      opts?.sessionKey ?? createHash("sha256").update(process.cwd()).digest("hex").slice(0, 16);
+      opts?.sessionKey ??
+      process.env.TDAI_SESSION_KEY ??
+      createHash("sha256").update(process.cwd()).digest("hex").slice(0, 16);
     this.redactSecrets = opts?.redactSecrets ?? true;
   }
 

@@ -455,6 +455,26 @@ If hooks are installed (`npx tdai-memory-mcp install-hooks`), memory works autom
 
 You can still call `recall`, `capture`, `search`, `forget`, `resolve`, `handoff`, and `adr` manually at any time.
 
+## Global memory (all projects share one memory)
+
+By default, each project gets its own session key (`hash(cwd)`). To share memory across all projects, set the `TDAI_SESSION_KEY` environment variable in your MCP config:
+
+```json
+{
+  "mcpServers": {
+    "tdai-memory": {
+      "command": "npx",
+      "args": ["-y", "tdai-memory-mcp"],
+      "env": {
+        "TDAI_SESSION_KEY": "global"
+      }
+    }
+  }
+}
+```
+
+When `TDAI_SESSION_KEY` is set, all captures and recalls use that key regardless of the working directory. This is useful when you want the agent to remember decisions and learnings from all projects in one shared memory.
+
 ## Rules
 
 1. Never fabricate memory. If recall returns nothing, say nothing about memory.

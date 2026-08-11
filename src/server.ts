@@ -44,6 +44,8 @@ import {
 
 /** Default session key: hash of the current working directory. */
 function defaultSessionKey(): string {
+  // TDAI_SESSION_KEY overrides the default hash(cwd) — use for global memory across projects
+  if (process.env.TDAI_SESSION_KEY) return process.env.TDAI_SESSION_KEY;
   const cwd = process.cwd();
   return createHash("sha256").update(cwd).digest("hex").slice(0, 16);
 }
