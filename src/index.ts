@@ -53,6 +53,7 @@ function defaultDbPath(): string {
 function openDbWithSchema(dbPath: string): Database.Database {
   const db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
+  db.pragma("foreign_keys = OFF");
   sqliteVec.load(db);
   // Load schema if tables don't exist
   const hasSymbols = db
