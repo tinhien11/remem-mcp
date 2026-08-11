@@ -1,7 +1,7 @@
 {
   "name": "tdai-memory-mcp",
   "mcpName": "io.github.tinhien11/tdai-memory-mcp",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Local-first MCP memory server with TDAI-style layering. No Gateway. No API key required.",
   "type": "module",
   "license": "MIT",

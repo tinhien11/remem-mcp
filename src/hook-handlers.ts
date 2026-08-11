@@ -159,16 +159,17 @@ export function hookStop(dbPath?: string): void {
       return;
     }
 
-    // Second+ fire (stop_hook_active): agent already got the reminder.
-    // Try to auto-capture the session transcript before exit.
-    if (input.stop_hook_active) {
-      if (dbPath) {
-        try {
-          captureSessionTranscript(dbPath, input.session_id, input.transcript_path);
-        } catch (err) {
-          logToFile(`Stop: auto-capture error - ${err}`);
-        }
+    // Auto-capture on every fire (Devin CLI may only fire once).
+    if (dbPath) {
+      try {
+        captureSessionTranscript(dbPath, input.session_id, input.transcript_path);
+      } catch (err) {
+        logToFile(`Stop: auto-capture error - ${err}`);
       }
+    }
+
+    // Second+ fire (stop_hook_active): agent already got the reminder, let it stop.
+    if (input.stop_hook_active) {
       process.stdout.write(JSON.stringify({}));
       return;
     }
