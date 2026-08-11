@@ -13,10 +13,11 @@
 import { execSync, execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-const BIN = join(process.cwd(), "dist", "index.js");
+const BIN = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "dist", "index.js");
 const CLAUDE_CREDENTIALS = join(process.env.HOME ?? "", ".claude", ".credentials.json");
 
 /**
