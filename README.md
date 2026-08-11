@@ -40,12 +40,18 @@ Everything stays in one SQLite file on your machine. No data leaves your compute
 ## Quick start
 
 ```bash
-# 1. Add MCP server + install skill + hooks (one command)
+# 1. Register MCP server + hooks (one command, 0.2s)
 npx tdai-memory-mcp setup
 
 # 2. Restart your agent
 
 # 3. Use your agent normally — it remembers automatically
+```
+
+Optional: if you want your agent to recall/capture mid-session (not just on start/stop), install the skill file:
+
+```bash
+npx tdai-memory-mcp install-skill   # adds ~4K tokens to context
 ```
 
 ### Claude Code
@@ -123,7 +129,8 @@ Works with Claude Code, Devin CLI, and Codex CLI.
 
 ```bash
 # Setup
-npx tdai-memory-mcp setup              # Install skill + hooks + test capture
+npx tdai-memory-mcp setup              # Register MCP server + hooks + test capture
+npx tdai-memory-mcp install-skill      # Optional: install skill file for mid-session recall/capture
 npx tdai-memory-mcp install-hooks      # Wire hooks into agent configs
 npx tdai-memory-mcp uninstall-hooks    # Remove hooks
 

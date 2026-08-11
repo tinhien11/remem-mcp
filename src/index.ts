@@ -109,12 +109,8 @@ async function main(): Promise<void> {
   }
   if (arg === "setup") {
     console.log("tdai-memory-mcp setup\n");
-    console.log(
-      "This will register the MCP server, install the skill, hooks, and run a test capture.\n",
-    );
+    console.log("This will register the MCP server, install hooks, and run a test capture.\n");
     await installMcpServer();
-    console.log("");
-    await installSkill();
     console.log("");
     await installHooks();
     console.log("\nTest capture...");
@@ -131,6 +127,8 @@ async function main(): Promise<void> {
       console.log("Test capture already exists (duplicate).");
     }
     console.log("\nSetup complete. Restart your agent to activate hooks.");
+    console.log("\nOptional: run `npx tdai-memory-mcp install-skill` to teach your");
+    console.log("agent when to recall/capture mid-session (adds ~4K tokens to context).");
     return;
   }
   if (arg === "uninstall-hooks") {
