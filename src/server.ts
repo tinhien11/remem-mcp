@@ -846,7 +846,7 @@ async function handleCapture(
   let conflictInfo = "";
   if (embedding) {
     try {
-      const conflicts = await opts.storage.findConflicts(embedding, sessionKey, 0.15);
+      const conflicts = await opts.storage.findConflicts(embedding, sessionKey, 0.3);
       const filtered = conflicts.filter((c) => c.id !== id);
       if (filtered.length > 0) {
         const conflictList = filtered

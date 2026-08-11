@@ -723,11 +723,18 @@ export class SQLiteBackend implements StorageBackend {
     }[];
 
     return rows
-      .filter((r) => r.distance < threshold)
+      .filter((r) => {
+        // sqlite-vec returns L2 (euclidean) distance for float[] columns.
+        // Convert to cosine distance: cosine_dist = L2^2 / 2 (for normalized vectors).
+        // Filter by cosine distance threshold.
+        const cosineDist = (r.distance * r.distance) / 2;
+        return cosineDist < threshold;
+      })
       .map((r) => ({
         id: r.id,
         content: r.content,
-        distance: r.distance,
+        // Return cosine distance (not L2) so the caller gets a meaningful value.
+        distance: (r.distance * r.distance) / 2,
         trustState: r.trust_state as TrustState,
       }));
   }
