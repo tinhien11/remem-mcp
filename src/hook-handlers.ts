@@ -254,11 +254,13 @@ export function hookStop(dbPath?: string): void {
 /**
  * Hook handler for PostToolUse event.
  * When a Bash command fails (non-zero exit), automatically captures the error
- * to memory with the command, error output, and file context.
+ * to memory with structured fields (ReasoningBank + MNL pattern).
  *
- * Based on Reflexion (Shinn et al., NeurIPS 2023) and bastra-recall pattern:
- * - Failed trajectories contain the most valuable learning signal
- * - Auto-capture ensures errors are never lost, even if agent forgets to call capture()
+ * Based on:
+ * - Reflexion (Shinn et al., NeurIPS 2023): self-reflection on errors
+ * - ReasoningBank (ICLR 2026): structured memory from failures
+ * - ExpeL (AAAI 2024): voting/confidence system
+ * - Headroom: success correlation
  *
  * Claude Code PostToolUse stdin: { tool_name, tool_input, tool_response }
  * tool_response for Bash includes: { stdout, stderr, exit_code, interrupted }
@@ -283,52 +285,19 @@ export function hookPostToolUse(dbPath: string): void {
       const toolInput = input.tool_input ?? {};
       const toolResponse = input.tool_response ?? {};
 
-      // Only capture Bash failures (non-zero exit code)
+      // Only process Bash/exec commands
       if (toolName !== "Bash" && toolName !== "exec") {
         process.stdout.write(JSON.stringify({}));
         return;
       }
 
-      // Check for failure — exit_code, status, or error in response
       const exitCode = toolResponse.exit_code ?? toolResponse.status ?? null;
       const isError = exitCode !== null && exitCode !== 0;
-
-      // Also check if stderr has content even without explicit exit code
       const stderr = toolResponse.stderr ?? "";
       const stdout = toolResponse.stdout ?? "";
       const command = toolInput.command ?? "";
-
-      if (!isError && !stderr) {
-        // Success — no capture needed
-        process.stdout.write(JSON.stringify({}));
-        return;
-      }
-
-      // Skip if it's just a warning (stderr but exit 0)
-      if (!isError) {
-        process.stdout.write(JSON.stringify({}));
-        return;
-      }
-
-      // Build error summary
-      const errorOutput = (stderr || stdout || "").trim();
-      const truncatedError =
-        errorOutput.length > 500 ? `${errorOutput.slice(0, 500)}...` : errorOutput;
-
-      // Classify error type
-      const errorType = classifyError(command, truncatedError);
-
-      // Build content for capture
-      const content = `Command failed: ${command}\nError (${errorType}): ${truncatedError}`;
-
-      // Compute session key from cwd
       const cwd = input.cwd ?? process.cwd();
       const sessionKey = hashPath(cwd);
-
-      // Check for duplicate (same command + error in last hour)
-      const contentHash = createHash("sha256").update(content).digest("hex").slice(0, 16);
-      const id = generateId();
-      const now = new Date().toISOString();
 
       let db: Database.Database;
       try {
@@ -338,7 +307,64 @@ export function hookPostToolUse(dbPath: string): void {
         return;
       }
 
-      // Check for recent duplicate
+      // [Feature 4] Success correlation: if command succeeds and previously failed,
+      // link the success to the previous error and upvote it
+      if (!isError) {
+        const prevError = db
+          .prepare(
+            `SELECT id, metadata FROM captures
+             WHERE type = 'error' AND session_key = ?
+             AND created_at > datetime('now', '-7 days')
+             AND json_extract(metadata, '$.command') = ?
+             ORDER BY created_at DESC LIMIT 1`,
+          )
+          .get(sessionKey, command.slice(0, 200)) as { id: string; metadata: string } | undefined;
+
+        if (prevError) {
+          // Upvote the previous error (it was resolved)
+          const meta = JSON.parse(prevError.metadata);
+          const confidence = (meta.confidence ?? 2) + 1;
+          meta.resolved = true;
+          meta.resolved_at = new Date().toISOString();
+          meta.resolution = "Command succeeded after previous failure";
+          meta.confidence = confidence;
+          db.prepare("UPDATE captures SET metadata = ? WHERE id = ?").run(
+            JSON.stringify(meta),
+            prevError.id,
+          );
+          logToFile(
+            `PostToolUse: success correlation — upvoted error ${prevError.id} (confidence=${confidence})`,
+          );
+        }
+
+        db.close();
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+
+      // --- Error capture path ---
+
+      // Build error summary
+      const errorOutput = (stderr || stdout || "").trim();
+      const truncatedError =
+        errorOutput.length > 500 ? `${errorOutput.slice(0, 500)}...` : errorOutput;
+
+      // [Feature 1] Classify error type
+      const errorType = classifyError(command, truncatedError);
+
+      // [Feature 1] Structured memory (ReasoningBank + MNL pattern)
+      const title = generateErrorTitle(command, errorType);
+      const antiPattern = extractAntiPattern(command, truncatedError);
+      const correctApproach = suggestCorrectApproach(command, errorType, truncatedError);
+
+      // Build content for capture
+      const content = `Command failed: ${command}\nError (${errorType}): ${truncatedError}`;
+
+      // Check for duplicate (same command + error in last hour)
+      const contentHash = createHash("sha256").update(content).digest("hex").slice(0, 16);
+      const id = generateId();
+      const now = new Date().toISOString();
+
       const recent = db
         .prepare(
           "SELECT id FROM captures WHERE content_hash = ? AND created_at > datetime('now', '-1 hour') LIMIT 1",
@@ -346,13 +372,38 @@ export function hookPostToolUse(dbPath: string): void {
         .get(contentHash) as { id: string } | undefined;
 
       if (recent) {
+        // [Feature 5] Downvote the existing error — it recurred (ExpeL + Midas pattern)
+        const existingMeta = db
+          .prepare("SELECT metadata FROM captures WHERE id = ?")
+          .get(recent.id) as { metadata: string } | undefined;
+        if (existingMeta) {
+          const meta = JSON.parse(existingMeta.metadata);
+          meta.downvotes = (meta.downvotes ?? 0) + 1;
+          meta.confidence = Math.max(0, (meta.confidence ?? 2) - 1);
+          meta.last_recurred = new Date().toISOString();
+          db.prepare("UPDATE captures SET metadata = ? WHERE id = ?").run(
+            JSON.stringify(meta),
+            recent.id,
+          );
+          logToFile(
+            `PostToolUse: error recurred — downvoted ${recent.id} (confidence=${meta.confidence})`,
+          );
+
+          // [Feature 5] Prune if confidence reaches 0 (ExpeL removal threshold)
+          if (meta.confidence <= 0) {
+            db.prepare("UPDATE captures SET deleted_at = ? WHERE id = ?").run(
+              new Date().toISOString(),
+              recent.id,
+            );
+            logToFile(`PostToolUse: pruned error ${recent.id} (confidence reached 0)`);
+          }
+        }
         db.close();
-        logToFile(`PostToolUse: duplicate error capture skipped (hash=${contentHash})`);
         process.stdout.write(JSON.stringify({}));
         return;
       }
 
-      // Capture the error
+      // [Feature 1] Capture with structured metadata
       db.prepare(`
         INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -370,6 +421,16 @@ export function hookPostToolUse(dbPath: string): void {
           command: command.slice(0, 200),
           exit_code: exitCode,
           error_type: errorType,
+          // [Feature 1] Structured fields (ReasoningBank + MNL)
+          title: title,
+          anti_pattern: antiPattern,
+          correct_approach: correctApproach,
+          // [Feature 5] Confidence/voting (ExpeL + Midas)
+          confidence: 2,
+          upvotes: 0,
+          downvotes: 0,
+          // [Feature 4] Success correlation
+          resolved: false,
         }),
       );
 
@@ -377,13 +438,19 @@ export function hookPostToolUse(dbPath: string): void {
 
       logToFile(`PostToolUse: auto-captured ${errorType} error. id=${id}`);
 
-      // Inject a brief reminder to the agent about this error
-      const reminder = `[tdai-memory] Auto-captured ${errorType} error from: ${command.slice(0, 80)}\nThis error has been saved to memory. Check recall() for past similar errors before retrying.`;
+      // [Feature 3] Self-reflection prompt (Reflexion pattern)
+      // Inject a prompt asking the agent to reflect on the error
+      const reflection = `[tdai-memory] Auto-captured ${errorType} error: ${title}
+
+Anti-pattern: ${antiPattern}
+Suggested fix: ${correctApproach}
+
+Before retrying, reflect on WHY this failed and what you should do differently. Call capture() with type="learning" to save your reflection.`;
 
       const output = {
         hookSpecificOutput: {
           hookEventName: "PostToolUse",
-          additionalContext: reminder,
+          additionalContext: reflection,
         },
       };
 
@@ -398,10 +465,14 @@ export function hookPostToolUse(dbPath: string): void {
 
 /**
  * Hook handler for PreToolUse event.
- * Before running lint/build/test commands, inject past errors from memory
- * so the agent can avoid repeating them.
+ * Before running lint/build/test commands, inject the BEST matching past error
+ * from memory so the agent can avoid repeating it.
  *
- * Based on projectmem pattern: pre-commit warnings based on failure history.
+ * Based on:
+ * - ReasoningBank (ICLR 2026): k=1 retrieval is optimal (k=2+ degrades performance)
+ * - SWE-Exp: "Precisely ONE well-selected experience per issue is optimal"
+ * - ExpeL (AAAI 2024): confidence-based ranking
+ * - memcite: stale memory detection
  */
 export function hookPreToolUse(dbPath: string): void {
   const chunks: Buffer[] = [];
@@ -433,7 +504,6 @@ export function hookPreToolUse(dbPath: string): void {
         return;
       }
 
-      // Query recent error captures for this project
       const cwd = input.cwd ?? process.cwd();
       const sessionKey = hashPath(cwd);
 
@@ -445,15 +515,24 @@ export function hookPreToolUse(dbPath: string): void {
         return;
       }
 
-      // Get recent errors (last 30 days) for this project
+      // [Feature 2] k=1-2 optimal retrieval (ReasoningBank finding)
+      // Get top 2 errors by confidence, filtered by relevance to current command
       const errors = db
         .prepare(
-          `SELECT content, tags, created_at FROM captures
+          `SELECT id, content, tags, created_at, metadata FROM captures
            WHERE type = 'error' AND session_key = ?
            AND created_at > datetime('now', '-30 days')
-           ORDER BY created_at DESC LIMIT 5`,
+           AND json_extract(metadata, '$.resolved') IS NOT true
+           ORDER BY CAST(json_extract(metadata, '$.confidence') AS INTEGER) DESC,
+                    created_at DESC LIMIT 2`,
         )
-        .all(sessionKey) as { content: string; tags: string | null; created_at: string }[];
+        .all(sessionKey) as {
+        id: string;
+        content: string;
+        tags: string | null;
+        created_at: string;
+        metadata: string;
+      }[];
 
       db.close();
 
@@ -462,21 +541,42 @@ export function hookPreToolUse(dbPath: string): void {
         return;
       }
 
-      // Build warning context
-      const lines: string[] = [`[tdai-memory] Past errors for this project (avoid repeating):`];
-      for (const err of errors) {
+      // [Feature 6] Stale detection: check if file paths in error still exist
+      const validErrors = errors.filter((err) => {
+        const meta = JSON.parse(err.metadata);
+        const filesInError = extractFilePaths(err.content);
+        if (filesInError.length === 0) return true; // No file refs = still valid
+        // Valid if at least one referenced file still exists
+        return filesInError.some((f) => existsSync(join(cwd, f)));
+      });
+
+      if (validErrors.length === 0) {
+        logToFile("PreToolUse: all past errors are stale (files no longer exist)");
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+
+      // Build structured warning context (ReasoningBank format)
+      const lines: string[] = [`[tdai-memory] Past error to avoid repeating:`];
+      for (const err of validErrors) {
+        const meta = JSON.parse(err.metadata);
         const date = new Date(err.created_at).toISOString().split("T")[0];
-        const tags = err.tags ? (JSON.parse(err.tags) as string[]) : [];
-        const tagStr = tags.length > 0 ? ` [${tags.join(", ")}]` : "";
-        const content = err.content.length > 200 ? `${err.content.slice(0, 200)}...` : err.content;
-        lines.push(`- ${date}${tagStr}: ${content}`);
+        const title = meta.title ?? "Untitled error";
+        const antiPattern = meta.anti_pattern ?? "";
+        const correctApproach = meta.correct_approach ?? "";
+        const confidence = meta.confidence ?? 2;
+
+        lines.push(`- ${date} [confidence=${confidence}]: ${title}`);
+        if (antiPattern) lines.push(`  Anti-pattern: ${antiPattern}`);
+        if (correctApproach) lines.push(`  Fix: ${correctApproach}`);
+        if (meta.resolved) lines.push(`  (Previously resolved — may recur)`);
       }
       lines.push("");
-      lines.push("Fix these issues BEFORE running the command to avoid repeating errors.");
+      lines.push("Fix these issues BEFORE running the command.");
 
       const context = lines.join("\n");
       logToFile(
-        `PreToolUse: injected ${errors.length} past error(s) before: ${command.slice(0, 60)}`,
+        `PreToolUse: injected ${validErrors.length} past error(s) (k=${validErrors.length}) before: ${command.slice(0, 60)}`,
       );
 
       const output = {
@@ -514,6 +614,66 @@ function classifyError(command: string, errorOutput: string): string {
   if (lower.includes("permission") || lower.includes("eacces")) return "permission";
   if (lower.includes("enoent") || lower.includes("no such file")) return "file-not-found";
   return "runtime";
+}
+
+/**
+ * [Feature 1] Generate a concise title for the error (ReasoningBank pattern).
+ * Title = short identifier summarizing the core issue.
+ */
+function generateErrorTitle(command: string, errorType: string): string {
+  // Extract the most relevant part of the command
+  const cmdParts = command.trim().split(/\s+/);
+  const tool = cmdParts[0] ?? "command";
+  const subCmd = cmdParts.slice(0, 3).join(" ");
+  return `${errorType} error in: ${subCmd.slice(0, 80)}`;
+}
+
+/**
+ * [Feature 1] Extract anti-pattern from error output (MNL pattern).
+ * Anti-pattern = what NOT to do.
+ */
+function extractAntiPattern(command: string, errorOutput: string): string {
+  // Extract the first meaningful error line
+  const lines = errorOutput.split("\n").filter((l) => l.trim());
+  const errorLine =
+    lines.find((l) => /error|fail|cannot|missing|invalid/i.test(l)) ?? lines[0] ?? "";
+  // Truncate and clean
+  const cleaned = errorLine.replace(/\s+/g, " ").trim();
+  return cleaned.length > 150 ? `${cleaned.slice(0, 150)}...` : cleaned;
+}
+
+/**
+ * [Feature 1] Suggest correct approach based on error type (MNL pattern).
+ * Correct approach = what TO do instead.
+ */
+function suggestCorrectApproach(command: string, errorType: string, errorOutput: string): string {
+  const suggestions: Record<string, string> = {
+    lint: "Fix the lint violation in the referenced file before re-running.",
+    test: "Fix the failing test case or the code it tests. Check the assertion error details.",
+    typecheck: "Fix the type error. Check the type signatures and imports.",
+    build:
+      "Fix the build error. Check for missing dependencies, syntax errors, or configuration issues.",
+    import: "Check that the module exists and the import path is correct.",
+    permission: "Check file permissions or run with appropriate access level.",
+    "file-not-found": "Check that the file path is correct and the file exists.",
+    runtime: "Check the error message and stack trace for the root cause.",
+  };
+  return suggestions[errorType] ?? "Analyze the error output and fix the root cause.";
+}
+
+/**
+ * [Feature 6] Extract file paths from error content (memcite pattern).
+ * Used for stale detection — if referenced files no longer exist, memory is stale.
+ */
+function extractFilePaths(content: string): string[] {
+  const paths: string[] = [];
+  // Match common file path patterns: src/foo.ts, ./bar.js, /abs/path.py
+  const pathRegex = /(?:^|\s|[(:[])((?:\.\/|\.\.\/|\/)?[\w-]+(?:\/[\w-]+)+\.\w{1,5})/g;
+  let match;
+  while ((match = pathRegex.exec(content)) !== null) {
+    paths.push(match[1]);
+  }
+  return paths;
 }
 
 /** Hash a file path to a session key (same as storage layer). */
