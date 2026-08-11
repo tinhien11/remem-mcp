@@ -639,6 +639,107 @@ function renderPage(): string {
 
   .danger-btn:active { transform: scale(0.97); }
 
+  /* ─── Search input for filter bars ─── */
+  .filter-search {
+    flex: 1;
+    min-width: 200px;
+    padding: 0.5rem 1rem;
+    background: var(--glass);
+    border: 1px solid var(--hairline);
+    border-radius: 9999px;
+    color: var(--text);
+    font-size: 0.8125rem;
+    font-family: inherit;
+    outline: none;
+    transition: all 0.4s var(--bezier);
+  }
+  .filter-search:focus { border-color: var(--accent); background: var(--glass-strong); }
+  .filter-search::placeholder { color: var(--text-faint); }
+
+  .filter-btn {
+    padding: 0.5rem 1.25rem;
+    background: var(--text);
+    color: #050505;
+    border: none;
+    border-radius: 9999px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.4s var(--bezier);
+  }
+  .filter-btn:hover { transform: scale(1.02); }
+  .filter-btn:active { transform: scale(0.98); }
+
+  /* ─── Symbol / Wiki card grid (uniform) ─── */
+  .item-grid {
+    position: relative;
+    z-index: 2;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 1.5rem 6rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 0.875rem;
+  }
+
+  .item-card {
+    padding: 1rem 1.25rem;
+    background: var(--glass);
+    border: 1px solid var(--hairline);
+    border-radius: 1rem;
+    cursor: pointer;
+    transition: all 0.4s var(--bezier);
+    opacity: 0;
+    transform: translateY(1rem);
+  }
+  .item-card.revealed { opacity: 1; transform: translateY(0); }
+  .item-card:hover {
+    border-color: var(--hairline-strong);
+    background: var(--glass-strong);
+    transform: translateY(-2px);
+  }
+
+  .item-card-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+  .item-kind {
+    padding: 0.2rem 0.6rem;
+    border-radius: 9999px;
+    font-size: 0.625rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    background: rgba(167,139,250,0.1);
+    color: var(--accent);
+    border: 1px solid rgba(167,139,250,0.2);
+  }
+  .item-lang {
+    font-size: 0.625rem;
+    color: var(--text-faint);
+    font-family: 'JetBrains Mono', monospace;
+    margin-left: auto;
+  }
+  .item-name {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 0.25rem;
+    word-break: break-word;
+  }
+  .item-file {
+    font-size: 0.6875rem;
+    color: var(--text-faint);
+    font-family: 'JetBrains Mono', monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   /* ─── Capture grid (asymmetrical bento) ─── */
   .capture-grid {
     position: relative;
@@ -1080,10 +1181,10 @@ function renderPage(): string {
     <div class="stats-grid" id="cgStatsGrid"></div>
   </section>
   <div class="filter-bar">
-    <input class="nav-search" id="cgSearch" placeholder="Search symbols..." autocomplete="off" onkeydown="if(event.key==='Enter')loadSymbols()" />
-    <button class="nav-btn" onclick="loadSymbols()">Search</button>
+    <input class="filter-search" id="cgSearch" placeholder="Search symbols by name..." autocomplete="off" onkeydown="if(event.key==='Enter')loadSymbols()" />
+    <button class="filter-btn" onclick="loadSymbols()">Search</button>
   </div>
-  <div class="capture-grid" id="cgList"></div>
+  <div class="item-grid" id="cgList"></div>
 </div>
 
 <!-- ─── Wiki tab ─── -->
@@ -1098,10 +1199,10 @@ function renderPage(): string {
     <div class="stats-grid" id="wikiStatsGrid"></div>
   </section>
   <div class="filter-bar">
-    <input class="nav-search" id="wikiSearch" placeholder="Search wiki..." autocomplete="off" onkeydown="if(event.key==='Enter')loadWiki()" />
-    <button class="nav-btn" onclick="loadWiki()">Search</button>
+    <input class="filter-search" id="wikiSearch" placeholder="Search wiki pages..." autocomplete="off" onkeydown="if(event.key==='Enter')loadWiki()" />
+    <button class="filter-btn" onclick="loadWiki()">Search</button>
   </div>
-  <div class="capture-grid" id="wikiList"></div>
+  <div class="item-grid" id="wikiList"></div>
 </div>
 
 <!-- ─── Modal ─── -->
@@ -1243,19 +1344,24 @@ function renderPage(): string {
     var rows = await r.json();
     var list = document.getElementById('cgList');
     if (!rows || rows.length === 0) {
-      list.innerHTML = '<p style="color:var(--text-dim);padding:2rem">No symbols found.</p>';
+      list.innerHTML = '<p style="color:var(--text-dim);padding:2rem;text-align:center">No symbols found.</p>';
       return;
     }
     list.innerHTML = rows.map(function(s) {
-      return '<div class="card" onclick="showSymbolDetails(\\''+s.id+'\\')">'
-        + '<div class="card-header">'
-        + '<span class="card-type" style="color:var(--accent)">' + s.kind + '</span>'
-        + '<span class="card-time">' + s.language + '</span>'
+      return '<div class="item-card" onclick="showSymbolDetails(\\''+s.id+'\\')">'
+        + '<div class="item-card-head">'
+        + '<span class="item-kind">' + s.kind + '</span>'
+        + '<span class="item-lang">' + s.language + '</span>'
         + '</div>'
-        + '<div class="card-content">' + s.name + '</div>'
-        + '<div class="card-meta">' + s.file_path + ':' + s.line_start + '</div>'
+        + '<div class="item-name">' + s.name + '</div>'
+        + '<div class="item-file">' + s.file_path + ':' + s.line_start + '</div>'
         + '</div>';
     }).join('');
+    requestAnimationFrame(function() {
+      list.querySelectorAll('.item-card').forEach(function(c, i) {
+        setTimeout(function() { c.classList.add('revealed'); }, i * 20);
+      });
+    });
   }
 
   async function showSymbolDetails(id) {
@@ -1301,18 +1407,23 @@ function renderPage(): string {
     var rows = await r.json();
     var list = document.getElementById('wikiList');
     if (!rows || rows.length === 0) {
-      list.innerHTML = '<p style="color:var(--text-dim);padding:2rem">No wiki pages found.</p>';
+      list.innerHTML = '<p style="color:var(--text-dim);padding:2rem;text-align:center">No wiki pages found.</p>';
       return;
     }
     list.innerHTML = rows.map(function(p) {
-      return '<div class="card">'
-        + '<div class="card-header">'
-        + '<span class="card-type" style="color:var(--accent)">page</span>'
+      return '<div class="item-card">'
+        + '<div class="item-card-head">'
+        + '<span class="item-kind">page</span>'
         + '</div>'
-        + '<div class="card-content">' + p.title + '</div>'
-        + '<div class="card-meta">' + p.source_file + '</div>'
+        + '<div class="item-name">' + p.title + '</div>'
+        + '<div class="item-file">' + p.source_file + '</div>'
         + '</div>';
     }).join('');
+    requestAnimationFrame(function() {
+      list.querySelectorAll('.item-card').forEach(function(c, i) {
+        setTimeout(function() { c.classList.add('revealed'); }, i * 20);
+      });
+    });
   }
 
   // ─── Captures ───
