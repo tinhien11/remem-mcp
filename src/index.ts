@@ -29,6 +29,8 @@ import { LocalEmbedder } from "./embedding/local.js";
 import { exportData } from "./export.js";
 import {
   hookPostCommit,
+  hookPostToolUse,
+  hookPreToolUse,
   hookRecall,
   hookSessionEnd,
   hookStop,
@@ -228,6 +230,14 @@ async function main(): Promise<void> {
   }
   if (arg === "hook-post-commit") {
     await hookPostCommit(defaultDbPath());
+    return;
+  }
+  if (arg === "hook-post-tool-use") {
+    hookPostToolUse(defaultDbPath());
+    return;
+  }
+  if (arg === "hook-pre-tool-use") {
+    hookPreToolUse(defaultDbPath());
     return;
   }
 

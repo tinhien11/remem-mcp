@@ -60,13 +60,19 @@ export function hookRecall(dbPath: string): void {
       }
 
       // Try with session_key first, then fall back to all captures
-      const baseSql = `
+      // Prioritize errors first (ExpeL pattern: failed trajectories are most valuable)
+      const errorSql = `
         SELECT id, type, content, tags, created_at
         FROM captures
-        WHERE type IN ('decision', 'learning', 'error', 'task')
+        WHERE type = 'error'
+      `;
+      const otherSql = `
+        SELECT id, type, content, tags, created_at
+        FROM captures
+        WHERE type IN ('decision', 'learning', 'task')
       `;
 
-      let rows: {
+      const rows: {
         id: string;
         type: string;
         content: string;
@@ -77,24 +83,38 @@ export function hookRecall(dbPath: string): void {
       // If TDAI_GLOBAL_SESSION_KEY is set, include global memory first
       const globalKey = process.env.TDAI_GLOBAL_SESSION_KEY;
       if (globalKey) {
-        const globalRows = db
-          .prepare(`${baseSql} AND session_key = ? ORDER BY created_at DESC LIMIT 5`)
+        const globalErrors = db
+          .prepare(`${errorSql} AND session_key = ? ORDER BY created_at DESC LIMIT 3`)
           .all(globalKey) as typeof rows;
-        rows.push(...globalRows);
+        rows.push(...globalErrors);
+        const globalOthers = db
+          .prepare(`${otherSql} AND session_key = ? ORDER BY created_at DESC LIMIT 3`)
+          .all(globalKey) as typeof rows;
+        rows.push(...globalOthers);
       }
 
       if (sessionKey) {
-        const sessionRows = db
-          .prepare(`${baseSql} AND session_key = ? ORDER BY created_at DESC LIMIT 10`)
+        const sessionErrors = db
+          .prepare(`${errorSql} AND session_key = ? ORDER BY created_at DESC LIMIT 5`)
           .all(sessionKey) as typeof rows;
-        // Dedup by id
         const seen = new Set(rows.map((r) => r.id));
-        rows.push(...sessionRows.filter((r) => !seen.has(r.id)));
+        rows.push(...sessionErrors.filter((r) => !seen.has(r.id)));
+        const sessionOthers = db
+          .prepare(`${otherSql} AND session_key = ? ORDER BY created_at DESC LIMIT 5`)
+          .all(sessionKey) as typeof rows;
+        rows.push(...sessionOthers.filter((r) => !seen.has(r.id)));
       }
 
       // If no results with session_key, query all captures
       if (rows.length === 0) {
-        rows = db.prepare(`${baseSql} ORDER BY created_at DESC LIMIT 10`).all() as typeof rows;
+        const allErrors = db
+          .prepare(`${errorSql} ORDER BY created_at DESC LIMIT 5`)
+          .all() as typeof rows;
+        rows.push(...allErrors);
+        const allOthers = db
+          .prepare(`${otherSql} ORDER BY created_at DESC LIMIT 5`)
+          .all() as typeof rows;
+        rows.push(...allOthers);
       }
 
       db.close();
@@ -229,6 +249,276 @@ export function hookStop(dbPath?: string): void {
 
     process.stdout.write(JSON.stringify(output));
   });
+}
+
+/**
+ * Hook handler for PostToolUse event.
+ * When a Bash command fails (non-zero exit), automatically captures the error
+ * to memory with the command, error output, and file context.
+ *
+ * Based on Reflexion (Shinn et al., NeurIPS 2023) and bastra-recall pattern:
+ * - Failed trajectories contain the most valuable learning signal
+ * - Auto-capture ensures errors are never lost, even if agent forgets to call capture()
+ *
+ * Claude Code PostToolUse stdin: { tool_name, tool_input, tool_response }
+ * tool_response for Bash includes: { stdout, stderr, exit_code, interrupted }
+ */
+export function hookPostToolUse(dbPath: string): void {
+  const chunks: Buffer[] = [];
+  process.stdin.setEncoding("utf-8");
+  process.stdin.on("data", (chunk) => {
+    chunks.push(Buffer.from(chunk));
+  });
+
+  process.stdin.on("end", () => {
+    try {
+      const raw = Buffer.concat(chunks).toString("utf-8");
+      if (!raw.trim()) {
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+
+      const input = JSON.parse(raw);
+      const toolName = input.tool_name ?? "";
+      const toolInput = input.tool_input ?? {};
+      const toolResponse = input.tool_response ?? {};
+
+      // Only capture Bash failures (non-zero exit code)
+      if (toolName !== "Bash" && toolName !== "exec") {
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+
+      // Check for failure — exit_code, status, or error in response
+      const exitCode = toolResponse.exit_code ?? toolResponse.status ?? null;
+      const isError = exitCode !== null && exitCode !== 0;
+
+      // Also check if stderr has content even without explicit exit code
+      const stderr = toolResponse.stderr ?? "";
+      const stdout = toolResponse.stdout ?? "";
+      const command = toolInput.command ?? "";
+
+      if (!isError && !stderr) {
+        // Success — no capture needed
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+
+      // Skip if it's just a warning (stderr but exit 0)
+      if (!isError) {
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+
+      // Build error summary
+      const errorOutput = (stderr || stdout || "").trim();
+      const truncatedError =
+        errorOutput.length > 500 ? `${errorOutput.slice(0, 500)}...` : errorOutput;
+
+      // Classify error type
+      const errorType = classifyError(command, truncatedError);
+
+      // Build content for capture
+      const content = `Command failed: ${command}\nError (${errorType}): ${truncatedError}`;
+
+      // Compute session key from cwd
+      const cwd = input.cwd ?? process.cwd();
+      const sessionKey = hashPath(cwd);
+
+      // Check for duplicate (same command + error in last hour)
+      const contentHash = createHash("sha256").update(content).digest("hex").slice(0, 16);
+      const id = generateId();
+      const now = new Date().toISOString();
+
+      let db: Database.Database;
+      try {
+        db = new Database(dbPath);
+      } catch {
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+
+      // Check for recent duplicate
+      const recent = db
+        .prepare(
+          "SELECT id FROM captures WHERE content_hash = ? AND created_at > datetime('now', '-1 hour') LIMIT 1",
+        )
+        .get(contentHash) as { id: string } | undefined;
+
+      if (recent) {
+        db.close();
+        logToFile(`PostToolUse: duplicate error capture skipped (hash=${contentHash})`);
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+
+      // Capture the error
+      db.prepare(`
+        INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        sessionKey,
+        "auto",
+        "error",
+        content,
+        contentHash,
+        JSON.stringify(["auto-capture", "error", errorType]),
+        now,
+        JSON.stringify({
+          tool: toolName,
+          command: command.slice(0, 200),
+          exit_code: exitCode,
+          error_type: errorType,
+        }),
+      );
+
+      db.close();
+
+      logToFile(`PostToolUse: auto-captured ${errorType} error. id=${id}`);
+
+      // Inject a brief reminder to the agent about this error
+      const reminder = `[tdai-memory] Auto-captured ${errorType} error from: ${command.slice(0, 80)}\nThis error has been saved to memory. Check recall() for past similar errors before retrying.`;
+
+      const output = {
+        hookSpecificOutput: {
+          hookEventName: "PostToolUse",
+          additionalContext: reminder,
+        },
+      };
+
+      process.stdout.write(JSON.stringify(output));
+    } catch (err) {
+      process.stderr.write(`[tdai-memory hook-post-tool-use] Error: ${err}\n`);
+      logToFile(`PostToolUse: error - ${err}`);
+      process.stdout.write(JSON.stringify({}));
+    }
+  });
+}
+
+/**
+ * Hook handler for PreToolUse event.
+ * Before running lint/build/test commands, inject past errors from memory
+ * so the agent can avoid repeating them.
+ *
+ * Based on projectmem pattern: pre-commit warnings based on failure history.
+ */
+export function hookPreToolUse(dbPath: string): void {
+  const chunks: Buffer[] = [];
+  process.stdin.setEncoding("utf-8");
+  process.stdin.on("data", (chunk) => {
+    chunks.push(Buffer.from(chunk));
+  });
+
+  process.stdin.on("end", () => {
+    try {
+      const raw = Buffer.concat(chunks).toString("utf-8");
+      if (!raw.trim()) {
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+
+      const input = JSON.parse(raw);
+      const toolName = input.tool_name ?? "";
+      const toolInput = input.tool_input ?? {};
+      const command = toolInput.command ?? "";
+
+      // Only inject for lint/build/test/typecheck commands
+      const isRelevantCommand =
+        /^(npm|npx|yarn|pnpm|biome|eslint|tsc|cargo|make|pytest|vitest|jest)\b/.test(command) ||
+        /\b(lint|test|build|typecheck|check|format)\b/.test(command);
+
+      if (!isRelevantCommand) {
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+
+      // Query recent error captures for this project
+      const cwd = input.cwd ?? process.cwd();
+      const sessionKey = hashPath(cwd);
+
+      let db: Database.Database;
+      try {
+        db = new Database(dbPath, { readonly: true });
+      } catch {
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+
+      // Get recent errors (last 30 days) for this project
+      const errors = db
+        .prepare(
+          `SELECT content, tags, created_at FROM captures
+           WHERE type = 'error' AND session_key = ?
+           AND created_at > datetime('now', '-30 days')
+           ORDER BY created_at DESC LIMIT 5`,
+        )
+        .all(sessionKey) as { content: string; tags: string | null; created_at: string }[];
+
+      db.close();
+
+      if (errors.length === 0) {
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+
+      // Build warning context
+      const lines: string[] = [`[tdai-memory] Past errors for this project (avoid repeating):`];
+      for (const err of errors) {
+        const date = new Date(err.created_at).toISOString().split("T")[0];
+        const tags = err.tags ? (JSON.parse(err.tags) as string[]) : [];
+        const tagStr = tags.length > 0 ? ` [${tags.join(", ")}]` : "";
+        const content = err.content.length > 200 ? `${err.content.slice(0, 200)}...` : err.content;
+        lines.push(`- ${date}${tagStr}: ${content}`);
+      }
+      lines.push("");
+      lines.push("Fix these issues BEFORE running the command to avoid repeating errors.");
+
+      const context = lines.join("\n");
+      logToFile(
+        `PreToolUse: injected ${errors.length} past error(s) before: ${command.slice(0, 60)}`,
+      );
+
+      const output = {
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          additionalContext: context,
+        },
+      };
+
+      process.stdout.write(JSON.stringify(output));
+    } catch (err) {
+      process.stderr.write(`[tdai-memory hook-pre-tool-use] Error: ${err}\n`);
+      logToFile(`PreToolUse: error - ${err}`);
+      process.stdout.write(JSON.stringify({}));
+    }
+  });
+}
+
+/** Classify error type from command and error output. */
+function classifyError(command: string, errorOutput: string): string {
+  const lower = errorOutput.toLowerCase();
+  if (lower.includes("lint") || lower.includes("biome") || lower.includes("eslint")) return "lint";
+  if (
+    lower.includes("test") ||
+    lower.includes("vitest") ||
+    lower.includes("jest") ||
+    lower.includes("pytest")
+  )
+    return "test";
+  if (lower.includes("type") && (lower.includes("error") || lower.includes("tsc")))
+    return "typecheck";
+  if (lower.includes("build") || lower.includes("compile") || lower.includes("webpack"))
+    return "build";
+  if (lower.includes("module not found") || lower.includes("cannot find")) return "import";
+  if (lower.includes("permission") || lower.includes("eacces")) return "permission";
+  if (lower.includes("enoent") || lower.includes("no such file")) return "file-not-found";
+  return "runtime";
+}
+
+/** Hash a file path to a session key (same as storage layer). */
+function hashPath(path: string): string {
+  return createHash("sha256").update(path).digest("hex").slice(0, 16);
 }
 
 /**

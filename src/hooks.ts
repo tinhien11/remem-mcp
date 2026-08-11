@@ -44,6 +44,30 @@ const HOOKS_CONFIG = {
       ],
     },
   ],
+  PreToolUse: [
+    {
+      matcher: "Bash",
+      hooks: [
+        {
+          type: "command",
+          command: hookCommand("hook-pre-tool-use"),
+          timeout: 5,
+        },
+      ],
+    },
+  ],
+  PostToolUse: [
+    {
+      matcher: "Bash",
+      hooks: [
+        {
+          type: "command",
+          command: hookCommand("hook-post-tool-use"),
+          timeout: 5,
+        },
+      ],
+    },
+  ],
   Stop: [
     {
       hooks: [
@@ -85,18 +109,30 @@ function writeJsonConfig(path: string, data: unknown): void {
   writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, "utf-8");
 }
 
-/** Merge hooks into an existing config object without overwriting other keys. */
+/** Merge hooks into an existing config object without overwriting other keys.
+ * For each hook event, appends our hooks to any existing ones (preserves user hooks).
+ */
 function mergeHooks(
   config: Record<string, unknown>,
   hooks: Record<string, unknown>,
 ): Record<string, unknown> {
   const existing = (config.hooks as Record<string, unknown>) ?? {};
+  const merged: Record<string, unknown> = { ...existing };
+
+  for (const [event, newEntries] of Object.entries(hooks)) {
+    const existingEntries = (existing[event] as unknown[]) ?? [];
+    // Filter out any previous tdai-memory hooks for this event (avoid duplicates on re-install)
+    const filtered = existingEntries.filter((entry) => {
+      const hooks = (entry as { hooks?: { command?: string }[] })?.hooks;
+      if (!hooks) return true;
+      return !hooks.some((h) => h?.command?.includes("tdai-memory"));
+    });
+    merged[event] = [...filtered, ...(newEntries as unknown[])];
+  }
+
   return {
     ...config,
-    hooks: {
-      ...existing,
-      ...hooks,
-    },
+    hooks: merged,
   };
 }
 
@@ -199,7 +235,9 @@ export async function installHooks(): Promise<void> {
   console.log(`\nHooks wired to ${installed} agent(s).`);
   console.log("\nHooks installed:");
   console.log("  SessionStart → auto-recall recent memory into agent context");
-  console.log("  Stop         → prompt agent to save handoff before exit");
+  console.log("  PreToolUse   → inject past errors before lint/build/test commands");
+  console.log("  PostToolUse  → auto-capture failed commands as error memories");
+  console.log("  Stop         → auto-capture session transcript + remind to save");
   console.log("  SessionEnd   → silently capture session summary to memory DB");
   console.log("\nRestart your agent for hooks to take effect.");
   console.log("\nTo verify: run /hooks in your agent.");
