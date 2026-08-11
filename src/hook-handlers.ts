@@ -345,6 +345,21 @@ function captureSessionTranscript(
     return null;
   }
 
+  // Delete previous auto-captures for the same session (only keep the latest).
+  // This prevents N captures when the user stops/resumes N times.
+  const stale = db
+    .prepare(
+      "SELECT id FROM captures WHERE session_key = ? AND type = 'conversation' AND json_extract(metadata, '$.session_id') = ?",
+    )
+    .all(sessionKey, sid) as { id: string }[];
+  if (stale.length > 0) {
+    const delStmt = db.prepare("DELETE FROM captures WHERE id = ?");
+    for (const row of stale) {
+      delStmt.run(row.id);
+    }
+    logToFile(`Stop: removed ${stale.length} previous capture(s) for session ${sid}`);
+  }
+
   db.prepare(`
     INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
