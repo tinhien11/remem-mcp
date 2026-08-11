@@ -290,7 +290,7 @@ The CodeGraph indexes code symbols (functions, classes, methods) and call relati
 
 ### Index your code
 
-Call `codegraph_index` at the start of a session to index the project. This extracts symbols, calls, and imports into the memory database.
+Call `codegraph_index` at the start of a session, before you read or modify code. This extracts symbols, calls, and imports into the memory database. Index the `src` directory or the project root.
 
 ```
 codegraph_index({ "path": "src", "repo_path": "." })
@@ -300,6 +300,12 @@ For a single file:
 
 ```
 codegraph_index({ "path": "src/server.ts", "repo_path": "." })
+```
+
+If you are not sure which directory holds the source code, index the current directory:
+
+```
+codegraph_index({ "path": ".", "repo_path": "." })
 ```
 
 ### Search for symbols
@@ -338,6 +344,17 @@ codegraph_list({ "file_path": "src/server.ts" })
 ### Automatic indexing
 
 The `recall` tool augments its results with matching code symbols. The `handoff` tool includes symbols for files listed in the handoff packet.
+
+### When to use CodeGraph
+
+Call `codegraph_search` and `codegraph_impact` before you change a function or class. Do this when:
+
+- The user asks you to modify a function — run `codegraph_impact` first to see what else breaks
+- You need to find where a function is defined — run `codegraph_search` instead of grep
+- You need to understand who calls a function — run `codegraph_callers` to trace the call chain
+- You refactor a file — run `codegraph_list` to see all symbols in that file first
+
+Do not call CodeGraph tools if the project has no source code files (only docs, config, or data files).
 
 To auto-index after each commit, add this to `.git/hooks/post-commit`:
 
