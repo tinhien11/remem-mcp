@@ -1,8 +1,8 @@
 {
   "name": "tdai-memory-mcp",
   "mcpName": "io.github.tinhien11/tdai-memory-mcp",
-  "version": "0.5.8",
-  "description": "Local-first MCP memory server with TDAI-style layering. No Gateway. No API key required.",
+  "version": "0.5.9",
+  "description": "Long-term memory for AI coding agents. Memory + CodeGraph + Wiki in one SQLite file. Auto-recall, auto-capture, no API key, no cloud.",
   "type": "module",
   "license": "MIT",
   "author": "tin",
@@ -19,9 +19,20 @@
     "model-context-protocol",
     "memory",
     "ai-agent",
+    "agent-memory",
+    "long-term-memory",
+    "claude-code",
+    "cursor",
+    "devin",
+    "codex",
     "sqlite",
     "sqlite-vec",
-    "local-first"
+    "local-first",
+    "codegraph",
+    "tree-sitter",
+    "knowledge-graph",
+    "persistent-memory",
+    "agent-context"
   ],
   "bin": {
     "tdai-memory-mcp": "dist/index.js"

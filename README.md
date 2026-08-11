@@ -1,42 +1,52 @@
 # tdai-memory-mcp
 
 [![npm version](https://img.shields.io/npm/v/tdai-memory-mcp.svg)](https://www.npmjs.com/package/tdai-memory-mcp)
-[![npm downloads](https://img.shields.io/npm/dm/tdai-memory-mcp.svg)](https://www.npmjs.com/package/tdai-memory-mcp)
+[![GitHub stars](https://img.shields.io/github/stars/tinhien11/tdai-memory-mcp.svg)](https://github.com/tinhien11/tdai-memory-mcp)
 
-> Local-first MCP memory server for AI coding agents. No API key. No daemon. No external database.
+> Your AI coding agent forgets everything when you close the session. This fixes that.
 
 ![Demo](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/demo.gif)
 
 *Demo: React codebase — Memory + CodeGraph + Wiki*
 
-Core based on [TencentDB Agent Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) (MIT, Tencent 2026). Replaces the cloud backend with embedded SQLite + sqlite-vec + FTS5. Adds CodeGraph, Wiki, and lifecycle hooks.
+## The problem
 
-Memory, CodeGraph, and Wiki in one SQLite file. Lifecycle hooks auto-recall and auto-capture without agent involvement.
+Every time you start a new session with Claude Code, Cursor, or Devin, your agent starts from scratch. It doesn't remember the bug you fixed yesterday, the architecture decision you made last week, or the file structure it already explored.
 
-## Key features
+You re-explain. Re-read files. Re-discover the same context. Every. Single. Session.
 
-- **3-in-1: Memory + CodeGraph + Wiki** — one `recall` returns matching captures, code symbols, and wiki pages. No other MCP server combines all three.
-- **CodeGraph** — Tree-sitter symbol indexing (9 languages), caller/callee/impact analysis
-- **Wiki ingest** — index markdown docs, search, find outdated pages
-- **Stop hook auto-capture** — session transcripts saved on exit, zero agent involvement
-- **Secret redaction** — API keys/tokens auto-redacted on every capture
-- **ADR** — Architecture Decision Records with context, alternatives, consequences
-- **Memory decay** — 30-day half-life scoring, recent memories rank higher
-- **Team-shared memory** — commit `.tdai-memory/memory-export.json`, teammates auto-import on startup
-- **24 MCP tools** — hybrid search (BM25 + vector), knowledge CRUD, skill registry, code graph, wiki
-- **Local-first** — no API key, no cloud, no daemon. SQLite + FTS5 + sqlite-vec.
+## The fix
 
-## Install
+**One command. No API key. No cloud. No daemon.**
 
 ```bash
-# 1. Add MCP server to your agent
-npx tdai-memory-mcp
-
-# 2. Install skill + hooks + test capture (one command)
 npx tdai-memory-mcp setup
 ```
 
-Claude Code (`~/.claude.json`):
+That's it. Your agent now:
+
+- **Remembers** decisions, bugs, learnings — across sessions, automatically
+- **Knows your codebase** — Tree-sitter symbol index, callers/callees, impact analysis
+- **Reads your docs** — markdown wiki indexed and searchable
+- **Auto-captures** — session transcripts saved on exit, zero agent involvement
+- **Auto-recalls** — relevant memory injected before the first message
+
+Everything stays in one SQLite file on your machine. No data leaves your computer.
+
+## Quick start
+
+```bash
+# 1. Add MCP server + install skill + hooks (one command)
+npx tdai-memory-mcp setup
+
+# 2. Restart your agent
+
+# 3. Use your agent normally — it remembers automatically
+```
+
+### Claude Code
+
+Add to `~/.claude.json`:
 
 ```json
 {
@@ -49,13 +59,15 @@ Claude Code (`~/.claude.json`):
 }
 ```
 
-Devin CLI:
+### Devin CLI
 
 ```bash
 devin mcp add tdai-memory --scope user -- npx -y tdai-memory-mcp
 ```
 
-Codex CLI (`~/.codex/config.toml`):
+### Codex CLI
+
+Add to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.tdai-memory]
@@ -64,48 +76,51 @@ args = ["-y", "tdai-memory-mcp"]
 
 [mcp_servers.tdai-memory.env]
 TDAI_GLOBAL_SESSION_KEY = "global"
-
-[[hooks.SessionStart]]
-matcher = "startup|resume|clear|compact"
-
-[[hooks.SessionStart.hooks]]
-type = "command"
-command = "npx -y tdai-memory-mcp hook-recall"
-timeout = 10
-
-[[hooks.Stop]]
-
-[[hooks.Stop.hooks]]
-type = "command"
-command = "npx -y tdai-memory-mcp hook-stop"
-timeout = 5
 ```
 
-> **Codex sandbox note:** MCP tools (recall, capture, search) require `sandbox_mode = "danger-full-access"` in `config.toml`. SessionStart hooks work with `workspace-write` — memory is still injected on startup regardless of sandbox mode.
+Then run `npx tdai-memory-mcp install-hooks` to wire SessionStart + Stop hooks.
 
-Restart your agent after `setup`.
+> **Codex sandbox note:** MCP tools require `sandbox_mode = "danger-full-access"`. SessionStart hooks work with `workspace-write` — memory is still injected on startup.
 
-## What it does
+## How it works
 
-### Three knowledge layers in one database
+### Three knowledge layers, one `recall` call
 
-Memory, CodeGraph, and Wiki share one SQLite file. A `recall` call returns matching captures, code symbols, and wiki pages in one response.
+| Layer | What it stores | Example |
+|---|---|---|
+| **Memory** | Decisions, bugs, learnings, tasks | "We chose SQLite over Postgres for local-first" |
+| **CodeGraph** | Symbols, callers, callees, impact | `capture()` is called by `handleCapture()`, `handleRecall()` |
+| **Wiki** | Markdown docs, outdated page detection | "DESIGN_GOALS.md covers React Compiler architecture" |
 
-### Automatic recall and capture via hooks
+One `recall("storage")` returns matching captures + code symbols + wiki pages.
 
-Lifecycle hooks run memory operations without agent involvement:
+### Lifecycle hooks (zero agent involvement)
 
 - **SessionStart** — injects recent memories into agent context before the first message
-- **Stop** — prompts the agent to save a handoff packet, then auto-captures the session transcript (only keeps the latest snapshot per session)
-- **SessionEnd** — captures the session summary by reading the transcript (Claude Code only; Devin CLI uses Stop for auto-capture)
+- **Stop** — prompts agent to save a handoff packet, then auto-captures the session transcript
+- **SessionEnd** — captures session summary from transcript (Claude Code only)
 
-The hook log at `~/.local/share/tdai-memory-mcp/session.log` records every event. Works with Devin CLI, Claude Code, and Codex CLI.
+Works with Claude Code, Devin CLI, and Codex CLI.
+
+## vs other memory solutions
+
+| | tdai-memory-mcp | @modelcontextprotocol/server-memory | mem0 |
+|---|---|---|---|
+| Setup | `npx tdai-memory-mcp setup` | Manual config | API key + cloud |
+| API key needed | No | No | Yes |
+| Data location | Local SQLite | In-memory (ephemeral) | Cloud |
+| CodeGraph | Tree-sitter, 9 languages | No | No |
+| Wiki ingest | Yes | No | No |
+| Auto-capture hooks | SessionStart + Stop | No | No |
+| Team sharing | Commit JSON export | No | Yes (cloud) |
+| Cost | Free | Free | Freemium |
 
 ## CLI commands
 
 ```bash
 # Setup
 npx tdai-memory-mcp setup              # Install skill + hooks + test capture
+npx tdai-memory-mcp install-hooks      # Wire hooks into agent configs
 npx tdai-memory-mcp uninstall-hooks    # Remove hooks
 
 # CodeGraph
@@ -135,6 +150,7 @@ All settings have defaults. Config file is optional. Path: `~/.config/tdai-memor
 | Setting | Env var | Default | Description |
 |---|---|---|---|
 | DB path | `TDAI_DB_PATH` | `~/.local/share/tdai-memory-mcp/memory.db` | SQLite file |
+| Global memory | `TDAI_GLOBAL_SESSION_KEY` | _(unset)_ | Cross-project memory session key |
 | LLM key | `TDAI_LLM_API_KEY` | _(unset)_ | LLM API key for pipeline features |
 | LLM URL | `TDAI_LLM_BASE_URL` | `https://api.openai.com/v1` | LLM endpoint |
 | LLM model | `TDAI_LLM_MODEL` | `gpt-4o-mini` | LLM model name |
@@ -142,6 +158,10 @@ All settings have defaults. Config file is optional. Path: `~/.config/tdai-memor
 | Redact secrets | `TDAI_REDACT_SECRETS` | `true` | Redact secrets on capture |
 | Recall tokens | `TDAI_MAX_TOKENS_RECALL` | `4000` | Token cap per recall |
 | Search tokens | `TDAI_MAX_TOKENS_SEARCH` | `8000` | Token cap per search |
+
+### Global memory (cross-project)
+
+Set `TDAI_GLOBAL_SESSION_KEY=global` to share rules and decisions across all projects. `recall` searches both global and project-specific memory, merged with dedup.
 
 ## TypeScript SDK
 
@@ -158,6 +178,10 @@ const results = await memory.recall("storage decision");
 - Secret redaction on every `capture` call. Patterns for OpenAI, Anthropic, GitHub, Slack, AWS, private keys, plus a high-entropy detector.
 - Read quotas: `recall` capped at 4000 tokens, `search` at 8000 tokens.
 - Audit log at `~/.local/share/tdai-memory-mcp/audit.jsonl`.
+
+## Credits
+
+Core based on [TencentDB Agent Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) (MIT, Tencent 2026). Replaces the cloud backend with embedded SQLite + sqlite-vec + FTS5. Adds CodeGraph, Wiki, and lifecycle hooks.
 
 ## License
 
