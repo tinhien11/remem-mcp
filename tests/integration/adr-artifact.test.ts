@@ -253,7 +253,7 @@ describe("Integration: ADR tool", () => {
   });
 });
 
-describe("Integration: team-shared artifact", () => {
+describe("Integration: team-shared artifact (JSONL)", () => {
   let tmpDir: string;
   let projectDir: string;
   let dbPath: string;
@@ -269,8 +269,7 @@ describe("Integration: team-shared artifact", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("exports captures to .tdai-memory/memory-export.json", () => {
-    // Insert a capture directly
+  it("exports captures to .tdai-memory/memory-export.jsonl", () => {
     const db = new (require("better-sqlite3"))(dbPath);
     db.pragma("journal_mode = WAL");
     db.exec(`
@@ -287,59 +286,105 @@ describe("Integration: team-shared artifact", () => {
 
     exportArtifact(dbPath, projectDir);
 
-    const artifactFile = join(projectDir, ".tdai-memory", "memory-export.json");
+    const artifactFile = join(projectDir, ".tdai-memory", "memory-export.jsonl");
     expect(existsSync(artifactFile)).toBe(true);
 
-    const content = JSON.parse(readFileSync(artifactFile, "utf-8"));
-    expect(content.version).toBe(1);
-    expect(content.count).toBe(1);
-    expect(content.captures[0].id).toBe("test-id-1");
-    expect(content.captures[0].content).toBe("Test content");
+    // JSONL: one JSON object per line
+    const lines = readFileSync(artifactFile, "utf-8").trim().split("\n");
+    expect(lines.length).toBe(1);
+    const row = JSON.parse(lines[0]);
+    expect(row.id).toBe("test-id-1");
+    expect(row.content).toBe("Test content");
   });
 
-  it("imports captures from .tdai-memory/memory-export.json", () => {
-    // Create artifact file
+  it("appends new captures without rewriting existing lines", () => {
+    const db = new (require("better-sqlite3"))(dbPath);
+    db.pragma("journal_mode = WAL");
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL, applied_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS captures (
+        id TEXT PRIMARY KEY, session_key TEXT NOT NULL, agent_id TEXT NOT NULL,
+        type TEXT NOT NULL, content TEXT NOT NULL, content_hash TEXT,
+        tags TEXT, created_at INTEGER NOT NULL, metadata TEXT
+      );
+      INSERT INTO schema_version VALUES (1, ${Date.now()});
+      INSERT INTO captures VALUES ('id-1', 's1', 'a1', 'decision', 'First', 'h1', '[]', ${Date.now()}, NULL);
+    `);
+    db.close();
+
+    // First export
+    exportArtifact(dbPath, projectDir);
+
+    // Add a second capture
+    const db2 = new (require("better-sqlite3"))(dbPath);
+    db2.exec(`INSERT INTO captures VALUES ('id-2', 's1', 'a1', 'learning', 'Second', 'h2', '[]', ${Date.now()}, NULL)`);
+    db2.close();
+
+    // Second export — should append, not rewrite
+    exportArtifact(dbPath, projectDir);
+
+    const artifactFile = join(projectDir, ".tdai-memory", "memory-export.jsonl");
+    const lines = readFileSync(artifactFile, "utf-8").trim().split("\n");
+    expect(lines.length).toBe(2);
+    expect(JSON.parse(lines[0]).id).toBe("id-1");
+    expect(JSON.parse(lines[1]).id).toBe("id-2");
+  });
+
+  it("does not append duplicates on re-export", () => {
+    const db = new (require("better-sqlite3"))(dbPath);
+    db.pragma("journal_mode = WAL");
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL, applied_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS captures (
+        id TEXT PRIMARY KEY, session_key TEXT NOT NULL, agent_id TEXT NOT NULL,
+        type TEXT NOT NULL, content TEXT NOT NULL, content_hash TEXT,
+        tags TEXT, created_at INTEGER NOT NULL, metadata TEXT
+      );
+      INSERT INTO schema_version VALUES (1, ${Date.now()});
+      INSERT INTO captures VALUES ('id-1', 's1', 'a1', 'decision', 'Only one', 'h1', '[]', ${Date.now()}, NULL);
+    `);
+    db.close();
+
+    exportArtifact(dbPath, projectDir);
+    exportArtifact(dbPath, projectDir); // re-export should be no-op
+
+    const artifactFile = join(projectDir, ".tdai-memory", "memory-export.jsonl");
+    const lines = readFileSync(artifactFile, "utf-8").trim().split("\n");
+    expect(lines.length).toBe(1);
+  });
+
+  it("imports captures from .tdai-memory/memory-export.jsonl", () => {
     const artifactDir = join(projectDir, ".tdai-memory");
     mkdirSync(artifactDir, { recursive: true });
-    const artifactFile = join(artifactDir, "memory-export.json");
+    const artifactFile = join(artifactDir, "memory-export.jsonl");
 
-    const data = {
-      version: 1,
-      exported_at: Date.now(),
-      count: 1,
-      captures: [
-        {
-          id: "imported-id-1",
-          session_key: "team-session",
-          agent_id: "teammate-agent",
-          type: "decision",
-          content: "Team decision: use SQLite",
-          content_hash: createHash("sha256").update("Team decision: use SQLite").digest("hex"),
-          tags: '["adr", "arch"]',
-          created_at: Date.now(),
-          metadata: null,
-        },
-      ],
+    const row = {
+      id: "imported-id-1",
+      session_key: "team-session",
+      agent_id: "teammate-agent",
+      type: "decision",
+      content: "Team decision: use SQLite",
+      content_hash: createHash("sha256").update("Team decision: use SQLite").digest("hex"),
+      tags: '["adr", "arch"]',
+      created_at: Date.now(),
+      metadata: null,
     };
-    writeFileSync(artifactFile, JSON.stringify(data, null, 2));
+    writeFileSync(artifactFile, JSON.stringify(row) + "\n");
 
-    // Import
     const count = importArtifact(dbPath, projectDir);
     expect(count).toBe(1);
 
-    // Verify it was imported
     const db = new (require("better-sqlite3"))(dbPath);
-    const row = db.prepare("SELECT * FROM captures WHERE id = ?").get("imported-id-1");
-    expect(row).toBeDefined();
-    expect(row.content).toBe("Team decision: use SQLite");
+    const result = db.prepare("SELECT * FROM captures WHERE id = ?").get("imported-id-1");
+    expect(result).toBeDefined();
+    expect(result.content).toBe("Team decision: use SQLite");
     db.close();
   });
 
-  it("skips already-existing captures on import", () => {
-    // First import
+  it("imports from legacy .json format (backward compat)", () => {
     const artifactDir = join(projectDir, ".tdai-memory");
     mkdirSync(artifactDir, { recursive: true });
-    const artifactFile = join(artifactDir, "memory-export.json");
+    const legacyFile = join(artifactDir, "memory-export.json");
 
     const data = {
       version: 1,
@@ -347,24 +392,51 @@ describe("Integration: team-shared artifact", () => {
       count: 1,
       captures: [
         {
-          id: "dup-id-1",
-          session_key: "s1",
-          agent_id: "a1",
+          id: "legacy-id-1",
+          session_key: "legacy-session",
+          agent_id: "legacy-agent",
           type: "decision",
-          content: "Duplicate test",
-          content_hash: "hash-dup",
+          content: "Legacy decision",
+          content_hash: "legacy-hash",
           tags: "[]",
           created_at: Date.now(),
           metadata: null,
         },
       ],
     };
-    writeFileSync(artifactFile, JSON.stringify(data, null, 2));
+    writeFileSync(legacyFile, JSON.stringify(data, null, 2));
+
+    const count = importArtifact(dbPath, projectDir);
+    expect(count).toBe(1);
+
+    const db = new (require("better-sqlite3"))(dbPath);
+    const row = db.prepare("SELECT * FROM captures WHERE id = ?").get("legacy-id-1");
+    expect(row).toBeDefined();
+    expect(row.content).toBe("Legacy decision");
+    db.close();
+  });
+
+  it("skips already-existing captures on import", () => {
+    const artifactDir = join(projectDir, ".tdai-memory");
+    mkdirSync(artifactDir, { recursive: true });
+    const artifactFile = join(artifactDir, "memory-export.jsonl");
+
+    const row = {
+      id: "dup-id-1",
+      session_key: "s1",
+      agent_id: "a1",
+      type: "decision",
+      content: "Duplicate test",
+      content_hash: "hash-dup",
+      tags: "[]",
+      created_at: Date.now(),
+      metadata: null,
+    };
+    writeFileSync(artifactFile, JSON.stringify(row) + "\n");
 
     const first = importArtifact(dbPath, projectDir);
     expect(first).toBe(1);
 
-    // Second import should skip
     const second = importArtifact(dbPath, projectDir);
     expect(second).toBe(0);
   });
@@ -374,9 +446,17 @@ describe("Integration: team-shared artifact", () => {
     expect(count).toBe(0);
   });
 
-  it("hasArtifact returns true when artifact exists", () => {
+  it("hasArtifact returns true when JSONL artifact exists", () => {
     expect(hasArtifact(projectDir)).toBe(false);
 
+    const artifactDir = join(projectDir, ".tdai-memory");
+    mkdirSync(artifactDir, { recursive: true });
+    writeFileSync(join(artifactDir, "memory-export.jsonl"), "{}\n");
+
+    expect(hasArtifact(projectDir)).toBe(true);
+  });
+
+  it("hasArtifact returns true for legacy .json artifact", () => {
     const artifactDir = join(projectDir, ".tdai-memory");
     mkdirSync(artifactDir, { recursive: true });
     writeFileSync(join(artifactDir, "memory-export.json"), "{}");
@@ -384,17 +464,80 @@ describe("Integration: team-shared artifact", () => {
     expect(hasArtifact(projectDir)).toBe(true);
   });
 
-  it("artifactPath returns the correct path", () => {
+  it("artifactPath returns the .jsonl path", () => {
     const path = artifactPath(projectDir);
-    expect(path).toBe(join(projectDir, ".tdai-memory", "memory-export.json"));
+    expect(path).toBe(join(projectDir, ".tdai-memory", "memory-export.jsonl"));
   });
 
-  it("handles corrupted artifact gracefully", () => {
+  it("handles corrupted JSONL lines gracefully", () => {
     const artifactDir = join(projectDir, ".tdai-memory");
     mkdirSync(artifactDir, { recursive: true });
-    writeFileSync(join(artifactDir, "memory-export.json"), "not valid json {{{");
+    const artifactFile = join(artifactDir, "memory-export.jsonl");
+
+    // Mix of valid and invalid lines
+    const lines = [
+      "not valid json {{{",
+      JSON.stringify({
+        id: "good-id-1",
+        session_key: "s1",
+        agent_id: "a1",
+        type: "decision",
+        content: "Good capture",
+        content_hash: "h1",
+        tags: "[]",
+        created_at: Date.now(),
+        metadata: null,
+      }),
+      "another bad line {{{",
+    ];
+    writeFileSync(artifactFile, lines.join("\n") + "\n");
 
     const count = importArtifact(dbPath, projectDir);
-    expect(count).toBe(0);
+    expect(count).toBe(1); // only the valid line imported
+  });
+
+  it("simulates git merge: two branches append different lines, no conflict", () => {
+    const artifactDir = join(projectDir, ".tdai-memory");
+    mkdirSync(artifactDir, { recursive: true });
+    const artifactFile = join(artifactDir, "memory-export.jsonl");
+
+    // Branch A appends a line
+    const branchALine = JSON.stringify({
+      id: "branch-a-id",
+      session_key: "s1",
+      agent_id: "a1",
+      type: "decision",
+      content: "Branch A decision",
+      content_hash: "ha",
+      tags: "[]",
+      created_at: Date.now(),
+      metadata: null,
+    });
+
+    // Branch B appends a different line
+    const branchBLine = JSON.stringify({
+      id: "branch-b-id",
+      session_key: "s1",
+      agent_id: "a1",
+      type: "learning",
+      content: "Branch B learning",
+      content_hash: "hb",
+      tags: "[]",
+      created_at: Date.now(),
+      metadata: null,
+    });
+
+    // Simulate: both branches append to the same file
+    // Git would auto-merge these since they're different lines at the end
+    writeFileSync(artifactFile, branchALine + "\n" + branchBLine + "\n");
+
+    // Import should get both
+    const count = importArtifact(dbPath, projectDir);
+    expect(count).toBe(2);
+
+    const db = new (require("better-sqlite3"))(dbPath);
+    const rows = db.prepare("SELECT id FROM captures ORDER BY id").all();
+    expect(rows.map((r: any) => r.id)).toEqual(["branch-a-id", "branch-b-id"]);
+    db.close();
   });
 });

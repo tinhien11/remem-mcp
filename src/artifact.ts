@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, appendFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
@@ -46,24 +46,53 @@ interface ExportRow {
   task_id: string | null;
 }
 
-interface ArtifactFormat {
-  version: number;
-  exported_at: number;
-  count: number;
-  captures: ExportRow[];
-}
-
 /**
- * Team-shared artifact path: `.tdai-memory/memory-export.json` in the project root.
+ * Team-shared artifact path: `.tdai-memory/memory-export.jsonl` in the project root.
+ * Uses JSONL (one JSON object per line) so git can merge line-by-line.
  * Commit this file to your repo so teammates can import your memory.
  */
 export function artifactPath(projectRoot: string): string {
+  return join(projectRoot, ".tdai-memory", "memory-export.jsonl");
+}
+
+/**
+ * Legacy artifact path (v1, JSON array format).
+ * Used for backward-compat import only.
+ */
+function legacyArtifactPath(projectRoot: string): string {
   return join(projectRoot, ".tdai-memory", "memory-export.json");
 }
 
 /**
- * Export all captures from the current session to `.tdai-memory/memory-export.json`.
- * Call this at the end of a session, or via a git pre-commit hook.
+ * Read existing capture IDs from the JSONL artifact file.
+ * Returns a Set of IDs already in the file.
+ */
+function readExistingIds(filePath: string): Set<string> {
+  const ids = new Set<string>();
+  if (!existsSync(filePath)) return ids;
+
+  const raw = readFileSync(filePath, "utf-8");
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const obj = JSON.parse(trimmed) as { id?: string };
+      if (obj.id) ids.add(obj.id);
+    } catch {
+      // Skip unparseable lines
+    }
+  }
+  return ids;
+}
+
+/**
+ * Append captures to `.tdai-memory/memory-export.jsonl`.
+ *
+ * Uses append-only JSONL format so parallel branches can merge without conflicts:
+ * - Branch A appends line X, branch B appends line Y → git auto-merges (different lines)
+ * - Only conflicts when both branches add the same capture ID (a real conflict)
+ *
+ * Only captures not already in the file are appended (dedup by ID).
  */
 export function exportArtifact(dbPath: string, projectRoot: string, sessionKey?: string): void {
   const db = new Database(dbPath, { readonly: true });
@@ -81,47 +110,72 @@ export function exportArtifact(dbPath: string, projectRoot: string, sessionKey?:
   const rows = db.prepare(sql).all(...params) as ExportRow[];
   db.close();
 
-  const data: ArtifactFormat = {
-    version: 1,
-    exported_at: Date.now(),
-    count: rows.length,
-    captures: rows,
-  };
-
   const outPath = artifactPath(projectRoot);
   const dir = join(projectRoot, ".tdai-memory");
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
 
-  writeFileSync(outPath, JSON.stringify(data, null, 2), "utf-8");
-  console.log(`Team artifact written: ${outPath} (${rows.length} captures)`);
+  // Read existing IDs to avoid duplicates
+  const existingIds = readExistingIds(outPath);
+
+  // Append only new captures
+  const newRows = rows.filter((r) => !existingIds.has(r.id));
+  if (newRows.length === 0) {
+    console.log(`Team artifact: no new captures to append (${existingIds.size} already in file).`);
+    return;
+  }
+
+  const lines = newRows.map((r) => JSON.stringify(r)).join("\n") + "\n";
+  appendFileSync(outPath, lines, "utf-8");
+
+  console.log(
+    `Team artifact: appended ${newRows.length} capture(s) to ${outPath} (${existingIds.size} already existed).`,
+  );
   console.log(`Commit this file to share memory with your team.`);
 }
 
 /**
- * Import captures from `.tdai-memory/memory-export.json` if it exists.
+ * Import captures from `.tdai-memory/memory-export.jsonl` (or legacy `.json`).
  * Called on server startup. Skips captures that already exist (by ID).
  * Returns the number of captures imported.
  */
 export function importArtifact(dbPath: string, projectRoot: string): number {
-  const artifactPath = join(projectRoot, ".tdai-memory", "memory-export.json");
-  if (!existsSync(artifactPath)) {
+  const jsonlPath = artifactPath(projectRoot);
+  const legacyPath = legacyArtifactPath(projectRoot);
+
+  // Collect rows from JSONL (preferred) or legacy JSON array
+  const rows: ExportRow[] = [];
+
+  if (existsSync(jsonlPath)) {
+    // JSONL format: one JSON object per line
+    const raw = readFileSync(jsonlPath, "utf-8");
+    for (const line of raw.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        rows.push(JSON.parse(trimmed) as ExportRow);
+      } catch {
+        // Skip unparseable lines
+      }
+    }
+  } else if (existsSync(legacyPath)) {
+    // Legacy JSON array format (v1)
+    try {
+      const raw = readFileSync(legacyPath, "utf-8");
+      const data = JSON.parse(raw) as { captures?: ExportRow[] };
+      if (data.captures && Array.isArray(data.captures)) {
+        rows.push(...data.captures);
+      }
+    } catch {
+      console.error("[tdai-memory] Failed to parse legacy team artifact. Skipping import.");
+      return 0;
+    }
+  } else {
     return 0;
   }
 
-  let data: ArtifactFormat;
-  try {
-    const raw = readFileSync(artifactPath, "utf-8");
-    data = JSON.parse(raw);
-  } catch {
-    console.error("[tdai-memory] Failed to parse team artifact. Skipping import.");
-    return 0;
-  }
-
-  if (!data.captures || !Array.isArray(data.captures)) {
-    return 0;
-  }
+  if (rows.length === 0) return 0;
 
   const db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
@@ -138,7 +192,7 @@ export function importArtifact(dbPath: string, projectRoot: string): number {
   `);
 
   const transaction = db.transaction(() => {
-    for (const row of data.captures) {
+    for (const row of rows) {
       const result = insertStmt.run(
         row.id,
         row.session_key,
@@ -175,8 +229,8 @@ export function importArtifact(dbPath: string, projectRoot: string): number {
 }
 
 /**
- * Check if a team artifact exists in the project root.
+ * Check if a team artifact exists in the project root (JSONL or legacy JSON).
  */
 export function hasArtifact(projectRoot: string): boolean {
-  return existsSync(artifactPath(projectRoot));
+  return existsSync(artifactPath(projectRoot)) || existsSync(legacyArtifactPath(projectRoot));
 }
