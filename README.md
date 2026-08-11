@@ -5,9 +5,13 @@
 
 > Your AI coding agent forgets everything when you close the session. This fixes that.
 
+![Handoff Demo](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/handoff-demo.gif)
+
+*Real handoff: Session 1 (Claude Code) captures → Session 2 (Devin) recalls. No CLAUDE.md, no copy-paste.*
+
 ![Demo](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/demo.gif)
 
-*Demo: React codebase — Memory + CodeGraph + Wiki*
+*Viewer: React codebase — Memory + CodeGraph + Wiki*
 
 ## The problem
 
