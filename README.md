@@ -1,5 +1,8 @@
 # tdai-memory-mcp
 
+[![npm version](https://img.shields.io/npm/v/tdai-memory-mcp.svg)](https://www.npmjs.com/package/tdai-memory-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/tdai-memory-mcp.svg)](https://www.npmjs.com/package/tdai-memory-mcp)
+
 > Local-first MCP memory server for AI coding agents. No API key. No daemon. No external database.
 
 ![Demo: indexing React's codebase — Memory + CodeGraph + Wiki in one viewer](docs/screenshots/demo.gif)
