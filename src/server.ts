@@ -741,7 +741,7 @@ export function createServer(opts: ServerOptions): Server {
   const server = new Server(
     {
       name: "tdai-memory-mcp",
-      version: "0.3.0",
+      version: "0.5.6",
     },
     {
       capabilities: {
@@ -1126,7 +1126,19 @@ async function handleCapture(
     trustState,
   };
 
-  await opts.storage.put(entry);
+  try {
+    await opts.storage.put(entry);
+  } catch (err) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Error: Database is read-only (sandbox restriction). Capture failed. Set sandbox_mode to "danger-full-access" or add the DB directory to writable roots.`,
+        },
+      ],
+      isError: true,
+    };
+  }
 
   // If supersedes is set, mark the old capture as stale.
   if (supersedes) {

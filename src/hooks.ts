@@ -121,6 +121,52 @@ function installClaudeCodeHooks(): boolean {
   return true;
 }
 
+/** Install hooks for Codex CLI (TOML config). */
+function installCodexHooks(): boolean {
+  const configPath = join(homedir(), ".codex", "config.toml");
+
+  if (!existsSync(configPath)) {
+    return false;
+  }
+
+  let content = readFileSync(configPath, "utf-8");
+
+  // Check if tdai-memory hooks are already installed
+  if (content.includes("tdai-memory SessionStart")) {
+    console.log(`  Codex CLI: Hooks already installed in ${configPath}`);
+    return true;
+  }
+
+  // Append tdai-memory hooks to the TOML config
+  const hooksToml = `
+# >>> tdai-memory SessionStart >>>
+[[hooks.SessionStart]]
+matcher = "startup|resume|clear|compact"
+
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "${hookCommand("hook-recall")}"
+timeout = 10
+# <<< tdai-memory SessionStart <<<
+
+# >>> tdai-memory Stop >>>
+[[hooks.Stop]]
+
+[[hooks.Stop.hooks]]
+type = "command"
+command = "${hookCommand("hook-stop")}"
+timeout = 5
+# <<< tdai-memory Stop <<<
+`;
+
+  content = content.trimEnd() + "\n" + hooksToml;
+  writeFileSync(configPath, content, "utf-8");
+
+  console.log(`  Codex CLI: Hooks wired into ${configPath}`);
+  console.log(`    Note: Set sandbox_mode = "danger-full-access" for MCP tools to work.`);
+  return true;
+}
+
 /** Install auto-capture hooks for supported agents. */
 export async function installHooks(): Promise<void> {
   console.log("Installing lifecycle hooks...\n");
@@ -129,10 +175,11 @@ export async function installHooks(): Promise<void> {
 
   if (installDevinHooks()) installed++;
   if (installClaudeCodeHooks()) installed++;
+  if (installCodexHooks()) installed++;
 
   if (installed === 0) {
     console.log("\nNo supported agents found.");
-    console.log("Install Devin CLI or Claude Code first, then run this command again.");
+    console.log("Install Devin CLI, Claude Code, or Codex CLI first, then run this command again.");
     return;
   }
 

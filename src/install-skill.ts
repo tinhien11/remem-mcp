@@ -35,6 +35,10 @@ const SKILL_TARGETS = [
     path: join(homedir(), ".claude", "skills", "tdai-memory", "SKILL.md"),
   },
   {
+    name: "Codex CLI",
+    path: join(homedir(), ".codex", "skills", "tdai-memory", "SKILL.md"),
+  },
+  {
     name: "Generic (.agents)",
     path: join(homedir(), ".agents", "skills", "tdai-memory", "SKILL.md"),
   },

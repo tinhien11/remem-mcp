@@ -55,6 +55,34 @@ Devin CLI:
 devin mcp add tdai-memory --scope user -- npx -y tdai-memory-mcp
 ```
 
+Codex CLI (`~/.codex/config.toml`):
+
+```toml
+[mcp_servers.tdai-memory]
+command = "npx"
+args = ["-y", "tdai-memory-mcp"]
+
+[mcp_servers.tdai-memory.env]
+TDAI_GLOBAL_SESSION_KEY = "global"
+
+[[hooks.SessionStart]]
+matcher = "startup|resume|clear|compact"
+
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "npx -y tdai-memory-mcp hook-recall"
+timeout = 10
+
+[[hooks.Stop]]
+
+[[hooks.Stop.hooks]]
+type = "command"
+command = "npx -y tdai-memory-mcp hook-stop"
+timeout = 5
+```
+
+> **Codex sandbox note:** MCP tools (recall, capture, search) require `sandbox_mode = "danger-full-access"` in `config.toml`. SessionStart hooks work with `workspace-write` — memory is still injected on startup regardless of sandbox mode.
+
 Restart your agent after `setup`.
 
 ## What it does
@@ -71,7 +99,7 @@ Lifecycle hooks run memory operations without agent involvement:
 - **Stop** — prompts the agent to save a handoff packet, then auto-captures the session transcript (only keeps the latest snapshot per session)
 - **SessionEnd** — captures the session summary by reading the transcript (Claude Code only; Devin CLI uses Stop for auto-capture)
 
-The hook log at `~/.local/share/tdai-memory-mcp/session.log` records every event. Works with Devin CLI and Claude Code.
+The hook log at `~/.local/share/tdai-memory-mcp/session.log` records every event. Works with Devin CLI, Claude Code, and Codex CLI.
 
 ## CLI commands
 
