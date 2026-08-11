@@ -1,5 +1,5 @@
-import { createServer as createHttpServer, type Server } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
+import { createServer as createHttpServer, type Server } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -270,18 +270,16 @@ export function startViewer(dbPath: string, port: number): Server {
               line: result.rootSymbol.lineStart,
               language: result.rootSymbol.language,
             },
-            affected: result.affected.map(function (a) {
-              return {
-                id: a.symbol.id,
-                name: a.symbol.name,
-                kind: a.symbol.kind,
-                file_path: a.symbol.filePath,
-                line: a.symbol.lineStart,
-                language: a.symbol.language,
-                depth: a.depth,
-                path: a.path,
-              };
-            }),
+            affected: result.affected.map((a) => ({
+              id: a.symbol.id,
+              name: a.symbol.name,
+              kind: a.symbol.kind,
+              file_path: a.symbol.filePath,
+              line: a.symbol.lineStart,
+              language: a.symbol.language,
+              depth: a.depth,
+              path: a.path,
+            })),
           }),
         );
       } catch (e) {
@@ -377,8 +375,7 @@ export function startViewer(dbPath: string, port: number): Server {
           }
         }
 
-        const avgInjection =
-          recallCount > 0 ? Math.round(totalInjected / recallCount) : 0;
+        const avgInjection = recallCount > 0 ? Math.round(totalInjected / recallCount) : 0;
 
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(
