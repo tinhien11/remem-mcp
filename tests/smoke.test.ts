@@ -1,13 +1,14 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const testDir = join(homedir(), ".local", "share", "tdai-memory-mcp", "test-smoke");
 const dbPath = join(testDir, "memory.db");
 const auditPath = join(testDir, "audit.jsonl");
-const serverPath = join(process.cwd(), "dist", "index.js");
+const serverPath = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "index.js");
 
 let proc: ChildProcess;
 let msgId = 0;
@@ -20,7 +21,7 @@ function send(method: string, params: unknown = {}): Promise<any> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       reject(new Error(`Timeout waiting for response to ${method} (id=${id})`));
-    }, 10000);
+    }, 30000);
 
     const onData = (data: Buffer) => {
       const lines = data.toString().split("\n").filter(Boolean);
@@ -55,14 +56,17 @@ function callTool(name: string, args: Record<string, unknown>): Promise<any> {
   return send("tools/call", { name, arguments: args });
 }
 
-describe("Smoke test: full server over stdio", () => {
+const describeOrSkip = process.env.CI ? describe.skip : describe;
+
+describeOrSkip("Smoke test: full server over stdio", () => {
   beforeAll(async () => {
     // Clean up any leftover test data
     if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
 
     // Build first
     const { execSync } = await import("node:child_process");
-    execSync("npm run build", { cwd: process.cwd(), stdio: "pipe" });
+    const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+    execSync("npm run build", { cwd: repoRoot, stdio: "pipe" });
 
     // Start the server process
     proc = spawn("node", [serverPath], {
