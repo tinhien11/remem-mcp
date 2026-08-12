@@ -196,6 +196,90 @@ npx tdai-memory-mcp errors
 
 Shows: top recurring patterns, resolution rate, confidence distribution, proven fixes, recent errors.
 
+### Severity classification
+
+Errors are classified as `blocker` / `critical` / `major` / `minor` based on command and error output. PreToolUse injects blockers before minor errors.
+
+```bash
+npx tdai-memory-mcp errors severity
+```
+
+### Fix templates
+
+When 3+ similar errors are resolved with overlapping fix text, a generalizable fix template is extracted.
+
+```bash
+npx tdai-memory-mcp errors templates
+```
+
+### Error correlations
+
+Tracks sequential error patterns: when error E1 is followed by E2 within 10 minutes in the same session.
+
+```bash
+npx tdai-memory-mcp errors correlations
+```
+
+### Fix attempt counter
+
+Tracks how many times an error recurred. Errors with 3+ attempts show in retro as "stubborn errors".
+
+### Recovery playbooks
+
+When an error with 2+ attempts is resolved, a structured 4-step playbook is extracted: identify → avoid → apply → verify.
+
+```bash
+npx tdai-memory-mcp errors playbooks
+```
+
+### Fix staleness
+
+When PreToolUse injects a fix older than `TDAI_FIX_STALENESS_DAYS` (default 180), it adds a `[STALE — verify before applying]` tag.
+
+```bash
+npx tdai-memory-mcp errors stale
+```
+
+### Error escalation
+
+When an error recurs `TDAI_ESCALATION_THRESHOLD` times (default 3), it auto-escalates: level 1 (ELEVATED, severity→critical), level 2 (CRITICAL, →blocker), level 3 (BLOCKER). PreToolUse adds stronger warning text at each level.
+
+```bash
+npx tdai-memory-mcp errors escalations
+```
+
+### Error context enrichment
+
+When an error is captured, git context is recorded: branch, last 3 commits, changed files. Helps diagnose regressions and branch-specific issues.
+
+```bash
+npx tdai-memory-mcp errors context
+```
+
+### Cross-project fix inheritance
+
+When PreToolUse can't find 2 proven fixes in the current project, it auto-inherits validated fixes from other projects. Adds `[inherited from another project]` tag.
+
+```bash
+npx tdai-memory-mcp errors inherited
+```
+
+### Auto-annotation
+
+System auto-generates notes based on error state: recurrence count, severity, escalation level, drift count, fix validation status. Notes appear in PreToolUse injection. No user action needed.
+
+### Fix rollback plan
+
+When a fix is recorded, a rollback instruction is auto-generated based on fix type: file edit → `git checkout`, config → `git revert`, dependency → `git checkout package.json`, migration → down migration. Shown in PreToolUse injection.
+
+### Fix provenance chain
+
+Fixes are auto-tagged with provenance: `auto_captured`, `inherited`, `template_extracted`. Shown in PreToolUse injection as `[provenance]` tag.
+
+```bash
+npx tdai-memory-mcp errors provenance
+```
+
 ---
 
 ## Quick start
