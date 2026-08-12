@@ -439,11 +439,25 @@ export function hookPostToolUse(dbPath: string): void {
       // Build content for capture
       const content = `Command failed: ${command}\nError (${errorType}): ${truncatedError}`;
 
-      // Check for duplicate (same command + error in last hour)
-      const contentHash = createHash("sha256").update(content).digest("hex").slice(0, 16);
+      // [P2: Semantic error matching] Normalize error content before hashing
+      // so similar errors (same type, same command, different line numbers/variables)
+      // are detected as duplicates/recurrences.
+      // Normalization: replace line numbers, variable names, file paths with placeholders.
+      const normalizedError = truncatedError
+        .replace(/line \d+/g, "line N")
+        .replace(/col \d+/g, "col N")
+        .replace(/\b\d+\b/g, "N")
+        .replace(/'[^']+'/g, "'X'")
+        .replace(/"[^"]+"/g, '"X"')
+        .replace(/src\/[^\s:]+/g, "src/PATH")
+        .replace(/\.\/[^\s:]+/g, "./PATH")
+        .replace(/\/[^\s:]+\/[^\s:]+/g, "/PATH");
+      const semanticContent = `Command failed: ${command}\nError (${errorType}): ${normalizedError}`;
+      const contentHash = createHash("sha256").update(semanticContent).digest("hex").slice(0, 16);
       const id = generateId();
       const now = new Date().toISOString().replace("T", " ").replace("Z", "");
 
+      // Check for duplicate using semantic hash (same normalized error in last hour)
       const recent = db
         .prepare(
           "SELECT id FROM captures WHERE content_hash = ? AND created_at > datetime('now', '-1 hour') LIMIT 1",
@@ -531,6 +545,8 @@ export function hookPostToolUse(dbPath: string): void {
           title: title,
           anti_pattern: antiPattern,
           correct_approach: correctApproach,
+          // [P3: Root Cause Analysis] Extract root cause from stack trace (Experia pattern)
+          root_cause: extractRootCause(truncatedError),
           // [Feature 5] Confidence/voting (ExpeL + Midas)
           confidence: 2,
           upvotes: 0,
@@ -732,6 +748,8 @@ export function hookPreToolUse(dbPath: string): void {
         lines.push(`- ${date} [confidence=${decayedConfidence.toFixed(1)}]: ${title}`);
         if (isOtherProject) lines.push(`  (from another project — cross-project pattern)`);
         if (antiPattern) lines.push(`  Anti-pattern: ${antiPattern}`);
+        // [P3: Root Cause Analysis] Show root cause if available (Experia pattern)
+        if (meta.root_cause) lines.push(`  Root cause: ${meta.root_cause}`);
         if (correctApproach) lines.push(`  Fix: ${correctApproach}`);
         if (meta.resolved) lines.push(`  (Previously resolved — may recur)`);
       }
@@ -950,6 +968,30 @@ function suggestCorrectApproach(command: string, errorType: string, errorOutput:
     runtime: "Check the error message and stack trace for the root cause.",
   };
   return suggestions[errorType] ?? "Analyze the error output and fix the root cause.";
+}
+
+/**
+ * [P3: Root Cause Analysis] Extract root cause from error stack trace.
+ * (Experia pattern: Root Cause Analysis)
+ * Looks for the most specific error line in a stack trace.
+ */
+function extractRootCause(errorOutput: string): string {
+  const lines = errorOutput.split("\n").filter((l) => l.trim());
+
+  // Pattern 1: "Error: <message>" or "TypeError: <message>"
+  const errorLine = lines.find((l) => /^\s*(\w+Error|Error):/.test(l));
+  if (errorLine) return errorLine.trim().slice(0, 200);
+
+  // Pattern 2: "at <function> (<file>:<line>:<col>)" — last frame is usually the root
+  const stackFrame = lines.find((l) => /^\s*at\s/.test(l));
+  if (stackFrame) return stackFrame.trim().slice(0, 200);
+
+  // Pattern 3: First non-empty line with "error" or "fail"
+  const genericLine = lines.find((l) => /error|fail|cannot|missing/i.test(l));
+  if (genericLine) return genericLine.trim().slice(0, 200);
+
+  // Fallback: first non-empty line
+  return (lines[0] ?? "").trim().slice(0, 200);
 }
 
 /**

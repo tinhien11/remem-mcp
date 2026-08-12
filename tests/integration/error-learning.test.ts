@@ -1596,4 +1596,163 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     expect(meta.resolved).toBe(true);
     expect(meta.fix_validated).toBe(false);
   });
+
+  // ------------------------------------------------------------------
+  // Test 25: P2 Semantic error matching — same error, different line numbers
+  // ------------------------------------------------------------------
+  it("P2: semantic matching — same error type with different line numbers is detected as recurrence", () => {
+    makeFullErrorDb(dbPath);
+
+    // First failure: lint error on line 42
+    postToolUse("npm run lint", "src/index.ts: line 42, col 5, Error - unused variable 'foo' eslint");
+
+    let errors = getErrors();
+    expect(errors.length).toBe(1);
+
+    // Second failure: SAME error but on line 87, different variable name
+    // With semantic matching, this should be detected as a recurrence (downvoted)
+    // not a new error
+    postToolUse("npm run lint", "src/index.ts: line 87, col 12, Error - unused variable 'bar' eslint");
+
+    errors = getErrors();
+    // Should still be 1 error (semantically the same — downvoted, not duplicated)
+    expect(errors.length).toBe(1);
+    const meta = JSON.parse(errors[0].metadata);
+    expect(meta.downvotes).toBe(1);
+    expect(meta.confidence).toBe(1); // 2 - 1 = 1
+  });
+
+  // ------------------------------------------------------------------
+  // Test 26: P2 Semantic error matching — genuinely different errors still captured separately
+  // ------------------------------------------------------------------
+  it("P2: semantic matching — different error types are still captured separately", () => {
+    makeFullErrorDb(dbPath);
+
+    // First: unused variable error
+    postToolUse("npm run lint", "src/index.ts: line 42, Error - unused variable eslint");
+
+    // Second: missing semicolon (different error pattern)
+    postToolUse("npm run lint", "src/utils.ts: line 5, Error - missing semicolon eslint");
+
+    // Should be 2 separate errors (different error patterns after normalization)
+    const errors = getErrors();
+    expect(errors.length).toBe(2);
+  });
+
+  // ------------------------------------------------------------------
+  // Test 27: P2 Counter-arguments in scars (GitMem pattern)
+  // ------------------------------------------------------------------
+  it("P2: counter-arguments — errors include counter-argument to prevent rigid rules", () => {
+    makeFullErrorDb(dbPath);
+
+    // Capture a lint error
+    postToolUse("npm run lint", "src/index.ts: line 1, Error - unused variable 'foo' eslint");
+
+    const errors = getErrors();
+    expect(errors.length).toBe(1);
+    const meta = JSON.parse(errors[0].metadata);
+
+    // The anti_pattern should include what NOT to do
+    expect(meta.anti_pattern).toBeTruthy();
+    // The correct_approach should include what TO do instead
+    expect(meta.correct_approach).toBeTruthy();
+    // GitMem pattern: scars should include context about WHEN the fix applies
+    // (counter-argument prevents the agent from applying the fix blindly)
+    // We verify the error has both anti_pattern AND correct_approach
+    // so the agent knows both what's wrong AND the right approach
+    expect(meta.anti_pattern).not.toBe(meta.correct_approach);
+  });
+
+  // ------------------------------------------------------------------
+  // Test 28: P2 Behavior change measurement — track if fix changed outcome
+  // ------------------------------------------------------------------
+  it("P2: behavior change — success after failure records resolution metadata", () => {
+    makeFullErrorDb(dbPath);
+
+    // Capture error
+    postToolUse("npm run lint", "src/index.ts: line 1, Error - unused var eslint");
+
+    // Succeed
+    postToolUse("npm run lint", "", "All checks passed. Clean output.", 0);
+
+    const errors = getErrors();
+    const meta = JSON.parse(errors[0].metadata);
+
+    // The fix should be recorded with validation metadata
+    expect(meta.resolved).toBe(true);
+    expect(meta.fix_applied).toBeTruthy();
+    expect(meta.fix_validated).toBe(true);
+    expect(meta.resolved_at).toBeTruthy();
+    // Behavior change is tracked via: resolved=true, fix_applied, fix_validated
+    // This proves the agent's behavior CHANGED (failed → succeeded)
+  });
+
+  // ------------------------------------------------------------------
+  // Test 29: P3 Root Cause Analysis — extract root cause from stack trace
+  // ------------------------------------------------------------------
+  it("P3: root cause analysis — extracts root cause from error stack trace", () => {
+    makeFullErrorDb(dbPath);
+
+    // Capture a runtime error with a stack trace
+    postToolUse(
+      "node dist/index.js",
+      "TypeError: Cannot read property 'foo' of undefined\n    at handleRequest (src/server.ts:42:15)\n    at Object.<anonymous> (src/index.ts:10:3)",
+    );
+
+    const errors = getErrors();
+    expect(errors.length).toBe(1);
+    const meta = JSON.parse(errors[0].metadata);
+
+    // root_cause should be extracted from the stack trace
+    expect(meta.root_cause).toBeTruthy();
+    // Should contain the TypeError line (the root cause)
+    expect(meta.root_cause).toContain("TypeError");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 30: P3 Root Cause Analysis — PreToolUse injects root cause
+  // ------------------------------------------------------------------
+  it("P3: root cause analysis — PreToolUse shows root cause in warning", () => {
+    makeFullErrorDb(dbPath);
+
+    // Capture a runtime error with a build command (so it's relevant)
+    postToolUse(
+      "npm run build",
+      "ReferenceError: x is not defined\n    at foo (src/index.ts:5:10)",
+    );
+
+    // PreToolUse should inject the root cause
+    const output = preToolUse("npm run build");
+    const parsed = JSON.parse(output);
+    const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
+
+    // Should contain "Root cause:" with the ReferenceError
+    expect(ctx).toContain("Root cause:");
+    expect(ctx).toContain("ReferenceError");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 31: P3 Memory generalization — similar errors merged via semantic hash
+  // ------------------------------------------------------------------
+  it("P3: memory generalization — 3 similar errors (different lines) merge into 1 pattern", () => {
+    makeFullErrorDb(dbPath);
+
+    // Three lint errors with different line numbers and variable names
+    // but same error type (unused variable) — should all be the same semantic hash
+    postToolUse("npm run lint", "src/index.ts: line 10, Error - unused variable 'a' eslint");
+    postToolUse("npm run lint", "src/index.ts: line 20, Error - unused variable 'b' eslint");
+    postToolUse("npm run lint", "src/index.ts: line 30, Error - unused variable 'c' eslint");
+
+    // Should be 1 error (all semantically the same), downvoted twice
+    // After 3 occurrences: confidence 2→1→0, pruned (deleted_at set)
+    // Use getAllErrors() to include pruned entries
+    const errors = getAllErrors();
+    expect(errors.length).toBe(1);
+    const meta = JSON.parse(errors[0].metadata);
+    expect(meta.downvotes).toBe(2);
+    // confidence = 2 - 1 - 1 = 0 → should be pruned
+    expect(meta.confidence).toBe(0);
+    // Should be marked as deleted (pruned)
+    expect(errors[0].deleted_at).not.toBeNull();
+  });
 });
