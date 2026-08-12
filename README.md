@@ -129,10 +129,13 @@ All three run via lifecycle hooks. The agent doesn't need to call any tool.
 
 Enabled by default. Set `TDAI_CORE_ONLY=1` to disable (saves tokens if you only need memory).
 
+![CodeGraph viewer](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/viewer-demo.gif)
+
 ```bash
 npx tdai-memory-mcp index --path src --repo .    # Index code (Tree-sitter, 9 languages)
 npx tdai-memory-mcp wiki ingest --path docs      # Index markdown docs + ADRs
 npx tdai-memory-mcp wiki outdated                 # Find outdated wiki pages
+npx tdai-memory-mcp viewer                        # Web UI at localhost:7331
 ```
 
 - **CodeGraph** — symbol search, callers/callees, impact analysis. `codegraph_search`, `codegraph_callers`, `codegraph_impact`, etc.
