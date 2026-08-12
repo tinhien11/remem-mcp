@@ -695,7 +695,7 @@ export function hookPostToolUse(dbPath: string): void {
       if (isWriteEdit) {
         try {
           const db = new Database(dbPath);
-          const sessionKey = hashPath(input.cwd ?? process.cwd());
+          const sessionKey = hashPath(input.cwd ?? toolInput.workdir ?? process.cwd());
           const pattern = detectPattern(toolName, toolInput);
           if (pattern) {
             const id = `pat-${createHash("sha256")
@@ -858,17 +858,32 @@ export function hookPostToolUse(dbPath: string): void {
       }
 
       // Claude Code: { exit_code, stderr, stdout }
-      // Devin CLI: { success, output, error }
+      // Devin CLI: { success, output, error } — success=true means the tool ran,
+      //   NOT that the command succeeded. Exit code is embedded in the output string.
       // PostToolUseFailure (Claude Code): always a failure
       const isFailureEvent = input.hook_event_name === "PostToolUseFailure";
       const exitCode = toolResponse.exit_code ?? toolResponse.status ?? null;
       const devinSuccess = typeof toolResponse.success === "boolean" ? toolResponse.success : null;
-      const isError =
-        isFailureEvent || devinSuccess === false || (exitCode !== null && exitCode !== 0);
       const stderr = toolResponse.stderr ?? toolResponse.error ?? "";
       const stdout = toolResponse.stdout ?? toolResponse.output ?? "";
+
+      // Devin CLI embeds exit code in the output string as "Exit code: N"
+      // and reports success=true even when the command failed.
+      // Parse the exit code from output if not explicitly provided.
+      let parsedExitCode = exitCode;
+      if (parsedExitCode === null && typeof stdout === "string") {
+        const exitMatch = stdout.match(/Exit code:\s*(\d+)/);
+        if (exitMatch) {
+          parsedExitCode = Number.parseInt(exitMatch[1], 10);
+        }
+      }
+
+      const isError =
+        isFailureEvent ||
+        devinSuccess === false ||
+        (parsedExitCode !== null && parsedExitCode !== 0);
       const command = toolInput.command ?? "";
-      const cwd = input.cwd ?? process.cwd();
+      const cwd = input.cwd ?? toolInput.workdir ?? process.cwd();
       const sessionKey = hashPath(cwd);
 
       // Noise filter: skip error capture for obvious test/noise commands
@@ -1535,7 +1550,7 @@ export function hookPreToolUse(dbPath: string): void {
       if (toolName === "Write" || toolName === "Edit" || toolName === "MultiEdit") {
         const filePath = toolInput.file_path ?? toolInput.path ?? "";
         if (filePath && process.env.TDAI_PREDICTIVE_ERRORS === "1") {
-          const cwd = input.cwd ?? process.cwd();
+          const cwd = input.cwd ?? toolInput.workdir ?? process.cwd();
           const sessionKey = hashPath(cwd);
           try {
             const predDb = new Database(dbPath, { readonly: true });
@@ -1603,7 +1618,7 @@ export function hookPreToolUse(dbPath: string): void {
         // When editing a file, find patterns from the same project with same language.
         if (filePath) {
           try {
-            const cwd = input.cwd ?? process.cwd();
+            const cwd = input.cwd ?? toolInput.workdir ?? process.cwd();
             const sessionKey = hashPath(cwd);
             const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
             const langMap: Record<string, string> = {
@@ -1736,7 +1751,7 @@ export function hookPreToolUse(dbPath: string): void {
         return;
       }
 
-      const cwd = input.cwd ?? process.cwd();
+      const cwd = input.cwd ?? toolInput.workdir ?? process.cwd();
       const sessionKey = hashPath(cwd);
 
       let db: Database.Database;

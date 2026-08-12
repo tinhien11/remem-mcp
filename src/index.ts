@@ -10,11 +10,13 @@ import * as sqliteVec from "sqlite-vec";
 import { exportArtifact, importArtifact } from "./artifact.js";
 import { backup } from "./backup.js";
 import { atomsCommand } from "./cli/atoms.js";
+import { demo } from "./cli/demo.js";
 import { extractCommand } from "./cli/extract.js";
 import { knowledgeCommand } from "./cli/knowledge.js";
 import { personaCommand } from "./cli/persona.js";
 import { scenariosCommand } from "./cli/scenarios.js";
 import { skillsCommand } from "./cli/skills.js";
+import { status } from "./cli/status.js";
 import {
   findCallees,
   findCallers,
@@ -160,9 +162,11 @@ async function main(): Promise<void> {
     console.log("\nNext steps:");
     console.log("  1. Restart your agent (close and reopen the session)");
     console.log("  2. On restart, SessionStart hook loads recent memory automatically");
-    console.log("  3. Run `npx tdai-memory-mcp doctor` to verify everything is wired");
+    console.log("  3. Run `npx tdai-memory-mcp status` anytime to see your memory");
     console.log("\nOptional: `npx tdai-memory-mcp install-skill` teaches your agent");
     console.log("when to recall/capture mid-session (adds ~4K tokens to context).");
+    console.log("\n─ Demo ─────────────────────────────────────────────────");
+    await demo();
     return;
   }
   if (arg === "uninstall-hooks") {
@@ -171,6 +175,14 @@ async function main(): Promise<void> {
   }
   if (arg === "doctor") {
     await doctor();
+    return;
+  }
+  if (arg === "demo") {
+    await demo();
+    return;
+  }
+  if (arg === "status") {
+    status(defaultDbPath());
     return;
   }
   if (arg === "recent" || arg === "list") {
@@ -684,77 +696,116 @@ async function main(): Promise<void> {
     return;
   }
   if (arg === "help" || arg === "--help" || arg === "-h") {
+    const showAll = process.argv[3] === "all";
     console.log(`tdai-memory-mcp - Local-first MCP memory server
 
-Usage:
+Getting started:
+  tdai-memory-mcp setup          One-command install (MCP + hooks + demo)
+  tdai-memory-mcp demo           Watch the learning loop work in 30s
+  tdai-memory-mcp status         One dashboard: health + all 3 loops + recent
+  tdai-memory-mcp doctor         Check setup health
+  tdai-memory-mcp version        Print version
+
+Daily use:
+  tdai-memory-mcp errors         Error learning dashboard
+  tdai-memory-mcp decisions      Decision learning dashboard
+  tdai-memory-mcp patterns       Pattern learning dashboard
+  tdai-memory-mcp recent [N]     Show N most recent captures
+
+  Run \`tdai-memory-mcp help all\` for the full list of 40+ subcommands.
+`);
+    if (!showAll) {
+      console.log(`The server runs as a stdio process. Add it to your MCP client:
+  Claude Code: ~/.claude.json
+  Cursor:      ~/.cursor/mcp.json
+  Devin CLI:   devin mcp add tdai-memory -- npx -y tdai-memory-mcp
+`);
+      return;
+    }
+
+    // Full help (only with `help all`)
+    console.log(`Full command list:
+${"─".repeat(60)}
+
+Setup & maintenance:
   tdai-memory-mcp                Start the MCP server (stdio)
-  tdai-memory-mcp setup          Install skill + hooks + test capture (one command)
+  tdai-memory-mcp setup          Install MCP + hooks + run demo (one command)
   tdai-memory-mcp install-skill  Install the agent skill for Devin CLI
   tdai-memory-mcp install-hooks  Install lifecycle hooks (SessionStart, Stop, SessionEnd)
   tdai-memory-mcp uninstall-hooks  Remove lifecycle hooks
   tdai-memory-mcp hook-post-commit  Auto-index changed files (git post-commit hook)
   tdai-memory-mcp doctor         Check setup health
-  tdai-memory-mcp recent [N]     Show N most recent captures (default: 20)
-  tdai-memory-mcp stats          Show memory statistics (by type, trust, size)
-  tdai-memory-mcp errors         Error learning dashboard (patterns, fixes, resolution rate)
-  tdai-memory-mcp errors retro   Session retrospective: failure loops, wasted effort, repeated errors
-  tdai-memory-mcp errors drift   Drift report: errors injected but still occurred (agent ignored warnings)
-  tdai-memory-mcp errors lineage Fix lineage chains: E1→F1→E2→F2 (fixes that caused new errors)
-  tdai-memory-mcp errors by-goal  Error distribution by goal (set TDAI_GOAL_ID to tag)
-  tdai-memory-mcp errors actions  Action items from resolved errors (verified, open, recurring)
-  tdai-memory-mcp errors severity Error severity distribution (blocker/critical/major/minor)
-  tdai-memory-mcp errors templates     Fix templates extracted from 3+ similar resolved errors
-  tdai-memory-mcp errors correlations  Sequential error patterns (E1→E2 within 10 min)
-  tdai-memory-mcp errors playbooks     Recovery playbooks from resolved errors (step-by-step)
-  tdai-memory-mcp errors stale         Fix staleness report (fixes older than TDAI_FIX_STALENESS_DAYS)
-  tdai-memory-mcp errors escalations   Auto-escalated errors (recurred 3+ times, severity bumped)
-  tdai-memory-mcp errors context       Error context enrichment (git branch, commits, changed files)
-  tdai-memory-mcp errors inherited     Cross-project fix inheritance report
-  tdai-memory-mcp errors provenance    Fix provenance chain (auto_captured, inherited, etc.)
-  tdai-memory-mcp errors persona       Error profile per project (types, branches, severity)
+  tdai-memory-mcp demo           Run end-to-end learning loop demo (30s)
+  tdai-memory-mcp status         Unified dashboard (health + 3 loops + recent)
 
-Decision learning (Moat 2):
-  tdai-memory-mcp decisions            Decision dashboard (dependency choices, config decisions)
-  tdai-memory-mcp decisions retro      Decision retrospective (follow rate, repeated, drifted)
+Error learning (deep loop, 41 features):
+  tdai-memory-mcp errors              Error dashboard (patterns, fixes, resolution rate)
+  tdai-memory-mcp errors retro        Session retrospective (failure loops, wasted effort)
+  tdai-memory-mcp errors drift        Drift: injected warnings that were ignored
+  tdai-memory-mcp errors lineage      Fix lineage chains: E1→F1→E2→F2
+  tdai-memory-mcp errors by-goal      Error distribution by goal (set TDAI_GOAL_ID)
+  tdai-memory-mcp errors actions      Action items from resolved errors
+  tdai-memory-mcp errors severity     Severity distribution (blocker/critical/major/minor)
+  tdai-memory-mcp errors templates    Fix templates from 3+ similar resolved errors
+  tdai-memory-mcp errors correlations Sequential error patterns (E1→E2 within 10 min)
+  tdai-memory-mcp errors playbooks    Recovery playbooks (step-by-step)
+  tdai-memory-mcp errors stale        Fix staleness (older than TDAI_FIX_STALENESS_DAYS)
+  tdai-memory-mcp errors escalations  Auto-escalated errors (3+ recurrences)
+  tdai-memory-mcp errors context      Error context (git branch, commits, changed files)
+  tdai-memory-mcp errors inherited    Cross-project fix inheritance
+  tdai-memory-mcp errors provenance   Fix provenance chain
+  tdai-memory-mcp errors persona      Error profile per project
 
-Pattern learning (Moat 3):
-  tdai-memory-mcp patterns             Pattern dashboard (functions, components, classes)
-  tdai-memory-mcp patterns retro       Pattern retrospective (adoption rate, most used)
+Decision learning (foundational loop):
+  tdai-memory-mcp decisions           Decision dashboard
+  tdai-memory-mcp decisions retro     Decision retrospective (follow rate, drift)
+  tdai-memory-mcp decisions conflicts Contradictory dependency choices
+  tdai-memory-mcp decisions inherited Cross-project decision inheritance
 
-CodeGraph commands:
+Pattern learning (foundational loop):
+  tdai-memory-mcp patterns            Pattern dashboard
+  tdai-memory-mcp patterns retro      Pattern retrospective (adoption rate)
+  tdai-memory-mcp patterns conflicts  Inconsistent style conflicts (CommonJS vs ESM)
+  tdai-memory-mcp patterns templates  Reusable templates from 3+ similar patterns
+  tdai-memory-mcp patterns inherited  Cross-project pattern inheritance
+
+CodeGraph:
   tdai-memory-mcp index [--path src] [--repo .]  Index code symbols (Tree-sitter)
   tdai-memory-mcp search-code --query <name>     Search symbols by name
   tdai-memory-mcp callers <symbol_id>            Find who calls a symbol
   tdai-memory-mcp callees <symbol_id>            Find what a symbol calls
-  tdai-memory-mcp impact <symbol_id>             Impact analysis (what breaks if changed)
+  tdai-memory-mcp impact <symbol_id>             Impact analysis (what breaks)
   tdai-memory-mcp list-code <file_path>          List symbols in a file
 
-Wiki commands:
+Wiki:
   tdai-memory-mcp wiki ingest [--path docs]      Index markdown documentation
   tdai-memory-mcp wiki search <query>            Search wiki pages
   tdai-memory-mcp wiki outdated [--repo .]       Find outdated wiki pages
 
+Data:
+  tdai-memory-mcp stats          Memory statistics (by type, trust, size)
+  tdai-memory-mcp token-stats    Token savings report
+  tdai-memory-mcp recent [N]     Show N most recent captures (default: 20)
   tdai-memory-mcp export [file]  Export captures to JSON (default: stdout)
   tdai-memory-mcp import <file>  Import captures from JSON
-  tdai-memory-mcp stats          Print memory statistics
-  tdai-memory-mcp token-stats    Print token savings report
-  tdai-memory-mcp viewer [port]  Start web viewer (default port: 7331)
   tdai-memory-mcp backup [dir]   Backup database and audit log
-  tdai-memory-mcp sync-export    Export memory to .tdai-memory/ in the project root
+  tdai-memory-mcp viewer [port]  Start web viewer (default port: 7331)
+  tdai-memory-mcp sync-export    Export memory to .tdai-memory/ in project root
   tdai-memory-mcp sync-import    Import memory from .tdai-memory/ (auto on startup)
 
-L1-L3 pipeline commands (require TDAI_LLM_API_KEY for extract):
+L1-L3 pipeline (require TDAI_LLM_API_KEY for extract):
   tdai-memory-mcp extract        Run L1 atom extraction on existing captures
   tdai-memory-mcp atoms          List or search L1 atoms
   tdai-memory-mcp scenarios      List L2 scenarios
   tdai-memory-mcp persona        Read or write L3 persona
 
-Knowledge and skills commands:
+Knowledge & skills:
   tdai-memory-mcp knowledge      List knowledge assets for a team
   tdai-memory-mcp skills         List skills for a team
 
   tdai-memory-mcp version        Print the version
-  tdai-memory-mcp help           Print this help
+  tdai-memory-mcp help           Print short help
+  tdai-memory-mcp help all       Print this full list
 
 Export options:
   --session-key <key>  Export only captures from this session
