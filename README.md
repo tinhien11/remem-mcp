@@ -5,13 +5,13 @@
 
 > The only memory tool that understands your code. Not just text — symbols, callers, impact, errors, and the decisions behind them.
 
-![Handoff Demo](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/handoff-demo.gif)
+![Bug fix chain](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/handoff-demo.gif)
 
-*3 sessions, 3 agents, 1 memory: Claude Code captures + Stop hook auto-saves → Devin recalls → Codex recalls.*
+*3 sessions, 3 React bugs, 1 memory: Session 1 captures the fix → Session 2 starts with it loaded → Session 3 knows both fixes.*
 
-![Demo](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/demo.gif)
+![Viewer](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/demo.gif)
 
-*Viewer: React codebase — Memory + CodeGraph + Wiki*
+*Web viewer: Memory + CodeGraph + Wiki in one UI*
 
 ---
 
