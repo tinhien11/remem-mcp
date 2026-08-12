@@ -7,7 +7,9 @@
 
 Local memory that learns from every error — and syncs to your git repo so your whole team shares it.
 
-![Demo](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/demo-learning-loop.gif)
+<video src="https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/demo-learning-loop.mp4" controls muted width="100%"></video>
+
+![Demo (GIF)](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/demo-learning-loop.gif)
 
 ---
 
