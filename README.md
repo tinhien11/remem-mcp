@@ -128,7 +128,7 @@ All three run via lifecycle hooks. The agent doesn't need to call any tool.
 
 ## Advanced tools
 
-<video src="https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/demo-codegraph.mp4" controls muted width="100%"></video>
+![CodeGraph demo](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/demo-codegraph.gif)
 
 ![CodeGraph viewer](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/viewer-demo.gif)
 
