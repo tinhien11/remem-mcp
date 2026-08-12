@@ -564,6 +564,32 @@ export function errorsRetro(dbPath: string = defaultDbPath()): void {
   console.log(`  Drift violations:    ${driftViolations.length}`);
   console.log(`  Durable fixes:       ${durableFixes.length}`);
   console.log(`  Fragile fixes:       ${fragileFixes.length}`);
+
+  // [Fix Attempt Counter] Show most stubborn errors (high attempt_count)
+  const stubborn = db
+    .prepare(
+      `SELECT
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.attempt_count') as attempts,
+         json_extract(metadata, '$.error_type') as etype,
+         json_extract(metadata, '$.resolved') as resolved
+       FROM captures
+       WHERE type = 'error' AND deleted_at IS NULL
+       AND ${windowClause}
+       AND CAST(json_extract(metadata, '$.attempt_count') AS INTEGER) >= 3
+       ORDER BY CAST(json_extract(metadata, '$.attempt_count') AS INTEGER) DESC LIMIT 5`,
+    )
+    .all() as { title: string; attempts: string; etype: string; resolved: string }[];
+
+  if (stubborn.length > 0) {
+    console.log();
+    console.log("Most stubborn errors (3+ attempts):");
+    for (const s of stubborn) {
+      const title = (s.title ?? "Untitled").slice(0, 45);
+      const resolved = s.resolved === "true" ? " ✓" : "";
+      console.log(`  ${s.attempts}x  ${title}${resolved}`);
+    }
+  }
   console.log();
 
   // Recommendations
@@ -1190,6 +1216,457 @@ export function errorsActions(dbPath: string = defaultDbPath()): void {
     console.log("  ✓ All fixes are verified and stable.");
   }
   console.log();
+  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+
+  db.close();
+}
+
+/**
+ * `tdai-memory-mcp errors severity` — Error severity distribution.
+ * Shows errors classified as blocker/critical/major/minor.
+ * (SRE pattern: prioritize by business impact, not just frequency)
+ */
+export function errorsSeverity(dbPath: string = defaultDbPath()): void {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true });
+  } catch {
+    console.error("Error: Could not open database at", dbPath);
+    process.exit(1);
+  }
+
+  console.log("tdai-memory-mcp errors severity — Impact Classification\n");
+  console.log(`${"─".repeat(60)}\n`);
+
+  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const windowClause = `created_at > datetime('now', '-${days} days')`;
+
+  // Count by severity
+  const bySeverity = db
+    .prepare(
+      `SELECT
+         COALESCE(json_extract(metadata, '$.severity'), 'major') as severity,
+         COUNT(*) as count,
+         SUM(CASE WHEN json_extract(metadata, '$.resolved') = true THEN 1 ELSE 0 END) as resolved
+       FROM captures
+       WHERE type = 'error' AND deleted_at IS NULL
+       AND ${windowClause}
+       GROUP BY severity
+       ORDER BY CASE severity
+         WHEN 'blocker' THEN 0
+         WHEN 'critical' THEN 1
+         WHEN 'major' THEN 2
+         WHEN 'minor' THEN 3
+         ELSE 2
+       END`,
+    )
+    .all() as { severity: string; count: number; resolved: number }[];
+
+  if (bySeverity.length === 0) {
+    console.log(`No errors in the last ${days} days.\n`);
+    db.close();
+    return;
+  }
+
+  const icons: Record<string, string> = {
+    blocker: "🔴",
+    critical: "🟠",
+    major: "🟡",
+    minor: "🟢",
+  };
+
+  console.log(`Severity distribution (last ${days} days):`);
+  console.log();
+  for (const s of bySeverity) {
+    const icon = icons[s.severity] ?? "🟡";
+    const resolveRate = s.count > 0 ? ((s.resolved / s.count) * 100).toFixed(0) : "0";
+    console.log(
+      `  ${icon} ${s.severity.padEnd(10)} ${String(s.count).padStart(4)} errors  (${resolveRate}% resolved)`,
+    );
+  }
+  console.log();
+
+  // Show top blocker/critical errors
+  const blockers = db
+    .prepare(
+      `SELECT
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.command') as cmd,
+         json_extract(metadata, '$.severity') as severity,
+         json_extract(metadata, '$.resolved') as resolved,
+         created_at
+       FROM captures
+       WHERE type = 'error' AND deleted_at IS NULL
+       AND ${windowClause}
+       AND json_extract(metadata, '$.severity') IN ('blocker', 'critical')
+       ORDER BY created_at DESC LIMIT 10`,
+    )
+    .all() as {
+    title: string;
+    cmd: string;
+    severity: string;
+    resolved: string;
+    created_at: string;
+  }[];
+
+  if (blockers.length > 0) {
+    console.log("Top blocker/critical errors:");
+    for (const b of blockers) {
+      const icon = icons[b.severity] ?? "🟡";
+      const title = (b.title ?? "Untitled").slice(0, 45);
+      const cmd = (b.cmd ?? "").slice(0, 30);
+      const resolved = b.resolved === "true" ? " ✓" : "";
+      const date = new Date(b.created_at).toISOString().split("T")[0];
+      console.log(`  ${icon} ${date} ${title}${resolved}`);
+      console.log(`         cmd: ${cmd}`);
+    }
+    console.log();
+  }
+
+  // Summary
+  const total = bySeverity.reduce((sum, s) => sum + s.count, 0);
+  const blockerCount = bySeverity.find((s) => s.severity === "blocker")?.count ?? 0;
+  const criticalCount = bySeverity.find((s) => s.severity === "critical")?.count ?? 0;
+  const majorCount = bySeverity.find((s) => s.severity === "major")?.count ?? 0;
+  const minorCount = bySeverity.find((s) => s.severity === "minor")?.count ?? 0;
+
+  console.log(`${"─".repeat(60)}`);
+  console.log("Severity scorecard:");
+  console.log(`  Total errors:    ${total}`);
+  console.log(`  Blockers:       ${blockerCount}`);
+  console.log(`  Critical:       ${criticalCount}`);
+  console.log(`  Major:          ${majorCount}`);
+  console.log(`  Minor:          ${minorCount}`);
+  console.log();
+
+  // Assessment
+  console.log("Assessment:");
+  if (blockerCount > 0) {
+    console.log(`  ${blockerCount} blocker(s) — these block all work. Fix first.`);
+  }
+  if (criticalCount > total * 0.3) {
+    console.log(`  High critical rate — config/security issues are common.`);
+  }
+  if (minorCount > total * 0.5) {
+    console.log(`  High minor rate — most errors are non-blocking. Consider filtering.`);
+  }
+  if (blockerCount === 0 && criticalCount === 0) {
+    console.log("  No blockers or critical errors. Development is not blocked.");
+  }
+  console.log();
+  console.log("Severity: blocker > critical > major > minor");
+  console.log("PreToolUse injects blockers first, then critical, then major.");
+  console.log();
+  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+
+  db.close();
+}
+
+/**
+ * `tdai-memory-mcp errors templates` — Fix template extraction report.
+ * Shows reusable fix patterns extracted from 3+ similar resolved errors.
+ * (Moves from specific fixes to generalizable principles)
+ */
+export function errorsTemplates(dbPath: string = defaultDbPath()): void {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true });
+  } catch {
+    console.error("Error: Could not open database at", dbPath);
+    process.exit(1);
+  }
+
+  console.log("tdai-memory-mcp errors templates — Fix Template Extraction\n");
+  console.log(`${"─".repeat(60)}\n`);
+
+  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const windowClause = `created_at > datetime('now', '-${days} days')`;
+
+  // Find errors that have a fix_template extracted
+  const templates = db
+    .prepare(
+      `SELECT
+         id,
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.error_type') as etype,
+         json_extract(metadata, '$.fix_applied') as fix,
+         json_extract(metadata, '$.fix_template') as template,
+         created_at
+       FROM captures
+       WHERE type = 'error' AND deleted_at IS NULL
+       AND ${windowClause}
+       AND json_extract(metadata, '$.fix_template') IS NOT NULL
+       ORDER BY json_extract(metadata, '$.fix_template.similar_fix_count') DESC LIMIT 20`,
+    )
+    .all() as {
+    id: string;
+    title: string;
+    etype: string;
+    fix: string;
+    template: string;
+    created_at: string;
+  }[];
+
+  if (templates.length === 0) {
+    console.log(`No fix templates extracted in the last ${days} days.`);
+    console.log(
+      "Templates are auto-extracted when 3+ similar errors share the same fix pattern.\n",
+    );
+    db.close();
+    return;
+  }
+
+  console.log(`Extracted fix templates (last ${days} days):`);
+  console.log();
+
+  // Deduplicate by pattern
+  const seen = new Map<string, typeof templates>();
+  for (const t of templates) {
+    try {
+      const tmpl = JSON.parse(t.template);
+      const key = tmpl.pattern ?? "unknown";
+      if (!seen.has(key)) seen.set(key, []);
+      seen.get(key)!.push(t);
+    } catch {
+      // skip
+    }
+  }
+
+  for (const [pattern, matches] of seen) {
+    const first = matches[0];
+    const tmpl = JSON.parse(first.template);
+    console.log(`  Pattern: "${pattern}"`);
+    console.log(`    Error type:  ${tmpl.error_type ?? "unknown"}`);
+    console.log(`    Matches:     ${tmpl.similar_fix_count} similar fixes`);
+    console.log(`    Example fix: ${(first.fix ?? "").slice(0, 60)}`);
+    console.log();
+  }
+
+  // Summary
+  console.log(`${"─".repeat(60)}`);
+  console.log("Template scorecard:");
+  console.log(`  Total templates:      ${seen.size}`);
+  console.log(`  Total template hits:  ${templates.length}`);
+  console.log();
+
+  // Assessment
+  console.log("Assessment:");
+  if (seen.size >= 3) {
+    console.log("  Multiple fix patterns detected — agent is learning general principles.");
+  } else if (seen.size >= 1) {
+    console.log("  Some patterns detected — agent is starting to generalize fixes.");
+  }
+  console.log();
+  console.log("Templates are auto-extracted when 3+ similar errors share the same fix pattern.");
+  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+
+  db.close();
+}
+
+/**
+ * `tdai-memory-mcp errors correlations` — Error correlation report.
+ * Shows sequential error patterns: when E1 occurs, E2 often follows.
+ * (SRE pattern: incident correlation / cascading failure detection)
+ */
+export function errorsCorrelations(dbPath: string = defaultDbPath()): void {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true });
+  } catch {
+    console.error("Error: Could not open database at", dbPath);
+    process.exit(1);
+  }
+
+  console.log("tdai-memory-mcp errors correlations — Sequential Error Patterns\n");
+  console.log(`${"─".repeat(60)}\n`);
+
+  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const windowClause = `created_at > datetime('now', '-${days} days')`;
+
+  // Find errors that have error_correlations recorded
+  const correlated = db
+    .prepare(
+      `SELECT
+         id,
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.error_type') as etype,
+         json_extract(metadata, '$.error_correlations') as correlations,
+         created_at
+       FROM captures
+       WHERE type = 'error' AND deleted_at IS NULL
+       AND ${windowClause}
+       AND json_extract(metadata, '$.error_correlations') IS NOT NULL
+       ORDER BY created_at DESC LIMIT 20`,
+    )
+    .all() as {
+    id: string;
+    title: string;
+    etype: string;
+    correlations: string;
+    created_at: string;
+  }[];
+
+  if (correlated.length === 0) {
+    console.log(`No error correlations detected in the last ${days} days.`);
+    console.log("Correlations are detected when different error types occur within 10 minutes.\n");
+    db.close();
+    return;
+  }
+
+  // Aggregate correlation pairs across all errors
+  const pairMap = new Map<string, { count: number; examples: string[] }>();
+
+  for (const c of correlated) {
+    try {
+      const corrs = JSON.parse(c.correlations) as {
+        next_error_type: string;
+        next_error_title: string;
+        count: number;
+      }[];
+      for (const corr of corrs) {
+        const key = `${c.etype ?? "unknown"} → ${corr.next_error_type}`;
+        if (!pairMap.has(key)) {
+          pairMap.set(key, { count: 0, examples: [] });
+        }
+        const entry = pairMap.get(key)!;
+        entry.count += corr.count;
+        if (entry.examples.length < 2) {
+          entry.examples.push(
+            `${(c.title ?? "").slice(0, 30)} → ${corr.next_error_title?.slice(0, 30) ?? ""}`,
+          );
+        }
+      }
+    } catch {
+      // skip
+    }
+  }
+
+  // Sort by count descending
+  const sorted = [...pairMap.entries()].sort((a, b) => b[1].count - a[1].count);
+
+  console.log(`Sequential error patterns (last ${days} days):`);
+  console.log();
+  for (const [pattern, data] of sorted.slice(0, 10)) {
+    console.log(`  ${pattern}  (${data.count} occurrences)`);
+    for (const ex of data.examples) {
+      console.log(`    e.g. ${ex}`);
+    }
+  }
+  console.log();
+
+  // Summary
+  console.log(`${"─".repeat(60)}`);
+  console.log("Correlation scorecard:");
+  console.log(`  Total correlated errors:  ${correlated.length}`);
+  console.log(`  Unique patterns:          ${pairMap.size}`);
+  const totalPairs = [...pairMap.values()].reduce((sum, p) => sum + p.count, 0);
+  console.log(`  Total pair occurrences:   ${totalPairs}`);
+  console.log();
+
+  // Assessment
+  console.log("Assessment:");
+  if (pairMap.size >= 3) {
+    console.log("  Multiple correlation patterns — errors tend to cascade.");
+    console.log("  When E1 occurs, proactively check for E2 conditions.");
+  } else if (pairMap.size >= 1) {
+    console.log("  Some correlations detected — watch for cascading failures.");
+  }
+  console.log();
+  console.log("Correlations are detected when different error types occur within 10 minutes.");
+  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+
+  db.close();
+}
+
+/**
+ * `tdai-memory-mcp errors playbooks` — Recovery pattern library.
+ * Shows structured recovery playbooks extracted from resolved errors.
+ * (SRE pattern: runbooks / incident playbooks for agents)
+ */
+export function errorsPlaybooks(dbPath: string = defaultDbPath()): void {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true });
+  } catch {
+    console.error("Error: Could not open database at", dbPath);
+    process.exit(1);
+  }
+
+  console.log("tdai-memory-mcp errors playbooks — Recovery Pattern Library\n");
+  console.log(`${"─".repeat(60)}\n`);
+
+  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const windowClause = `created_at > datetime('now', '-${days} days')`;
+
+  // Find errors that have a recovery_pattern extracted
+  const playbooks = db
+    .prepare(
+      `SELECT
+         id,
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.error_type') as etype,
+         json_extract(metadata, '$.recovery_pattern') as pattern,
+         json_extract(metadata, '$.attempt_count') as attempts,
+         json_extract(metadata, '$.severity') as severity
+       FROM captures
+       WHERE type = 'error' AND deleted_at IS NULL
+       AND ${windowClause}
+       AND json_extract(metadata, '$.recovery_pattern') IS NOT NULL
+       ORDER BY CAST(json_extract(metadata, '$.attempt_count') AS INTEGER) DESC LIMIT 10`,
+    )
+    .all() as {
+    id: string;
+    title: string;
+    etype: string;
+    pattern: string;
+    attempts: string;
+    severity: string;
+  }[];
+
+  if (playbooks.length === 0) {
+    console.log(`No recovery playbooks in the last ${days} days.`);
+    console.log("Playbooks are auto-extracted when errors with 2+ attempts are resolved.\n");
+    db.close();
+    return;
+  }
+
+  console.log(`Recovery playbooks (last ${days} days):`);
+  console.log();
+  for (const p of playbooks) {
+    try {
+      const pat = JSON.parse(p.pattern);
+      console.log(
+        `  ${p.title ?? "Untitled"}  [${p.etype ?? "unknown"}, ${p.attempts ?? "?"} attempts, ${p.severity ?? "major"}]`,
+      );
+      for (const step of pat.steps ?? []) {
+        console.log(`    ${step}`);
+      }
+      console.log();
+    } catch {
+      // skip
+    }
+  }
+
+  // Summary
+  console.log(`${"─".repeat(60)}`);
+  console.log("Playbook scorecard:");
+  console.log(`  Total playbooks:       ${playbooks.length}`);
+  const totalAttempts = playbooks.reduce((sum, p) => sum + (Number(p.attempts) ?? 0), 0);
+  const avgAttempts = playbooks.length > 0 ? (totalAttempts / playbooks.length).toFixed(1) : "0";
+  console.log(`  Avg attempts:          ${avgAttempts}`);
+  console.log();
+
+  // Assessment
+  console.log("Assessment:");
+  if (playbooks.length >= 5) {
+    console.log(
+      "  Rich playbook library — agent has structured recovery guidance for many errors.",
+    );
+  } else if (playbooks.length >= 1) {
+    console.log("  Some playbooks available — agent is building recovery guidance.");
+  }
+  console.log();
+  console.log("Playbooks are auto-extracted when errors with 2+ attempts are resolved.");
   console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
 
   db.close();

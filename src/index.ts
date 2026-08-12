@@ -30,9 +30,13 @@ import {
   errorsActions,
   errorsByGoal,
   errors as errorsCommand,
+  errorsCorrelations,
   errorsDrift,
   errorsLineage,
+  errorsPlaybooks,
   errorsRetro,
+  errorsSeverity,
+  errorsTemplates,
 } from "./errors.js";
 import { exportData } from "./export.js";
 import {
@@ -284,6 +288,22 @@ async function main(): Promise<void> {
     }
     if (sub === "actions") {
       errorsActions(defaultDbPath());
+      return;
+    }
+    if (sub === "severity") {
+      errorsSeverity(defaultDbPath());
+      return;
+    }
+    if (sub === "templates") {
+      errorsTemplates(defaultDbPath());
+      return;
+    }
+    if (sub === "correlations") {
+      errorsCorrelations(defaultDbPath());
+      return;
+    }
+    if (sub === "playbooks") {
+      errorsPlaybooks(defaultDbPath());
       return;
     }
     errorsCommand(defaultDbPath());
@@ -605,6 +625,10 @@ Usage:
   tdai-memory-mcp errors lineage Fix lineage chains: E1→F1→E2→F2 (fixes that caused new errors)
   tdai-memory-mcp errors by-goal  Error distribution by goal (set TDAI_GOAL_ID to tag)
   tdai-memory-mcp errors actions  Action items from resolved errors (verified, open, recurring)
+  tdai-memory-mcp errors severity Error severity distribution (blocker/critical/major/minor)
+  tdai-memory-mcp errors templates     Fix templates extracted from 3+ similar resolved errors
+  tdai-memory-mcp errors correlations  Sequential error patterns (E1→E2 within 10 min)
+  tdai-memory-mcp errors playbooks     Recovery playbooks from resolved errors (step-by-step)
 
 CodeGraph commands:
   tdai-memory-mcp index [--path src] [--repo .]  Index code symbols (Tree-sitter)

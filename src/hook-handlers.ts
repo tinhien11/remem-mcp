@@ -474,6 +474,23 @@ export function hookPostToolUse(dbPath: string): void {
             meta.fix_applied = meta.correct_approach ?? "Command succeeded after fix.";
           }
 
+          // [Recovery Pattern Library] Extract a structured recovery playbook.
+          // Combines anti_pattern + correct_approach + fix_applied into step-by-step guidance.
+          // (SRE pattern: runbooks / incident playbooks)
+          if (meta.attempt_count && meta.attempt_count >= 2) {
+            meta.recovery_pattern = {
+              steps: [
+                `1. Identify: ${meta.title ?? "the error"}`,
+                `2. Avoid: ${meta.anti_pattern ?? "the anti-pattern that caused this"}`,
+                `3. Apply: ${meta.correct_approach ?? "the correct approach"}`,
+                `4. Verify: ${meta.fix_applied?.slice(0, 80) ?? "run the command again"}`,
+              ],
+              attempt_count: meta.attempt_count,
+              error_type: meta.error_type ?? "runtime",
+              extracted_at: new Date().toISOString(),
+            };
+          }
+
           // [P0: A/B validation] Validate the fix — check if stdout contains
           // error indicators (agent-learn pattern: only promote if proven)
           // A "clean" success has no error keywords in stdout.
@@ -495,6 +512,66 @@ export function hookPostToolUse(dbPath: string): void {
           logToFile(
             `PostToolUse: success correlation — upvoted error ${prevError.id} (confidence=${confidence}, fix recorded, validated=${meta.fix_validated})`,
           );
+
+          // [Fix Template Extraction] When an error is resolved, check if 2+ similar
+          // errors (same error_type) have similar fixes. If so, extract a reusable template.
+          // (Moves from specific fixes to generalizable principles)
+          if (meta.fix_validated && meta.fix_applied) {
+            try {
+              const similarFixes = db
+                .prepare(
+                  `SELECT
+                     json_extract(metadata, '$.fix_applied') as fix,
+                     json_extract(metadata, '$.title') as title
+                   FROM captures
+                   WHERE type = 'error' AND deleted_at IS NULL
+                   AND session_key = ?
+                   AND json_extract(metadata, '$.resolved') = true
+                   AND json_extract(metadata, '$.fix_validated') = true
+                   AND json_extract(metadata, '$.fix_applied') IS NOT NULL
+                   AND json_extract(metadata, '$.error_type') = ?
+                   AND id != ?
+                   ORDER BY created_at DESC LIMIT 5`,
+                )
+                .all(sessionKey, meta.error_type ?? "runtime", prevError.id) as {
+                fix: string;
+                title: string;
+              }[];
+
+              if (similarFixes.length >= 2) {
+                // Check if fixes share a common pattern (simple word overlap)
+                const allFixes = [meta.fix_applied, ...similarFixes.map((s) => s.fix)];
+                const words = allFixes[0]
+                  .toLowerCase()
+                  .split(/\s+/)
+                  .filter(
+                    (w) => w.length > 3 && !["command", "succeeded", "output", "error"].includes(w),
+                  );
+                const commonWords = words.filter((w) =>
+                  allFixes.slice(1).every((f) => f.toLowerCase().includes(w)),
+                );
+
+                if (commonWords.length >= 2) {
+                  // Template found — store it on the most recent error as a template marker
+                  meta.fix_template = {
+                    pattern: commonWords.join(" "),
+                    similar_fix_count: allFixes.length,
+                    error_type: meta.error_type ?? "runtime",
+                    extracted_at: new Date().toISOString(),
+                  };
+                  db.prepare("UPDATE captures SET metadata = ? WHERE id = ?").run(
+                    JSON.stringify(meta),
+                    prevError.id,
+                  );
+                  logToFile(
+                    `PostToolUse: FIX TEMPLATE extracted — pattern "${commonWords.join(" ")}" matches ${allFixes.length} fixes for ${meta.error_type ?? "runtime"} errors`,
+                  );
+                }
+              }
+            } catch {
+              // Non-fatal
+            }
+          }
         }
 
         // [P0: Harm gate] Check if a previously resolved error's command
@@ -516,6 +593,8 @@ export function hookPostToolUse(dbPath: string): void {
 
       // [Feature 1] Classify error type
       const errorType = classifyError(command, truncatedError);
+      // [Severity Classification] Classify impact level
+      const severity = classifySeverity(command, errorType, truncatedError);
 
       // [Feature 1] Structured memory (ReasoningBank + MNL pattern)
       const title = generateErrorTitle(command, errorType);
@@ -560,6 +639,8 @@ export function hookPostToolUse(dbPath: string): void {
           meta.downvotes = (meta.downvotes ?? 0) + 1;
           meta.confidence = Math.max(0, (meta.confidence ?? 2) - 1);
           meta.last_recurred = new Date().toISOString();
+          // [Fix Attempt Counter] Track how many times this error occurred before resolution
+          meta.attempt_count = (meta.attempt_count ?? 1) + 1;
 
           // [Drift Detection] Check if this error was injected by PreToolUse
           // recently. If so, the agent was warned but still hit the same error.
@@ -673,6 +754,8 @@ export function hookPostToolUse(dbPath: string): void {
           command: command.slice(0, 200),
           exit_code: exitCode,
           error_type: errorType,
+          // [Severity Classification] Impact level: blocker/critical/major/minor
+          severity: severity,
           // [Feature 1] Structured fields (ReasoningBank + MNL)
           title: title,
           anti_pattern: antiPattern,
@@ -692,12 +775,68 @@ export function hookPostToolUse(dbPath: string): void {
           caused_by_error_id: causedByErrorId ?? undefined,
           // [Goal-Linked Errors] Tag with current goal ID if set via env
           goal_id: process.env.TDAI_GOAL_ID ?? undefined,
+          // [Fix Attempt Counter] Track how many attempts to fix (1 = first occurrence)
+          attempt_count: 1,
         }),
       );
 
       db.close();
 
       logToFile(`PostToolUse: auto-captured ${errorType} error. id=${id}`);
+
+      // [Error Correlation Engine] Check if a different error occurred in the last 10 minutes.
+      // If so, record a correlation pair: E1 (previous) → E2 (this error).
+      // When E1 recurs in the future, warn that E2 often follows.
+      // (SRE pattern: incident correlation / cascading failure detection)
+      try {
+        const corrDb = new Database(dbPath);
+        const recentErrors = corrDb
+          .prepare(
+            `SELECT id, json_extract(metadata, '$.error_type') as etype, json_extract(metadata, '$.title') as title
+             FROM captures
+             WHERE type = 'error' AND deleted_at IS NULL
+             AND session_key = ?
+             AND id != ?
+             AND created_at > datetime('now', '-10 minutes')
+             AND json_extract(metadata, '$.error_type') != ?
+             ORDER BY created_at DESC LIMIT 3`,
+          )
+          .all(sessionKey, id, errorType) as { id: string; etype: string; title: string }[];
+
+        for (const prev of recentErrors) {
+          // Record correlation on the previous error
+          const prevRow = corrDb
+            .prepare("SELECT metadata FROM captures WHERE id = ?")
+            .get(prev.id) as { metadata: string } | undefined;
+          if (prevRow) {
+            const prevMeta = JSON.parse(prevRow.metadata);
+            const correlations = prevMeta.error_correlations ?? [];
+            // Check if this correlation pair already exists
+            const existing = correlations.find(
+              (c: { next_error_type: string }) => c.next_error_type === errorType,
+            );
+            if (existing) {
+              existing.count = (existing.count ?? 1) + 1;
+              existing.last_seen = new Date().toISOString();
+            } else {
+              correlations.push({
+                next_error_type: errorType,
+                next_error_title: title.slice(0, 60),
+                count: 1,
+                first_seen: new Date().toISOString(),
+                last_seen: new Date().toISOString(),
+              });
+            }
+            prevMeta.error_correlations = correlations;
+            corrDb
+              .prepare("UPDATE captures SET metadata = ? WHERE id = ?")
+              .run(JSON.stringify(prevMeta), prev.id);
+          }
+        }
+        corrDb.close();
+      } catch {
+        // Non-fatal
+      }
 
       // [Feature 7] Cross-project error pattern detection
       // Check if the same error type + similar command failed in other projects
@@ -883,7 +1022,15 @@ export function hookPreToolUse(dbPath: string): void {
            AND deleted_at IS NULL
            AND created_at > datetime('now', '-30 days')
            AND json_extract(metadata, '$.resolved') IS NOT true
-           ORDER BY CAST(json_extract(metadata, '$.confidence') AS INTEGER) DESC,
+           ORDER BY
+                    CASE json_extract(metadata, '$.severity')
+                      WHEN 'blocker' THEN 0
+                      WHEN 'critical' THEN 1
+                      WHEN 'major' THEN 2
+                      WHEN 'minor' THEN 3
+                      ELSE 2
+                    END,
+                    CAST(json_extract(metadata, '$.confidence') AS INTEGER) DESC,
                     created_at DESC LIMIT 5`,
         )
         .all(...params) as {
@@ -1249,6 +1396,66 @@ function classifyError(command: string, errorOutput: string): string {
   if (lower.includes("permission") || lower.includes("eacces")) return "permission";
   if (lower.includes("enoent") || lower.includes("no such file")) return "file-not-found";
   return "runtime";
+}
+
+/**
+ * [Severity Classification] Classify error severity based on impact signals.
+ * blocker:  data destruction, security, agent cannot proceed (deploy/publish failures)
+ * critical: core config files, env files, database operations
+ * major:    build/test/typecheck failures (blocks development)
+ * minor:    lint/format warnings (non-blocking)
+ */
+function classifySeverity(command: string, errorType: string, errorOutput: string): string {
+  const lowerCmd = command.toLowerCase();
+  const lowerErr = errorOutput.toLowerCase();
+
+  // Blocker: deploy/publish/release failures, data destruction
+  if (
+    lowerCmd.includes("deploy") ||
+    lowerCmd.includes("publish") ||
+    lowerCmd.includes("release") ||
+    lowerErr.includes("fatal") ||
+    lowerErr.includes("panic") ||
+    lowerErr.includes("segfault") ||
+    lowerErr.includes("out of memory") ||
+    lowerErr.includes("disk full")
+  ) {
+    return "blocker";
+  }
+
+  // Critical: config/env/database/security errors
+  if (
+    lowerErr.includes(".env") ||
+    lowerErr.includes("config") ||
+    lowerErr.includes("permission denied") ||
+    lowerErr.includes("eacces") ||
+    lowerErr.includes("database") ||
+    lowerErr.includes("migration") ||
+    lowerErr.includes("authentication") ||
+    lowerErr.includes("unauthorized") ||
+    lowerErr.includes("certificate")
+  ) {
+    return "critical";
+  }
+
+  // Major: build/test/typecheck/runtime failures (blocks development)
+  if (
+    errorType === "build" ||
+    errorType === "test" ||
+    errorType === "typecheck" ||
+    errorType === "runtime" ||
+    errorType === "import" ||
+    errorType === "permission"
+  ) {
+    return "major";
+  }
+
+  // Minor: lint/format warnings (non-blocking)
+  if (errorType === "lint" || errorType === "format" || errorType === "file-not-found") {
+    return "minor";
+  }
+
+  return "major";
 }
 
 /**

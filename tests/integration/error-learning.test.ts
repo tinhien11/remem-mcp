@@ -102,6 +102,11 @@ function insertError(
     causedByErrorId?: string;
     goalId?: string;
     resolvedAt?: string;
+    severity?: string;
+    attemptCount?: number;
+    fixTemplate?: { pattern: string; similar_fix_count: number; error_type: string; extracted_at: string };
+    errorCorrelations?: { next_error_type: string; next_error_title: string; count: number; first_seen: string; last_seen: string }[];
+    recoveryPattern?: { steps: string[]; attempt_count: number; error_type: string; extracted_at: string };
   },
 ): void {
   const meta = {
@@ -125,6 +130,11 @@ function insertError(
     ...(opts.causedByErrorId ? { caused_by_error_id: opts.causedByErrorId } : {}),
     ...(opts.goalId ? { goal_id: opts.goalId } : {}),
     ...(opts.resolvedAt ? { resolved_at: opts.resolvedAt } : {}),
+    ...(opts.severity ? { severity: opts.severity } : {}),
+    ...(opts.attemptCount !== undefined ? { attempt_count: opts.attemptCount } : {}),
+    ...(opts.fixTemplate ? { fix_template: opts.fixTemplate } : {}),
+    ...(opts.errorCorrelations ? { error_correlations: opts.errorCorrelations } : {}),
+    ...(opts.recoveryPattern ? { recovery_pattern: opts.recoveryPattern } : {}),
   };
 
   const content = opts.content ?? `Command failed: ${opts.command}\nError (${opts.errorType}): something went wrong`;
@@ -2927,5 +2937,306 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     const parsed = JSON.parse(output);
 
     expect(parsed.hookSpecificOutput?.additionalContext ?? "").toBe("");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 78: SEVERITY: errors severity shows distribution
+  // ------------------------------------------------------------------
+  it("SEVERITY: errors severity shows blocker/critical/major/minor distribution", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "sev-1",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run deploy",
+      title: "Deploy failure",
+      severity: "blocker",
+    });
+    insertError(db, {
+      id: "sev-2",
+      sessionKey: "proj-a",
+      errorType: "runtime",
+      command: "npm run build",
+      title: "Config error",
+      severity: "critical",
+    });
+    insertError(db, {
+      id: "sev-3",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Build error",
+      severity: "major",
+    });
+    insertError(db, {
+      id: "sev-4",
+      sessionKey: "proj-a",
+      errorType: "lint",
+      command: "npm run lint",
+      title: "Lint warning",
+      severity: "minor",
+    });
+    db.close();
+
+    const output = runCli("errors severity", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Impact Classification");
+    expect(output).toContain("blocker");
+    expect(output).toContain("critical");
+    expect(output).toContain("major");
+    expect(output).toContain("minor");
+    expect(output).toContain("Blockers:       1");
+    expect(output).toContain("Critical:       1");
+    expect(output).toContain("Major:          1");
+    expect(output).toContain("Minor:          1");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 79: SEVERITY: clean DB shows no errors
+  // ------------------------------------------------------------------
+  it("SEVERITY: clean DB shows no errors message", () => {
+    makeErrorDb(dbPath);
+
+    const output = runCli("errors severity", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("No errors in the last");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 80: SEVERITY: blocker assessment shown
+  // ------------------------------------------------------------------
+  it("SEVERITY: blocker count triggers assessment warning", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "blk-1",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run deploy",
+      title: "Deploy failure",
+      severity: "blocker",
+    });
+    db.close();
+
+    const output = runCli("errors severity", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("blocker(s)");
+    expect(output).toContain("Fix first");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 81: SEVERITY: PreToolUse injects blocker before minor
+  // ------------------------------------------------------------------
+  it("SEVERITY: PreToolUse injects blocker errors before minor errors", () => {
+    const db = makeErrorDb(dbPath);
+    const hashPath = (p: string) => createHash("sha256").update(p).digest("hex").slice(0, 16);
+    const sk = hashPath(tmpDir);
+
+    // Insert a minor lint error (high confidence)
+    insertError(db, {
+      id: "minor-1",
+      sessionKey: sk,
+      errorType: "lint",
+      command: "npm run lint",
+      title: "Lint warning",
+      confidence: 5,
+      severity: "minor",
+    });
+    // Insert a blocker build error (low confidence)
+    insertError(db, {
+      id: "blocker-1",
+      sessionKey: sk,
+      errorType: "build",
+      command: "npm run build",
+      title: "Build failure",
+      confidence: 1,
+      severity: "blocker",
+    });
+    db.close();
+
+    const stdin = JSON.stringify({
+      tool_name: "Bash",
+      tool_input: { command: "npm run build" },
+      cwd: tmpDir,
+    });
+    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const parsed = JSON.parse(output);
+    const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
+
+    // Blocker should be injected despite lower confidence
+    expect(ctx).toContain("Build failure");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 82: TEMPLATES: errors templates shows extracted patterns
+  // ------------------------------------------------------------------
+  it("TEMPLATES: errors templates shows extracted fix patterns", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "tmpl-1",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Missing import",
+      resolved: true,
+      fixApplied: "Added missing import statement",
+      fixValidated: true,
+      fixTemplate: {
+        pattern: "missing import",
+        similar_fix_count: 3,
+        error_type: "build",
+        extracted_at: new Date().toISOString(),
+      },
+    });
+    db.close();
+
+    const output = runCli("errors templates", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Fix Template Extraction");
+    expect(output).toContain("missing import");
+    expect(output).toContain("3 similar fixes");
+    expect(output).toContain("Total templates:      1");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 83: TEMPLATES: clean DB shows no templates
+  // ------------------------------------------------------------------
+  it("TEMPLATES: clean DB shows no templates message", () => {
+    makeErrorDb(dbPath);
+
+    const output = runCli("errors templates", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("No fix templates extracted");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 84: CORRELATIONS: errors correlations shows sequential patterns
+  // ------------------------------------------------------------------
+  it("CORRELATIONS: errors correlations shows sequential error patterns", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "corr-1",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Build error",
+      errorCorrelations: [
+        {
+          next_error_type: "test",
+          next_error_title: "Test failure after build",
+          count: 3,
+          first_seen: new Date().toISOString(),
+          last_seen: new Date().toISOString(),
+        },
+      ],
+    });
+    db.close();
+
+    const output = runCli("errors correlations", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Sequential Error Patterns");
+    expect(output).toContain("build → test");
+    expect(output).toContain("3 occurrences");
+    expect(output).toContain("Unique patterns:          1");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 85: CORRELATIONS: clean DB shows no correlations
+  // ------------------------------------------------------------------
+  it("CORRELATIONS: clean DB shows no correlations message", () => {
+    makeErrorDb(dbPath);
+
+    const output = runCli("errors correlations", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("No error correlations detected");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 86: ATTEMPTS: retro shows stubborn errors with high attempt_count
+  // ------------------------------------------------------------------
+  it("ATTEMPTS: retro shows most stubborn errors (3+ attempts)", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "stubborn-1",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Stubborn build error",
+      confidence: 1,
+      attemptCount: 5,
+    });
+    db.close();
+
+    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Most stubborn errors");
+    expect(output).toContain("Stubborn build error");
+    expect(output).toContain("5x");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 87: ATTEMPTS: retro clean DB shows no stubborn errors
+  // ------------------------------------------------------------------
+  it("ATTEMPTS: retro with no stubborn errors does not show stubborn section", () => {
+    makeErrorDb(dbPath);
+
+    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+
+    expect(output).not.toContain("Most stubborn errors");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 88: PLAYBOOKS: errors playbooks shows recovery patterns
+  // ------------------------------------------------------------------
+  it("PLAYBOOKS: errors playbooks shows recovery patterns with steps", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "pb-1",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Build error",
+      resolved: true,
+      fixApplied: "Fixed import",
+      attemptCount: 3,
+      recoveryPattern: {
+        steps: [
+          "1. Identify: Build error",
+          "2. Avoid: missing import",
+          "3. Apply: add import at top",
+          "4. Verify: run build again",
+        ],
+        attempt_count: 3,
+        error_type: "build",
+        extracted_at: new Date().toISOString(),
+      },
+    });
+    db.close();
+
+    const output = runCli("errors playbooks", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Recovery Pattern Library");
+    expect(output).toContain("Build error");
+    expect(output).toContain("1. Identify: Build error");
+    expect(output).toContain("2. Avoid: missing import");
+    expect(output).toContain("3. Apply: add import at top");
+    expect(output).toContain("4. Verify: run build again");
+    expect(output).toContain("Total playbooks:       1");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 89: PLAYBOOKS: clean DB shows no playbooks
+  // ------------------------------------------------------------------
+  it("PLAYBOOKS: clean DB shows no playbooks message", () => {
+    makeErrorDb(dbPath);
+
+    const output = runCli("errors playbooks", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("No recovery playbooks");
   });
 });
