@@ -1938,7 +1938,14 @@ export function hookPreToolUse(dbPath: string): void {
                    AND created_at > datetime('now', '-90 days')
                    ORDER BY CAST(json_extract(metadata, '$.confidence') AS INTEGER) DESC LIMIT 2`,
                 )
-                .all(sessionKey, decParams.includes("dependency") ? "dependency" : "commit") as {
+                .all(
+                  sessionKey,
+                  lowerCmd.includes("npm install") ||
+                    lowerCmd.includes("pip install") ||
+                    lowerCmd.includes("cargo add")
+                    ? "dependency"
+                    : "commit",
+                ) as {
                 title: string;
                 choice: string;
                 rationale: string;

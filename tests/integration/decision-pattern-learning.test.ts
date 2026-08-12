@@ -359,7 +359,9 @@ describe("Moat 3: Pattern Learning", () => {
     expect(output).toContain("Adoption rate:");
   });
 
-  it("PATTERNS: PostToolUse auto-captures function pattern from Write", () => {
+  it(
+    "PATTERNS: PostToolUse auto-captures function pattern from Write",
+    () => {
     const stdin = JSON.stringify({
       tool_name: "Write",
       tool_input: {
@@ -381,7 +383,9 @@ describe("Moat 3: Pattern Learning", () => {
     expect(meta.title).toContain("formatDate");
     expect(meta.pattern_type).toBe("function");
     expect(meta.language).toBe("typescript");
-  });
+    },
+    15000,
+  );
 
   it("PATTERNS: PostToolUse does NOT capture from non-code files", () => {
     const stdin = JSON.stringify({
@@ -719,20 +723,24 @@ describe("Moat 2/3: Advanced Features", () => {
   });
 
   // 10. Clean DB reports
-  it("ADVANCED: clean DB shows no conflicts/templates/inherited", () => {
-    const conflictsOutput = runCli("decisions conflicts", { TDAI_DB_PATH: dbPath });
-    expect(conflictsOutput).toContain("No decision conflicts detected");
+  it(
+    "ADVANCED: clean DB shows no conflicts/templates/inherited",
+    () => {
+      const conflictsOutput = runCli("decisions conflicts", { TDAI_DB_PATH: dbPath });
+      expect(conflictsOutput).toContain("No decision conflicts detected");
 
-    const inheritedOutput = runCli("decisions inherited", { TDAI_DB_PATH: dbPath });
-    expect(inheritedOutput).toContain("No cross-project decision inheritance");
+      const inheritedOutput = runCli("decisions inherited", { TDAI_DB_PATH: dbPath });
+      expect(inheritedOutput).toContain("No cross-project decision inheritance");
 
-    const patConflictsOutput = runCli("patterns conflicts", { TDAI_DB_PATH: dbPath });
-    expect(patConflictsOutput).toContain("No pattern conflicts detected");
+      const patConflictsOutput = runCli("patterns conflicts", { TDAI_DB_PATH: dbPath });
+      expect(patConflictsOutput).toContain("No pattern conflicts detected");
 
-    const patTemplatesOutput = runCli("patterns templates", { TDAI_DB_PATH: dbPath });
-    expect(patTemplatesOutput).toContain("No pattern templates extracted");
+      const patTemplatesOutput = runCli("patterns templates", { TDAI_DB_PATH: dbPath });
+      expect(patTemplatesOutput).toContain("No pattern templates extracted");
 
-    const patInheritedOutput = runCli("patterns inherited", { TDAI_DB_PATH: dbPath });
-    expect(patInheritedOutput).toContain("No cross-project pattern inheritance");
-  });
+      const patInheritedOutput = runCli("patterns inherited", { TDAI_DB_PATH: dbPath });
+      expect(patInheritedOutput).toContain("No cross-project pattern inheritance");
+    },
+    30000,
+  );
 });

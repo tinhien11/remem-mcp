@@ -2858,12 +2858,13 @@ export function decisionsInherited(dbPath: string = defaultDbPath()): void {
     .prepare(
       `SELECT
          json_extract(metadata, '$.choice') as choice,
-         json_extract(metadata, '$.title') as title,
+         MAX(json_extract(metadata, '$.title')) as title,
          json_extract(metadata, '$.decision_type') as dtype,
          COUNT(DISTINCT session_key) as project_count,
          SUM(CAST(json_extract(metadata, '$.confidence') AS INTEGER)) as total_confidence
        FROM captures
        WHERE type = 'decision' AND deleted_at IS NULL
+       AND json_extract(metadata, '$.choice') IS NOT NULL
        GROUP BY json_extract(metadata, '$.choice'), json_extract(metadata, '$.decision_type')
        HAVING project_count > 1
        ORDER BY project_count DESC, total_confidence DESC
@@ -3042,14 +3043,15 @@ export function patternsInherited(dbPath: string = defaultDbPath()): void {
   const inherited = db
     .prepare(
       `SELECT
-         json_extract(metadata, '$.title') as title,
-         json_extract(metadata, '$.pattern_type') as ptype,
+         MAX(json_extract(metadata, '$.title')) as title,
+         MAX(json_extract(metadata, '$.pattern_type')) as ptype,
          json_extract(metadata, '$.language') as language,
          json_extract(metadata, '$.signature') as sig,
          COUNT(DISTINCT session_key) as project_count,
          SUM(CAST(json_extract(metadata, '$.confidence') AS INTEGER)) as total_confidence
        FROM captures
        WHERE type = 'pattern' AND deleted_at IS NULL
+       AND json_extract(metadata, '$.signature') IS NOT NULL
        GROUP BY json_extract(metadata, '$.signature'), json_extract(metadata, '$.language')
        HAVING project_count > 1
        ORDER BY project_count DESC, total_confidence DESC
