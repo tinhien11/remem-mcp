@@ -3,23 +3,17 @@
 [![npm version](https://img.shields.io/npm/v/tdai-memory-mcp.svg)](https://www.npmjs.com/package/tdai-memory-mcp)
 [![GitHub stars](https://img.shields.io/github/stars/tinhien11/tdai-memory-mcp.svg)](https://github.com/tinhien11/tdai-memory-mcp)
 
-> Local-first memory for coding agents. One SQLite file. Three layers: memory, code graph, wiki. Plus an error learning system that captures failures and injects proven fixes.
+> Local-first memory for coding agents. One SQLite file. No API key, no cloud.
 
 ![Bug fix chain](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/handoff-demo.gif)
 
-*3 sessions, 3 React bugs, 1 memory: Session 1 captures the fix → Session 2 starts with it loaded → Session 3 knows both fixes.*
-
 ![Viewer](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/demo.gif)
-
-*Web viewer: Memory + CodeGraph + Wiki in one UI*
 
 ---
 
 ## What this is
 
-A memory server for coding agents. Runs as an MCP server on SQLite. No API key, no cloud.
-
-Three layers in one database:
+A memory server for coding agents. Runs as an MCP server on SQLite.
 
 | Layer | Stores | Example |
 |---|---|---|
@@ -27,258 +21,59 @@ Three layers in one database:
 | **CodeGraph** | Symbols, callers, callees, impact | `useEffect()` is called by 47 components, calls `cleanup()` |
 | **Wiki** | Markdown docs, ADRs, outdated detection | "ADR-007 says use SQLite. 3 files still import Postgres." |
 
-Plus an error learning system that no other memory tool has.
-
 ---
 
-## The error learning system
+## Error learning system
 
-Most memory tools store text. None of them learn from failures. This one does.
-
-### How it works
+When a command fails, it's captured automatically. Next time you run a similar command, the past error and proven fix are injected before it runs.
 
 ```
-Command fails → PostToolUse hook captures it (error type, anti-pattern, root cause)
+Command fails → PostToolUse captures (error type, anti-pattern, root cause, git context)
                                     ↓
-Next time you run a similar command → PreToolUse hook injects the past error
+Similar command → PreToolUse injects past error + proven fix + rollback plan
                                     ↓
-Command succeeds → error upvoted, proven fix recorded
+Command succeeds → error upvoted, fix recorded, provenance tagged
                                     ↓
-Error keeps recurring → downvoted, pruned at confidence=0
+Error recurs → downvoted, escalated, auto-annotated, pruned at confidence=0
 ```
 
-### What it captures
+### Features
 
-Every failed `npm run lint`, `npm run build`, `tsc`, `cargo build`, `pytest` — automatically, with no agent cooperation. The hook fires, extracts the error type, generates an anti-pattern ("don't do X") and a correct approach ("do Y instead"), and stores it.
+All automatic. No user action needed.
 
-### What it injects
-
-Before you run a lint/build/test command, the PreToolUse hook injects the top 2 most relevant past errors (by decayed confidence). The agent sees them before it runs the command, so it can fix the issue proactively.
-
-### Safety gates
-
-Two gates prevent bad fixes from being re-injected:
-
-- **Harm gate** — If a proven fix previously caused a regression (`fix_harm_count > 0`), it is blocked.
-- **A/B validation** — If the fix's success output contained error indicators (`fix_validated = false`), it is blocked. Only clean successes are promoted.
-
-### Semantic matching
-
-Errors are normalized before hashing: line numbers, variable names, and file paths are replaced with placeholders. So `TypeError: x is undefined at line 42` and `TypeError: y is undefined at line 87` are recognized as the same error pattern, not two new errors.
-
-### Confidence decay
-
-Errors decay via Ebbinghaus forgetting curve (`0.95^days`). Old errors fade. Fresh ones rank higher. Errors that recur get downvoted. At confidence=0, they are pruned.
-
-### Cross-project patterns
-
-When the same error type occurs in 2+ projects, you get an alert. Set `TDAI_GLOBAL_ERRORS=1` to inject errors from all your projects, not just the current one.
-
-### Pre-action matchers
-
-Before dangerous commands, the PreToolUse hook warns:
-
-- `git push --force` (with/without branch — different severity)
-- `rm -rf` on critical paths (`/`, `~`, `/home`, `/usr`, `/var`, `/etc`)
-- `DROP TABLE` / `DROP DATABASE` / `TRUNCATE`
-- `DELETE FROM` without `WHERE`
-- `npm publish` (caution level)
-- `docker system prune` / `volume rm`
-- `kubectl delete namespace`
+| Feature | What it does | CLI |
+|---|---|---|
+| **Auto-capture** | Captures failed commands with error type, anti-pattern, root cause | — |
+| **Proven fix injection** | Injects top 2 past fixes before similar commands | — |
+| **Harm gate** | Blocks fixes that previously caused regressions | — |
+| **A/B validation** | Only promotes fixes with clean success output | — |
+| **Semantic matching** | Normalizes line numbers, variables, paths before hashing | — |
+| **Confidence decay** | Ebbinghaus curve (`0.95^days`), prune at 0 | — |
+| **Cross-project patterns** | Alerts when same error occurs in 2+ projects | — |
+| **Pre-action matchers** | Warns before `git push --force`, `rm -rf`, `DROP TABLE`, etc. | — |
+| **Error prediction** | Proactive warning before editing files with error history | — |
+| **Severity classification** | blocker/critical/major/minor, injects blockers first | `errors severity` |
+| **Fix templates** | Extracts generalizable pattern from 3+ similar fixes | `errors templates` |
+| **Error correlations** | Tracks E1→E2 sequences within 10 min | `errors correlations` |
+| **Fix attempt counter** | Tracks stubborn errors (3+ attempts) in retro | — |
+| **Recovery playbooks** | 4-step playbook: identify → avoid → apply → verify | `errors playbooks` |
+| **Fix staleness** | Tags fixes older than 180 days as `[STALE]` | `errors stale` |
+| **Error escalation** | Auto-escalates at 3/5/7 recurrences (ELEVATED/CRITICAL/BLOCKER) | `errors escalations` |
+| **Error context** | Captures git branch, commits, changed files at error time | `errors context` |
+| **Cross-project fix inheritance** | Auto-inherits validated fixes from other projects | `errors inherited` |
+| **Auto-annotation** | System-generated notes: recurrence, severity, drift, validation | — |
+| **Fix rollback plan** | Auto-generates undo instructions (git checkout/revert) | — |
+| **Fix provenance** | Tags: auto_captured / inherited / template_extracted | `errors provenance` |
+| **Session retrospective** | Failure loops, wasted effort, drift, MTBF, scorecard | `errors retro` |
+| **Drift detection** | Detects when injected warnings are ignored | `errors drift` |
+| **Fix lineage chains** | Tracks E1→F1→E2→F2 regression chains | `errors lineage` |
+| **Goal-linked errors** | Tags errors with goal ID | `errors by-goal` |
+| **Action item tracker** | Verified/open/recurring fixes | `errors actions` |
+| **Error dashboard** | Patterns, resolution rate, confidence distribution | `errors` |
 
 ### Observability
 
-```bash
-# Use the explain_recall tool to see why a memory was retrieved:
-# - BM25 score, vector score, RRF fused score, rank
-# - Matched vs missed keywords
-# - With capture_id: why a specific capture was or wasn't retrieved
-```
-
-### Session retrospective
-
-```bash
-npx tdai-memory-mcp errors retro
-```
-
-Analyzes your last 7 days (configurable via `TDAI_RETRO_DAYS`):
-
-- **Failure loops** — same error recurred 3+ times (agent stuck)
-- **Wasted effort** — errors captured but never resolved
-- **Recurred resolved** — "resolved" errors that came back (fix is wrong)
-- **Most expensive commands** — ranked by failure count
-- **Harmful fixes** — blocked by harm gate, don't re-apply
-- **Drift violations** — errors injected as warnings but agent still failed
-- **Fix effectiveness (MTBF)** — most durable fixes (lasted days) vs fragile fixes (recurred within 1 hour)
-- **Scorecard + recommendations**
-
-### Drift detection
-
-```bash
-npx tdai-memory-mcp errors drift
-```
-
-Detects when stored error learnings are NOT being applied. When PreToolUse injects an error warning but the agent still hits the same error, that's a drift violation.
-
-- **Severity**: ● 1 drift, ●● 2 drifts, ●●● 3+ drifts (agent repeatedly ignored warning)
-- **Drift rate**: percentage of errors with drift vs total errors
-- **Effectiveness assessment**: low (<10%), moderate (10-30%), high (>30%)
-- **Scorecard**: total errors, errors with drift, total drift events
-
-This closes the feedback loop: capture → inject → measure if the agent heeded the warning.
-
-### Fix lineage chains
-
-```bash
-npx tdai-memory-mcp errors lineage
-```
-
-Tracks regression chains: when a fix for error E1 causes a new error E2, and the fix for E2 causes E3. Shows the full chain `E1 → F1 → E2 → F2 → E3` with chain depth and cascade assessment.
-
-- **Chain visualization**: E1 → ↓ fix → E2 → ↓ fix → E3
-- **Max chain depth**: deepest regression chain
-- **Cascade assessment**: low (1) / moderate (2-4) / high (5+)
-
-Different from harm gate: harm gate *blocks* harmful fixes from re-injection. Lineage *tracks the history* of what happened.
-
-### Goal-linked errors
-
-```bash
-# Tag errors with a goal ID
-export TDAI_GOAL_ID="auth-feature"
-
-# View error distribution by goal
-npx tdai-memory-mcp errors by-goal
-```
-
-Links errors to the goals they block (LoopX-inspired). When `TDAI_GOAL_ID` is set, all new errors are tagged. The `by-goal` report shows:
-
-- Error count and resolve rate per goal
-- Error types per goal
-- Most error-prone goal
-
-### Action item tracker
-
-```bash
-npx tdai-memory-mcp errors actions
-```
-
-Postmortem action items from resolved errors (SRE pattern):
-
-- **Verified fixes** — clean success, no recurrence (✓)
-- **Open action items** — fix applied but not yet validated (⚠)
-- **Recurring fixes** — fix recurred, needs a stronger approach (✗)
-- **Recommendations** — verify open fixes, replace recurring fixes
-
-### Error prediction (proactive)
-
-```bash
-# Enable predictive warnings before file edits
-export TDAI_PREDICTIVE_ERRORS=1
-```
-
-When enabled, PreToolUse checks if a file being edited (Write/Edit/MultiEdit) has error history. If so, it injects a proactive warning *before* the edit, not after the build fails:
-
-```
-[tdai-memory] File has error history — 2 past error(s) on this file:
-- 2026-08-12 [build] ✓resolved: Missing import
-  Anti-pattern: forgot to import after refactor
-  Correct approach: add import at top of file
-
-Avoid repeating these errors when editing this file.
-```
-
-### Error dashboard
-
-```bash
-npx tdai-memory-mcp errors
-```
-
-Shows: top recurring patterns, resolution rate, confidence distribution, proven fixes, recent errors.
-
-### Severity classification
-
-Errors are classified as `blocker` / `critical` / `major` / `minor` based on command and error output. PreToolUse injects blockers before minor errors.
-
-```bash
-npx tdai-memory-mcp errors severity
-```
-
-### Fix templates
-
-When 3+ similar errors are resolved with overlapping fix text, a generalizable fix template is extracted.
-
-```bash
-npx tdai-memory-mcp errors templates
-```
-
-### Error correlations
-
-Tracks sequential error patterns: when error E1 is followed by E2 within 10 minutes in the same session.
-
-```bash
-npx tdai-memory-mcp errors correlations
-```
-
-### Fix attempt counter
-
-Tracks how many times an error recurred. Errors with 3+ attempts show in retro as "stubborn errors".
-
-### Recovery playbooks
-
-When an error with 2+ attempts is resolved, a structured 4-step playbook is extracted: identify → avoid → apply → verify.
-
-```bash
-npx tdai-memory-mcp errors playbooks
-```
-
-### Fix staleness
-
-When PreToolUse injects a fix older than `TDAI_FIX_STALENESS_DAYS` (default 180), it adds a `[STALE — verify before applying]` tag.
-
-```bash
-npx tdai-memory-mcp errors stale
-```
-
-### Error escalation
-
-When an error recurs `TDAI_ESCALATION_THRESHOLD` times (default 3), it auto-escalates: level 1 (ELEVATED, severity→critical), level 2 (CRITICAL, →blocker), level 3 (BLOCKER). PreToolUse adds stronger warning text at each level.
-
-```bash
-npx tdai-memory-mcp errors escalations
-```
-
-### Error context enrichment
-
-When an error is captured, git context is recorded: branch, last 3 commits, changed files. Helps diagnose regressions and branch-specific issues.
-
-```bash
-npx tdai-memory-mcp errors context
-```
-
-### Cross-project fix inheritance
-
-When PreToolUse can't find 2 proven fixes in the current project, it auto-inherits validated fixes from other projects. Adds `[inherited from another project]` tag.
-
-```bash
-npx tdai-memory-mcp errors inherited
-```
-
-### Auto-annotation
-
-System auto-generates notes based on error state: recurrence count, severity, escalation level, drift count, fix validation status. Notes appear in PreToolUse injection. No user action needed.
-
-### Fix rollback plan
-
-When a fix is recorded, a rollback instruction is auto-generated based on fix type: file edit → `git checkout`, config → `git revert`, dependency → `git checkout package.json`, migration → down migration. Shown in PreToolUse injection.
-
-### Fix provenance chain
-
-Fixes are auto-tagged with provenance: `auto_captured`, `inherited`, `template_extracted`. Shown in PreToolUse injection as `[provenance]` tag.
-
-```bash
-npx tdai-memory-mcp errors provenance
-```
+`explain_recall` tool shows BM25 score, vector score, RRF fused score, matched/missed keywords for any recall.
 
 ---
 
@@ -290,107 +85,13 @@ npx tdai-memory-mcp setup
 
 Auto-detects Claude Code, Devin, Cursor, Codex. Registers MCP server + hooks. Restart your agent.
 
-> **Global install** (faster hooks, no npx delay): `npm install -g tdai-memory-mcp` — postinstall auto-runs setup.
+> **Global install** (faster hooks): `npm install -g tdai-memory-mcp` — postinstall auto-runs setup.
 
 ### Verify
 
 ```bash
 npx tdai-memory-mcp doctor
 ```
-
----
-
-## Use cases
-
-### Bug fix chain — 3 sessions, 3 React bugs, 1 memory
-
-A React project had 3 bugs in the fiber reconciler. Each session fixed one. The next session started with the previous fix already loaded.
-
-**Session 1** — useState batching:
-```
-Bug: setState calls in onClick cause 3 re-renders instead of 1
-     in concurrent mode. Legacy mode batches fine.
-Root cause: ReactFiberBeginWork.ts:842 checks executionContext
-     before batching. Lane priority skips the batch boundary.
-Fix: always batch inside discrete events. 47/47 tests pass.
-```
-
-**Session 2** — useEffect cleanup race:
-```
-Bug: useEffect cleanup runs after the next effect starts.
-     The cleanup aborts a fetch the new effect is waiting on.
-Root cause: ReactFiberHooks.ts passive effect queue runs cleanup
-     AFTER the next effect by default.
-Fix: run cleanup BEFORE the next effect. 23/23 tests pass.
-```
-
-**Session 3** — Suspense fallback flash:
-```
-Bug: Suspense shows fallback for one frame even when data is cached.
-Root cause: ReactFiberBeginWork boundary check does not skip
-     fallback when the thrown promise is already settled.
-Fix: check if promise is resolved before showing fallback. 31/31 tests pass.
-```
-
-**How memory helped:** Session 2 started with the batching fix already loaded. Session 3 knew both fiber fixes, so it looked at Suspense instead of re-investigating hooks.
-
-Without memory: each session reads 500+ lines of `ReactFiberBeginWork.ts` + `ReactFiberHooks.ts` + `ReactFiberThrow.ts` to re-discover the same context.
-
-### Error pattern across projects
-
-```
-Error: SqliteError: no such module: vec0
-First seen: tdai-memory-mcp stats command
-Root cause: readonly DB connection did not load sqlite-vec extension.
-Fix: use openDbWithSchema() instead of new Database(readonly).
-```
-
-When the same `vec0` error appeared in a different project, the agent recalled the fix before debugging. One `recall("vec0")` call. Zero investigation time.
-
-### SessionStart — rules loaded before first message
-
-```
-SessionStart: loaded 2 capture(s)
-- (decision [rule]) Always use recall before grep
-- (decision [rule]) Use codegraph_search for definitions
-```
-
-The agent followed project rules from message one. The user did not repeat them.
-
----
-
-## What makes it different
-
-### Code-aware recall
-
-`recall("useEffect cleanup")` returns:
-
-- The learning: "cleanup runs after the next effect, causing a race"
-- The code: `ReactFiberHooks.ts` passive effect queue ordering
-- The impact: 23 components use this hook, 5 tests cover it
-- The decision: ADR says run cleanup before the next effect
-
-Other tools return the learning. They do not know which function, which callers, or which tests.
-
-### Error learning
-
-When a command fails, the PostToolUse hook captures it. Next time you run a similar command, the PreToolUse hook injects the past error before you hit it again.
-
-- Auto-capture failed commands (exit code != 0)
-- Inject past errors before lint/build/test
-- Confidence upvotes/downvotes prune stale errors
-- Harm gate + A/B validation prevent bad fixes from being re-injected
-- Semantic matching merges similar errors into patterns
-
-### Lifecycle hooks (zero agent cooperation)
-
-- **SessionStart** — injects recent memories before the first message
-- **Stop** — auto-captures the session transcript
-- **SessionEnd** — captures session summary (Claude Code)
-- **PreToolUse** — injects past errors + warns before dangerous commands
-- **PostToolUse** — auto-captures failed commands
-
-The agent does not need to call any tool. Memory just works.
 
 ---
 
@@ -401,29 +102,12 @@ The agent does not need to call any tool. Memory just works.
 | **Code structure** | Tree-sitter, 9 languages | No | No | No |
 | **Callers/callees** | Yes | No | No | No |
 | **Impact analysis** | Yes | No | No | No |
-| **Error learning** | Auto-capture + inject + harm gate + A/B + drift + lineage + MTBF + severity + templates + correlations + playbooks + staleness + escalation + context + inheritance + auto-notes + rollback + provenance | No | No | No |
-| **Pre-action matchers** | Yes (git push --force, rm -rf, DROP TABLE, etc.) | No | No | No |
+| **Error learning** | 27 features (capture, inject, drift, lineage, MTBF, severity, templates, correlations, playbooks, staleness, escalation, context, inheritance, auto-notes, rollback, provenance) | No | No | No |
+| **Pre-action matchers** | Yes (git push --force, rm -rf, DROP TABLE) | No | No | No |
 | **Session retrospective** | Yes (`errors retro`) | No | No | No |
-| **Drift detection** | Yes (`errors drift`) | Partial (`sheal drift`) | No | No |
-| **Fix lineage chains** | Yes (`errors lineage`) | No | No | No |
-| **Fix effectiveness (MTBF)** | Yes (durable vs fragile fixes) | No | No | No |
-| **Goal-linked errors** | Yes (`errors by-goal`) | No | No | No |
-| **Action item tracker** | Yes (`errors actions`) | No | No | No |
-| **Error prediction** | Yes (proactive before file edits) | No | No | No |
-| **Severity classification** | Yes (`errors severity` — blocker/critical/major/minor) | No | No | No |
-| **Fix template extraction** | Yes (`errors templates` — generalizable patterns) | No | No | No |
-| **Error correlation engine** | Yes (`errors correlations` — E1→E2 sequences) | No | No | No |
-| **Fix attempt counter** | Yes (stubborn errors in retro) | No | No | No |
-| **Recovery playbooks** | Yes (`errors playbooks` — step-by-step guidance) | No | No | No |
-| **Fix staleness** | Yes (`errors stale` — warn on outdated fixes) | No | No | No |
-| **Error escalation** | Yes (`errors escalations` — auto-escalate on recurrence) | No | No | No |
-| **Error context enrichment** | Yes (`errors context` — git branch, commits, changed files) | No | No | No |
-| **Cross-project fix inheritance** | Yes (`errors inherited` — auto-suggest fixes from other projects) | No | No | No |
-| **Auto-annotation** | Yes (system-generated notes: recurrence, severity, drift) | No | No | No |
-| **Fix rollback plan** | Yes (auto-generate undo instructions for fixes) | No | No | No |
-| **Fix provenance chain** | Yes (`errors provenance` — auto_captured/inherited/template) | No | No | No |
-| **Observability** | Yes (`explain_recall` tool) | No | No | No |
+| **Drift detection** | Yes (`errors drift`) | Partial | No | No |
 | **Wiki/ADR ingest** | Yes | No | No | No |
+| **Observability** | Yes (`explain_recall`) | No | No | No |
 | **Setup** | `npx setup` | API key + cloud | Built-in | `pip install` |
 | **Data location** | Local SQLite | Cloud | Local markdown | Local SQLite |
 | **API key needed** | No | Yes | No | No |
@@ -505,21 +189,21 @@ npx tdai-memory-mcp export [file]      # Export captures to JSON
 npx tdai-memory-mcp import <file>      # Import captures from JSON
 
 # Error learning
-npx tdai-memory-mcp errors             # Error dashboard (patterns, fixes, resolution rate)
-npx tdai-memory-mcp errors retro       # Session retrospective (failure loops, wasted effort, drift)
-npx tdai-memory-mcp errors drift       # Drift report (injected errors that still occurred)
-npx tdai-memory-mcp errors lineage     # Fix lineage chains (E1→F1→E2→F2 regression graph)
-npx tdai-memory-mcp errors by-goal     # Error distribution by goal (set TDAI_GOAL_ID)
-npx tdai-memory-mcp errors actions     # Action items from resolved errors (verified, open, recurring)
-npx tdai-memory-mcp errors severity    # Severity distribution (blocker/critical/major/minor)
-npx tdai-memory-mcp errors templates   # Fix templates extracted from 3+ similar resolved errors
-npx tdai-memory-mcp errors correlations # Sequential error patterns (E1→E2 within 10 min)
-npx tdai-memory-mcp errors playbooks   # Recovery playbooks (step-by-step guidance)
-npx tdai-memory-mcp errors stale       # Fix staleness report (fixes older than threshold)
-npx tdai-memory-mcp errors escalations # Auto-escalated errors (recurred 3+ times)
-npx tdai-memory-mcp errors context     # Error context enrichment (git branch, commits, changed files)
-npx tdai-memory-mcp errors inherited   # Cross-project fix inheritance report
-npx tdai-memory-mcp errors provenance  # Fix provenance chain (auto_captured, inherited, etc.)
+npx tdai-memory-mcp errors             # Error dashboard
+npx tdai-memory-mcp errors retro       # Session retrospective
+npx tdai-memory-mcp errors drift       # Drift report
+npx tdai-memory-mcp errors lineage     # Fix lineage chains
+npx tdai-memory-mcp errors by-goal     # Error distribution by goal
+npx tdai-memory-mcp errors actions     # Action items from resolved errors
+npx tdai-memory-mcp errors severity    # Severity distribution
+npx tdai-memory-mcp errors templates   # Fix templates
+npx tdai-memory-mcp errors correlations # Sequential error patterns
+npx tdai-memory-mcp errors playbooks   # Recovery playbooks
+npx tdai-memory-mcp errors stale       # Fix staleness report
+npx tdai-memory-mcp errors escalations # Auto-escalated errors
+npx tdai-memory-mcp errors context     # Error context (git branch, commits)
+npx tdai-memory-mcp errors inherited   # Cross-project fix inheritance
+npx tdai-memory-mcp errors provenance  # Fix provenance chain
 
 # CodeGraph (opt-in: set TDAI_ENABLE_ADVANCED=1)
 npx tdai-memory-mcp index --path src --repo .          # Index code (Tree-sitter, 9 languages)
@@ -535,12 +219,6 @@ npx tdai-memory-mcp wiki search <query>                # Search wiki pages
 npx tdai-memory-mcp wiki outdated [--repo .]           # Find outdated wiki pages
 ```
 
-### Core vs advanced tools
-
-By default, 10 core tools are exposed: `recall` `capture` `search` `explain_recall` `forget` `resolve` `handoff` `adr` `update` `consolidate`.
-
-Set `TDAI_ENABLE_ADVANCED=1` to enable CodeGraph + Wiki + Knowledge tools (17 extra tools).
-
 ---
 
 ## MCP tools
@@ -555,6 +233,20 @@ Set `TDAI_ENABLE_ADVANCED=1` to enable CodeGraph + Wiki + Knowledge tools (17 ex
 
 **Skill:** `skill_get` `skill_list` `skill_search`
 
+Set `TDAI_ENABLE_ADVANCED=1` to enable CodeGraph + Wiki + Knowledge tools (17 extra tools).
+
+---
+
+## Lifecycle hooks
+
+All automatic. The agent does not need to call any tool.
+
+- **SessionStart** — injects recent memories before the first message
+- **Stop** — auto-captures the session transcript
+- **SessionEnd** — captures session summary (Claude Code)
+- **PreToolUse** — injects past errors + warns before dangerous commands
+- **PostToolUse** — auto-captures failed commands
+
 ---
 
 ## Configuration
@@ -568,7 +260,9 @@ All settings have defaults. Config file is optional. Path: `~/.config/tdai-memor
 | Global errors | `TDAI_GLOBAL_ERRORS` | _(unset)_ | Set to `1` to inject errors from all projects |
 | Retro window | `TDAI_RETRO_DAYS` | `7` | Days to analyze in `errors retro` |
 | Goal ID | `TDAI_GOAL_ID` | _(unset)_ | Tag new errors with a goal ID |
-| Predictive errors | `TDAI_PREDICTIVE_ERRORS` | _(unset)_ | Set to `1` to inject warnings before editing files with error history |
+| Predictive errors | `TDAI_PREDICTIVE_ERRORS` | _(unset)_ | Set to `1` for proactive file-edit warnings |
+| Fix staleness | `TDAI_FIX_STALENESS_DAYS` | `180` | Days before a fix is tagged `[STALE]` |
+| Escalation threshold | `TDAI_ESCALATION_THRESHOLD` | `3` | Recurrences before auto-escalation |
 | Advanced tools | `TDAI_ENABLE_ADVANCED` | _(unset)_ | Set to `1` to enable CodeGraph + Wiki |
 | LLM key | `TDAI_LLM_API_KEY` | _(unset)_ | LLM API key for pipeline features |
 | LLM URL | `TDAI_LLM_BASE_URL` | `https://api.openai.com/v1` | LLM endpoint |
