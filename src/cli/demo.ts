@@ -1,11 +1,11 @@
-import { spawn, execSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { execSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
-import { createHash } from "node:crypto";
 
 // ── ANSI ──
 const C = {
@@ -64,7 +64,8 @@ async function panel(title: string, lines: string[], color = C.yellow): Promise<
   line(`  ${color}┌${titleLine}${titleDashes}┐${C.reset}`);
   await sleep(200);
   for (const l of lines) {
-    const stripped = l.replace(/\x1b\[[0-9;]*m/g, "");
+    const ESC = String.fromCharCode(27);
+    const stripped = l.replace(new RegExp(`${ESC}\\[[0-9;]*m`, "g"), "");
     const contentPad = " ".repeat(Math.max(0, innerW - stripped.length - 1));
     line(`  ${color}│${C.reset} ${l}${contentPad}${color}│${C.reset}`);
     await sleep(250);
@@ -141,9 +142,17 @@ async function runHook(
 }
 
 /** Run a REAL command and capture stdout/stderr/exit_code. */
-function runCommand(cmd: string, cwd: string): { stdout: string; stderr: string; exitCode: number } {
+function runCommand(
+  cmd: string,
+  cwd: string,
+): { stdout: string; stderr: string; exitCode: number } {
   try {
-    const stdout = execSync(cmd, { cwd, encoding: "utf-8", timeout: 30000, stdio: ["pipe", "pipe", "pipe"] });
+    const stdout = execSync(cmd, {
+      cwd,
+      encoding: "utf-8",
+      timeout: 30000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     return { stdout: stdout.trim(), stderr: "", exitCode: 0 };
   } catch (e: any) {
     return {
@@ -155,7 +164,10 @@ function runCommand(cmd: string, cwd: string): { stdout: string; stderr: string;
 }
 
 /** Show terminal prompt + real command output. */
-async function showCommand(cmd: string, cwd: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+async function showCommand(
+  cmd: string,
+  cwd: string,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   await prompt(cmd);
   await sleep(300);
   const result = runCommand(cmd, cwd);
@@ -201,13 +213,14 @@ function createRealProject(dir: string, withError: boolean): void {
     );
   } else {
     // Fixed version — no missing import
-    writeFileSync(
-      join(dir, "src", "index.ts"),
-      `const foo = "hello";\n\nconsole.log(foo);\n`,
-    );
+    writeFileSync(join(dir, "src", "index.ts"), `const foo = "hello";\n\nconsole.log(foo);\n`);
   }
   // Install typescript
-  execSync("npm install --silent 2>&1", { cwd: dir, timeout: 60000, stdio: ["pipe", "pipe", "pipe"] });
+  execSync("npm install --silent 2>&1", {
+    cwd: dir,
+    timeout: 60000,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
 }
 
 /**
@@ -264,8 +277,8 @@ export async function demo(): Promise<void> {
 
   // Create real projects with real TS errors
   line(`  ${C.gray}Setting up real test projects...${C.reset}`);
-  createRealProject(projectA, true);   // with TS2307 error
-  createRealProject(projectB, true);   // with TS2307 error
+  createRealProject(projectA, true); // with TS2307 error
+  createRealProject(projectB, true); // with TS2307 error
   line(`  ${C.gray}Done.${C.reset}`);
   await sleep(500);
 
@@ -367,10 +380,7 @@ export async function demo(): Promise<void> {
   // Agent fixes the error — REAL fix (overwrite the file)
   line(`  ${C.gray}Agent fixes the error...${C.reset}`);
   await sleep(1000);
-  writeFileSync(
-    join(projectA, "src", "index.ts"),
-    `const foo = "hello";\n\nconsole.log(foo);\n`,
-  );
+  writeFileSync(join(projectA, "src", "index.ts"), `const foo = "hello";\n\nconsole.log(foo);\n`);
   await sleep(500);
 
   // REAL npm run build → REAL success
@@ -410,8 +420,10 @@ export async function demo(): Promise<void> {
   if (updated1) {
     const meta = JSON.parse(updated1.metadata);
     const conf = meta.confidence ?? 2;
-    const resolved = meta.resolved ? true : false;
-    line(`  ${C.green}✓${C.reset} confidence: ${C.gray}${conf - 1} → ${conf}${C.reset}  ${C.gray}resolved=${resolved}${C.reset}`);
+    const resolved = !!meta.resolved;
+    line(
+      `  ${C.green}✓${C.reset} confidence: ${C.gray}${conf - 1} → ${conf}${C.reset}  ${C.gray}resolved=${resolved}${C.reset}`,
+    );
   }
   verifyDb1.close();
   line();
@@ -450,9 +462,7 @@ export async function demo(): Promise<void> {
   );
 
   const injectedContext =
-    preResult?.hookSpecificOutput?.additionalContext ??
-    preResult?.additionalContext ??
-    null;
+    preResult?.hookSpecificOutput?.additionalContext ?? preResult?.additionalContext ?? null;
 
   if (injectedContext) {
     const injectLines = String(injectedContext).split("\n").filter(Boolean).slice(0, 4);
@@ -505,8 +515,10 @@ export async function demo(): Promise<void> {
   if (updated) {
     const meta = JSON.parse(updated.metadata);
     const conf = meta.confidence ?? 2;
-    const resolved = meta.resolved ? true : false;
-    line(`  ${C.green}✓${C.reset} confidence: ${C.gray}${conf - 1} → ${conf}${C.reset}  ${C.gray}resolved=${resolved}${C.reset}`);
+    const resolved = !!meta.resolved;
+    line(
+      `  ${C.green}✓${C.reset} confidence: ${C.gray}${conf - 1} → ${conf}${C.reset}  ${C.gray}resolved=${resolved}${C.reset}`,
+    );
   }
   verifyDb.close();
   line();
@@ -538,9 +550,7 @@ export async function demo(): Promise<void> {
   );
 
   const injected3 =
-    preResult3?.hookSpecificOutput?.additionalContext ??
-    preResult3?.additionalContext ??
-    null;
+    preResult3?.hookSpecificOutput?.additionalContext ?? preResult3?.additionalContext ?? null;
 
   if (injected3) {
     const injectLines = String(injected3).split("\n").filter(Boolean).slice(0, 4);
@@ -589,9 +599,7 @@ export async function demo(): Promise<void> {
   );
 
   const injectedB =
-    preResultB?.hookSpecificOutput?.additionalContext ??
-    preResultB?.additionalContext ??
-    null;
+    preResultB?.hookSpecificOutput?.additionalContext ?? preResultB?.additionalContext ?? null;
 
   if (injectedB) {
     const injectLines = String(injectedB).split("\n").filter(Boolean).slice(0, 4);
@@ -605,10 +613,7 @@ export async function demo(): Promise<void> {
     line(`  ${C.gray}Agent applies the inherited fix...${C.reset}`);
     await sleep(800);
     // REAL fix on project B
-    writeFileSync(
-      join(projectB, "src", "index.ts"),
-      `const foo = "hello";\n\nconsole.log(foo);\n`,
-    );
+    writeFileSync(join(projectB, "src", "index.ts"), `const foo = "hello";\n\nconsole.log(foo);\n`);
     await sleep(500);
     // REAL build on project B — now passes
     await showCommand("npm run build", projectB);
