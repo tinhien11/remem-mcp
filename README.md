@@ -121,22 +121,21 @@ SessionStart: loaded 2 capture(s)
 
 Other tools return the learning. They do not know which function, which callers, or which tests.
 
-### 2. Error learning with confidence
+### 2. Error learning
 
 When a command fails, tdai-memory-mcp captures it. Next time you run a similar command, it injects the past error before you hit it again.
 
-- `PreToolUseFailure` hook auto-captures failed commands
+- `PostToolUse` hook auto-captures failed commands (exit code != 0)
 - `PreToolUse` hook injects past errors before lint/build/test
 - Confidence upvotes/downvotes prune stale errors
-- Cross-project: the same error in 3 projects triggers a pattern alert
 
-### 3. Architecture drift detection
+### 3. Architecture drift detection (planned)
 
-The Wiki layer indexes your ADRs and design docs. The CodeGraph layer indexes your imports. When they disagree, you get:
+The Wiki layer indexes your ADRs and design docs. The CodeGraph layer indexes your imports. The goal: when they disagree, you get:
 
 > "ADR-007 says use SQLite. 3 files still import Postgres: `db.ts`, `migrate.ts`, `seed.ts`."
 
-No other tool connects decisions to the code that follows (or breaks) them.
+Both layers exist today. The cross-layer check is on the roadmap.
 
 ### 4. Lifecycle hooks (zero agent cooperation)
 
@@ -144,7 +143,7 @@ No other tool connects decisions to the code that follows (or breaks) them.
 - **Stop** — auto-captures the session transcript
 - **SessionEnd** — captures session summary (Claude Code)
 - **PreToolUse** — injects past errors before risky commands
-- **PostToolUseFailure** — auto-captures failed commands
+- **PostToolUse** — auto-captures failed commands
 
 The agent does not need to call any tool. Memory just works.
 
@@ -158,7 +157,7 @@ The agent does not need to call any tool. Memory just works.
 | **Callers/callees** | Yes | No | No | No | No |
 | **Impact analysis** | Yes | No | No | No | No |
 | **Error learning** | Auto-capture + inject | No | No | No | No |
-| **Wiki/ADR ingest** | Yes + drift detection | No | No | No | No |
+| **Wiki/ADR ingest** | Yes (drift detection: planned) | No | No | No | No |
 | **Setup** | `npx setup` | API key + cloud | Built-in | `pip install` | Plugin install |
 | **Data location** | Local SQLite | Cloud | Local markdown | Local SQLite | Local SQLite |
 | **API key needed** | No | Yes | No | No | No |
