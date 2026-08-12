@@ -7,7 +7,7 @@
 
 Local memory that learns from every error — and syncs to your git repo so your whole team shares it.
 
-![Demo](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/handoff-demo.gif)
+![Demo](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/demo-learning-loop.gif)
 
 ---
 
@@ -20,9 +20,11 @@ npx tdai-memory-mcp setup
 That's it. Auto-detects Claude Code, Cursor, Devin, Codex. Registers MCP server + hooks. Restart your agent.
 
 ```bash
-npx tdai-memory-mcp demo     # See the learning loop work in 30s
+npx tdai-memory-mcp demo     # Live demo: real build, real errors, real hooks
 npx tdai-memory-mcp status   # One dashboard: everything at a glance
 ```
+
+The demo creates a real TypeScript project, runs real `npm run build`, captures real TS2307 errors, and shows the full learning loop — capture → inject → fix → upvote → cross-project inheritance. No hardcoded strings.
 
 ---
 
