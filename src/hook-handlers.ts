@@ -211,8 +211,9 @@ export function hookStop(dbPath?: string): void {
 
       if (tpath && existsSync(tpath)) {
         // Claude Code: transcript is already available — capture now
-        const capId = captureSessionTranscript(dbPath, sid, tpath);
-        logToFile(`Stop: direct capture for session ${sid}, id=${capId ?? "skipped"}`);
+        void captureSessionTranscript(dbPath, sid, tpath).then((capId) => {
+          logToFile(`Stop: direct capture for session ${sid}, id=${capId ?? "skipped"}`);
+        });
       } else {
         // Devin CLI: transcript not yet written — spawn background waiter
         const scriptPath = process.argv[1];
@@ -767,11 +768,11 @@ function generateId(): string {
  * Supports Devin CLI (single JSON with steps) and Claude Code (JSONL) formats.
  * Returns the capture ID, or null if skipped (trivial, duplicate, or no transcript).
  */
-function captureSessionTranscript(
+async function captureSessionTranscript(
   dbPath: string,
   sessionId?: string,
   transcriptPath?: string | null,
-): string | null {
+): Promise<string | null> {
   const sid = sessionId ?? "unknown";
 
   if (!transcriptPath && !sessionId) {
@@ -805,7 +806,10 @@ function captureSessionTranscript(
       if (step.source === "user" && typeof step.message === "string") {
         if (
           !step.message.startsWith("[tdai-memory]") &&
-          !step.message.startsWith("Code was changed")
+          !step.message.startsWith("Code was changed") &&
+          !step.message.startsWith("<!-- ") &&
+          !step.message.startsWith("# LoopX") &&
+          !step.message.includes("loopx-managed-slash-command")
         ) {
           userMessages.push(step.message);
         }
@@ -846,6 +850,13 @@ function captureSessionTranscript(
 
         if (!text.trim()) continue;
         if (text.startsWith("[tdai-memory]") || text.startsWith("Code was changed")) continue;
+        // Skip skill/system injections (LoopX, agent rules, etc.)
+        if (
+          text.startsWith("<!-- ") ||
+          text.startsWith("# LoopX") ||
+          text.includes("loopx-managed-slash-command")
+        )
+          continue;
 
         if (role === "user") {
           userMessages.push(text);
@@ -858,9 +869,17 @@ function captureSessionTranscript(
     }
   }
 
-  // Skip trivial sessions
-  if (userMessages.length <= 1 && assistantMessages.length === 0) {
-    logToFile(`Stop: trivial session (${userMessages.length} user msgs), skipping auto-capture`);
+  // Skip trivial sessions: no assistant response, or very short probe messages
+  const totalUserChars = userMessages.reduce((sum, m) => sum + m.length, 0);
+  const totalAssistantChars = assistantMessages.reduce((sum, m) => sum + m.length, 0);
+  const totalChars = totalUserChars + totalAssistantChars;
+  const isTrivial =
+    (userMessages.length <= 2 && assistantMessages.length === 0) ||
+    (userMessages.length <= 2 && totalChars < 10);
+  if (isTrivial) {
+    logToFile(
+      `Stop: trivial session (${userMessages.length} user msgs, ${totalChars} chars total), skipping auto-capture`,
+    );
     return null;
   }
 
@@ -923,6 +942,24 @@ function captureSessionTranscript(
     }),
   );
 
+  // Generate embedding for vector search (best-effort, non-blocking)
+  try {
+    sqliteVec.load(db);
+    const { LocalEmbedder } =
+      require("./embedding/local.js") as typeof import("./embedding/local.js");
+    const embedder = new LocalEmbedder();
+    const embedding = await embedder.embed(content);
+    if (embedding) {
+      const buffer = new Float32Array(embedding);
+      db.prepare("INSERT INTO captures_vec (id, embedding) VALUES (?, ?)").run(
+        id,
+        Buffer.from(buffer.buffer),
+      );
+    }
+  } catch (embedErr) {
+    logToFile(`Stop: embedding failed for ${id}: ${embedErr}`);
+  }
+
   db.close();
 
   logToFile(
@@ -954,11 +991,18 @@ export function hookSessionEnd(dbPath: string): void {
       const sessionId = input.session_id ?? "unknown";
       const transcriptPath = input.transcript_path ?? null;
 
-      const id = captureSessionTranscript(dbPath, sessionId, transcriptPath);
-      if (id) {
-        logToFile(`SessionEnd: captured via shared function. id=${id}`);
-      }
-      process.stdout.write(JSON.stringify({}));
+      captureSessionTranscript(dbPath, sessionId, transcriptPath)
+        .then((id) => {
+          if (id) {
+            logToFile(`SessionEnd: captured via shared function. id=${id}`);
+          }
+        })
+        .catch((err) => {
+          logToFile(`SessionEnd: capture error - ${err}`);
+        })
+        .finally(() => {
+          process.stdout.write(JSON.stringify({}));
+        });
     } catch (err) {
       process.stderr.write(`[tdai-memory hook-session-end] Error: ${err}\n`);
       logToFile(`SessionEnd: error - ${err}`);
@@ -1006,7 +1050,7 @@ export async function waitAndCapture(
   }
 
   try {
-    const id = captureSessionTranscript(dbPath, sessionId, transcriptPath);
+    const id = await captureSessionTranscript(dbPath, sessionId, transcriptPath);
     if (id) {
       logToFile(`Stop: background capture succeeded. id=${id}`);
     }
