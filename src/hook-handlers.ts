@@ -378,6 +378,7 @@ export function hookPostToolUse(dbPath: string): void {
           meta.resolved_at = new Date().toISOString();
           meta.resolution = "Command succeeded after previous failure";
           meta.confidence = confidence;
+
           // [Feature 9] Record the fix that worked — extract from stdout (success output)
           // This becomes the "proven fix" injected by PreToolUse for similar future errors
           const successSummary = (stdout || "").trim().slice(0, 200);
@@ -386,14 +387,34 @@ export function hookPostToolUse(dbPath: string): void {
           } else {
             meta.fix_applied = meta.correct_approach ?? "Command succeeded after fix.";
           }
+
+          // [P0: A/B validation] Validate the fix — check if stdout contains
+          // error indicators (agent-learn pattern: only promote if proven)
+          // A "clean" success has no error keywords in stdout.
+          const lowerStdout = (stdout || "").toLowerCase();
+          const hasErrorIndicators = /\b(errors?|failed|failure|exception|traceback|fatal)\b/.test(
+            lowerStdout,
+          );
+          meta.fix_validated = !hasErrorIndicators;
+          if (hasErrorIndicators) {
+            logToFile(
+              `PostToolUse: fix recorded but UNVALIDATED (stdout contains error indicators) for ${prevError.id}`,
+            );
+          }
+
           db.prepare("UPDATE captures SET metadata = ? WHERE id = ?").run(
             JSON.stringify(meta),
             prevError.id,
           );
           logToFile(
-            `PostToolUse: success correlation — upvoted error ${prevError.id} (confidence=${confidence}, fix recorded)`,
+            `PostToolUse: success correlation — upvoted error ${prevError.id} (confidence=${confidence}, fix recorded, validated=${meta.fix_validated})`,
           );
         }
+
+        // [P0: Harm gate] Check if a previously resolved error's command
+        // is NOW failing again — this means the "proven fix" caused a regression.
+        // Mark the original resolved error with harm_count to prevent re-injection.
+        // (errlore pattern: withhold harmful lessons)
 
         db.close();
         process.stdout.write(JSON.stringify({}));
@@ -456,6 +477,33 @@ export function hookPostToolUse(dbPath: string): void {
             logToFile(`PostToolUse: pruned error ${recent.id} (confidence reached 0)`);
           }
         }
+
+        // [P0: Harm gate] If this recurring error was previously resolved,
+        // the "proven fix" caused a regression. Mark it as harmful.
+        // (errlore pattern: withhold harmful lessons)
+        const prevResolved = db
+          .prepare(
+            `SELECT id, metadata FROM captures
+             WHERE type = 'error' AND session_key = ?
+             AND created_at > datetime('now', '-30 days')
+             AND json_extract(metadata, '$.resolved') = 1
+             AND json_extract(metadata, '$.fix_applied') IS NOT NULL
+             AND json_extract(metadata, '$.command') = ?
+             ORDER BY created_at DESC LIMIT 1`,
+          )
+          .get(sessionKey, command.slice(0, 200)) as { id: string; metadata: string } | undefined;
+        if (prevResolved) {
+          const rMeta = JSON.parse(prevResolved.metadata);
+          rMeta.fix_harm_count = (rMeta.fix_harm_count ?? 0) + 1;
+          db.prepare("UPDATE captures SET metadata = ? WHERE id = ?").run(
+            JSON.stringify(rMeta),
+            prevResolved.id,
+          );
+          logToFile(
+            `PostToolUse: HARM GATE — proven fix for ${prevResolved.id} caused regression (harm_count=${rMeta.fix_harm_count})`,
+          );
+        }
+
         db.close();
         process.stdout.write(JSON.stringify({}));
         return;
@@ -608,6 +656,8 @@ export function hookPreToolUse(dbPath: string): void {
       // [Feature 9] Error-to-fix linking — fetch RESOLVED errors with fixes
       // This runs BEFORE the unresolved errors check so proven fixes are
       // injected even when there are no unresolved errors to warn about.
+      // [P0: Harm gate] Skip fixes with fix_harm_count > 0 (caused regression)
+      // [P0: A/B validation] Skip unvalidated fixes (stdout had error indicators)
       let resolvedFixes: { title: string; fix: string; date: string }[] = [];
       try {
         const rDb = new Database(dbPath, { readonly: true });
@@ -618,6 +668,10 @@ export function hookPreToolUse(dbPath: string): void {
              AND deleted_at IS NULL
              AND json_extract(metadata, '$.resolved') = 1
              AND json_extract(metadata, '$.fix_applied') IS NOT NULL
+             AND (json_extract(metadata, '$.fix_harm_count') IS NULL
+                  OR CAST(json_extract(metadata, '$.fix_harm_count') AS INTEGER) = 0)
+             AND (json_extract(metadata, '$.fix_validated') IS NULL
+                  OR json_extract(metadata, '$.fix_validated') = 1)
              ORDER BY created_at DESC LIMIT 2`,
           )
           .all(...params) as { content: string; metadata: string; created_at: string }[];
@@ -834,6 +888,15 @@ function classifyError(command: string, errorOutput: string): string {
     lower.includes("pytest")
   )
     return "test";
+  // Check for JS runtime errors first (TypeError, ReferenceError, etc.)
+  // before typecheck to avoid misclassification
+  if (
+    lower.includes("typeerror") ||
+    lower.includes("referenceerror") ||
+    lower.includes("syntaxerror") ||
+    lower.includes("rangeerror")
+  )
+    return "runtime";
   if (lower.includes("type") && (lower.includes("error") || lower.includes("tsc")))
     return "typecheck";
   if (lower.includes("build") || lower.includes("compile") || lower.includes("webpack"))
