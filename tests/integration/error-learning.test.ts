@@ -107,6 +107,8 @@ function insertError(
     fixTemplate?: { pattern: string; similar_fix_count: number; error_type: string; extracted_at: string };
     errorCorrelations?: { next_error_type: string; next_error_title: string; count: number; first_seen: string; last_seen: string }[];
     recoveryPattern?: { steps: string[]; attempt_count: number; error_type: string; extracted_at: string };
+    escalationLevel?: number;
+    escalatedAt?: string;
   },
 ): void {
   const meta = {
@@ -135,6 +137,8 @@ function insertError(
     ...(opts.fixTemplate ? { fix_template: opts.fixTemplate } : {}),
     ...(opts.errorCorrelations ? { error_correlations: opts.errorCorrelations } : {}),
     ...(opts.recoveryPattern ? { recovery_pattern: opts.recoveryPattern } : {}),
+    ...(opts.escalationLevel !== undefined ? { escalation_level: opts.escalationLevel } : {}),
+    ...(opts.escalatedAt ? { escalated_at: opts.escalatedAt } : {}),
   };
 
   const content = opts.content ?? `Command failed: ${opts.command}\nError (${opts.errorType}): something went wrong`;
@@ -3238,5 +3242,241 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     const output = runCli("errors playbooks", { TDAI_DB_PATH: dbPath });
 
     expect(output).toContain("No recovery playbooks");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 90: STALE: errors stale shows old fixes
+  // ------------------------------------------------------------------
+  it("STALE: errors stale shows fixes older than threshold", () => {
+    const db = makeErrorDb(dbPath);
+
+    // Insert a resolved fix from 200 days ago
+    const oldDate = new Date(Date.now() - 200 * 86400000).toISOString();
+    insertError(db, {
+      id: "stale-1",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Old build fix",
+      resolved: true,
+      fixApplied: "Added missing import",
+      fixValidated: true,
+      resolvedAt: oldDate,
+    });
+    db.close();
+
+    const output = runCli("errors stale", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Fix Staleness Report");
+    expect(output).toContain("Old build fix");
+    expect(output).toContain("Stale fixes:    1");
+    expect(output).toContain("200d old");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 91: STALE: clean DB shows no stale fixes
+  // ------------------------------------------------------------------
+  it("STALE: clean DB shows no stale fixes message", () => {
+    makeErrorDb(dbPath);
+
+    const output = runCli("errors stale", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("No stale fixes found");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 92: STALE: TDAI_FIX_STALENESS_DAYS changes threshold
+  // ------------------------------------------------------------------
+  it("STALE: TDAI_FIX_STALENESS_DAYS=10 makes 30-day-old fix stale", () => {
+    const db = makeErrorDb(dbPath);
+
+    // Insert a resolved fix from 30 days ago
+    const oldDate = new Date(Date.now() - 30 * 86400000).toISOString();
+    insertError(db, {
+      id: "stale-2",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "30-day-old fix",
+      resolved: true,
+      fixApplied: "Fixed config",
+      fixValidated: true,
+      resolvedAt: oldDate,
+    });
+    db.close();
+
+    // With threshold=10, 30-day-old fix is stale
+    const output = runCli("errors stale", {
+      TDAI_DB_PATH: dbPath,
+      TDAI_FIX_STALENESS_DAYS: "10",
+    });
+
+    expect(output).toContain("Staleness threshold: 10 days");
+    expect(output).toContain("30-day-old fix");
+    expect(output).toContain("Stale fixes:    1");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 93: STALE: PreToolUse adds [STALE] tag for old fixes
+  // ------------------------------------------------------------------
+  it("STALE: PreToolUse adds [STALE] tag when injecting old proven fix", () => {
+    const db = makeErrorDb(dbPath);
+    const hashPath = (p: string) => createHash("sha256").update(p).digest("hex").slice(0, 16);
+    const sk = hashPath(tmpDir);
+
+    // Insert a resolved error with fix from 200 days ago
+    const oldDate = new Date(Date.now() - 200 * 86400000).toISOString();
+    insertError(db, {
+      id: "stale-fix-1",
+      sessionKey: sk,
+      errorType: "build",
+      command: "npm run build",
+      title: "Old build error",
+      resolved: true,
+      fixApplied: "Added missing import",
+      fixValidated: true,
+      resolvedAt: oldDate,
+      contentHash: "stalefixhash1",
+    });
+    db.close();
+
+    const stdin = JSON.stringify({
+      tool_name: "Bash",
+      tool_input: { command: "npm run build" },
+      cwd: tmpDir,
+    });
+    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const parsed = JSON.parse(output);
+    const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
+
+    expect(ctx).toContain("Proven fixes");
+    expect(ctx).toContain("[STALE");
+    expect(ctx).toContain("verify before applying");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 94: ESCALATION: errors escalations shows escalated errors
+  // ------------------------------------------------------------------
+  it("ESCALATION: errors escalations shows escalated errors by level", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "esc-1",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Stubborn build error",
+      attemptCount: 5,
+      escalationLevel: 2,
+      escalatedAt: new Date().toISOString(),
+      severity: "blocker",
+    });
+    insertError(db, {
+      id: "esc-2",
+      sessionKey: "proj-a",
+      errorType: "test",
+      command: "npm test",
+      title: "Recurring test error",
+      attemptCount: 3,
+      escalationLevel: 1,
+      escalatedAt: new Date().toISOString(),
+      severity: "critical",
+    });
+    db.close();
+
+    const output = runCli("errors escalations", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Escalation Policy Report");
+    expect(output).toContain("Stubborn build error");
+    expect(output).toContain("[CRITICAL]");
+    expect(output).toContain("Recurring test error");
+    expect(output).toContain("[ELEVATED]");
+    expect(output).toContain("Total escalated:   2");
+    expect(output).toContain("Level 1 (ELEVATED): 1");
+    expect(output).toContain("Level 2 (CRITICAL): 1");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 95: ESCALATION: clean DB shows no escalations
+  // ------------------------------------------------------------------
+  it("ESCALATION: clean DB shows no escalations message", () => {
+    makeErrorDb(dbPath);
+
+    const output = runCli("errors escalations", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("No escalated errors");
+    expect(output).toContain("Level 1 (ELEVATED): 3+ attempts");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 96: ESCALATION: PreToolUse shows ELEVATED tag for level 1
+  // ------------------------------------------------------------------
+  it("ESCALATION: PreToolUse shows ELEVATED tag for escalated error", () => {
+    const db = makeErrorDb(dbPath);
+    const hashPath = (p: string) => createHash("sha256").update(p).digest("hex").slice(0, 16);
+    const sk = hashPath(tmpDir);
+
+    insertError(db, {
+      id: "esc-inject-1",
+      sessionKey: sk,
+      errorType: "build",
+      command: "npm run build",
+      title: "Escalated build error",
+      confidence: 3,
+      attemptCount: 4,
+      escalationLevel: 1,
+      escalatedAt: new Date().toISOString(),
+      severity: "critical",
+    });
+    db.close();
+
+    const stdin = JSON.stringify({
+      tool_name: "Bash",
+      tool_input: { command: "npm run build" },
+      cwd: tmpDir,
+    });
+    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const parsed = JSON.parse(output);
+    const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
+
+    expect(ctx).toContain("Escalated build error");
+    expect(ctx).toContain("[ELEVATED");
+    expect(ctx).toContain("recurred 3+ times");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 97: ESCALATION: PreToolUse shows BLOCKER tag for level 3
+  // ------------------------------------------------------------------
+  it("ESCALATION: PreToolUse shows BLOCKER tag for level 3 escalation", () => {
+    const db = makeErrorDb(dbPath);
+    const hashPath = (p: string) => createHash("sha256").update(p).digest("hex").slice(0, 16);
+    const sk = hashPath(tmpDir);
+
+    insertError(db, {
+      id: "esc-inject-3",
+      sessionKey: sk,
+      errorType: "build",
+      command: "npm run build",
+      title: "Very stubborn error",
+      confidence: 1,
+      attemptCount: 8,
+      escalationLevel: 3,
+      escalatedAt: new Date().toISOString(),
+      severity: "blocker",
+    });
+    db.close();
+
+    const stdin = JSON.stringify({
+      tool_name: "Bash",
+      tool_input: { command: "npm run build" },
+      cwd: tmpDir,
+    });
+    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const parsed = JSON.parse(output);
+    const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
+
+    expect(ctx).toContain("Very stubborn error");
+    expect(ctx).toContain("[BLOCKER");
+    expect(ctx).toContain("fundamentally different approach");
   });
 });

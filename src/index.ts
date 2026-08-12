@@ -32,10 +32,12 @@ import {
   errors as errorsCommand,
   errorsCorrelations,
   errorsDrift,
+  errorsEscalations,
   errorsLineage,
   errorsPlaybooks,
   errorsRetro,
   errorsSeverity,
+  errorsStale,
   errorsTemplates,
 } from "./errors.js";
 import { exportData } from "./export.js";
@@ -304,6 +306,14 @@ async function main(): Promise<void> {
     }
     if (sub === "playbooks") {
       errorsPlaybooks(defaultDbPath());
+      return;
+    }
+    if (sub === "stale") {
+      errorsStale(defaultDbPath());
+      return;
+    }
+    if (sub === "escalations") {
+      errorsEscalations(defaultDbPath());
       return;
     }
     errorsCommand(defaultDbPath());
@@ -629,6 +639,8 @@ Usage:
   tdai-memory-mcp errors templates     Fix templates extracted from 3+ similar resolved errors
   tdai-memory-mcp errors correlations  Sequential error patterns (E1→E2 within 10 min)
   tdai-memory-mcp errors playbooks     Recovery playbooks from resolved errors (step-by-step)
+  tdai-memory-mcp errors stale         Fix staleness report (fixes older than TDAI_FIX_STALENESS_DAYS)
+  tdai-memory-mcp errors escalations   Auto-escalated errors (recurred 3+ times, severity bumped)
 
 CodeGraph commands:
   tdai-memory-mcp index [--path src] [--repo .]  Index code symbols (Tree-sitter)

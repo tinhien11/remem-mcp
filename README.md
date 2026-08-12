@@ -317,7 +317,7 @@ The agent does not need to call any tool. Memory just works.
 | **Code structure** | Tree-sitter, 9 languages | No | No | No |
 | **Callers/callees** | Yes | No | No | No |
 | **Impact analysis** | Yes | No | No | No |
-| **Error learning** | Auto-capture + inject + harm gate + A/B + drift + lineage + MTBF + severity + templates + correlations + playbooks | No | No | No |
+| **Error learning** | Auto-capture + inject + harm gate + A/B + drift + lineage + MTBF + severity + templates + correlations + playbooks + staleness + escalation | No | No | No |
 | **Pre-action matchers** | Yes (git push --force, rm -rf, DROP TABLE, etc.) | No | No | No |
 | **Session retrospective** | Yes (`errors retro`) | No | No | No |
 | **Drift detection** | Yes (`errors drift`) | Partial (`sheal drift`) | No | No |
@@ -331,6 +331,8 @@ The agent does not need to call any tool. Memory just works.
 | **Error correlation engine** | Yes (`errors correlations` — E1→E2 sequences) | No | No | No |
 | **Fix attempt counter** | Yes (stubborn errors in retro) | No | No | No |
 | **Recovery playbooks** | Yes (`errors playbooks` — step-by-step guidance) | No | No | No |
+| **Fix staleness** | Yes (`errors stale` — warn on outdated fixes) | No | No | No |
+| **Error escalation** | Yes (`errors escalations` — auto-escalate on recurrence) | No | No | No |
 | **Observability** | Yes (`explain_recall` tool) | No | No | No |
 | **Wiki/ADR ingest** | Yes | No | No | No |
 | **Setup** | `npx setup` | API key + cloud | Built-in | `pip install` |
@@ -424,6 +426,8 @@ npx tdai-memory-mcp errors severity    # Severity distribution (blocker/critical
 npx tdai-memory-mcp errors templates   # Fix templates extracted from 3+ similar resolved errors
 npx tdai-memory-mcp errors correlations # Sequential error patterns (E1→E2 within 10 min)
 npx tdai-memory-mcp errors playbooks   # Recovery playbooks (step-by-step guidance)
+npx tdai-memory-mcp errors stale       # Fix staleness report (fixes older than threshold)
+npx tdai-memory-mcp errors escalations # Auto-escalated errors (recurred 3+ times)
 
 # CodeGraph (opt-in: set TDAI_ENABLE_ADVANCED=1)
 npx tdai-memory-mcp index --path src --repo .          # Index code (Tree-sitter, 9 languages)

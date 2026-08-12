@@ -642,6 +642,29 @@ export function hookPostToolUse(dbPath: string): void {
           // [Fix Attempt Counter] Track how many times this error occurred before resolution
           meta.attempt_count = (meta.attempt_count ?? 1) + 1;
 
+          // [Error Escalation Policy] Auto-escalate when attempt_count >= threshold.
+          // PagerDuty pattern: recurrence → escalation → stronger intervention.
+          // Level 0: normal, Level 1: elevated (3+ attempts), Level 2: critical (5+),
+          // Level 3: blocker (7+). Bump severity and add escalated_at timestamp.
+          const escalationThreshold = Number(process.env.TDAI_ESCALATION_THRESHOLD ?? 3);
+          if (meta.attempt_count >= escalationThreshold) {
+            const newLevel = meta.attempt_count >= 7 ? 3 : meta.attempt_count >= 5 ? 2 : 1;
+            const prevLevel = meta.escalation_level ?? 0;
+            if (newLevel > prevLevel) {
+              meta.escalation_level = newLevel;
+              meta.escalated_at = new Date().toISOString();
+              // Bump severity: major→critical (level 1), critical→blocker (level 2+)
+              if (newLevel >= 2) {
+                meta.severity = "blocker";
+              } else if (meta.severity === "major" || !meta.severity) {
+                meta.severity = "critical";
+              }
+              logToFile(
+                `PostToolUse: ESCALATION — error ${recent.id} escalated to level ${newLevel} (attempt_count=${meta.attempt_count}, severity=${meta.severity})`,
+              );
+            }
+          }
+
           // [Drift Detection] Check if this error was injected by PreToolUse
           // recently. If so, the agent was warned but still hit the same error.
           const driftHit = checkDriftInjection(sessionKey, contentHash);
@@ -1074,6 +1097,7 @@ export function hookPreToolUse(dbPath: string): void {
             title: m.title ?? "Untitled",
             fix: m.fix_applied ?? m.correct_approach ?? "",
             date: new Date(r.created_at).toISOString().split("T")[0],
+            resolvedAt: m.resolved_at ?? r.created_at,
           };
         });
       } catch {
@@ -1120,8 +1144,21 @@ export function hookPreToolUse(dbPath: string): void {
         const antiPattern = meta.anti_pattern ?? "";
         const correctApproach = meta.correct_approach ?? "";
         const isOtherProject = err.session_key !== sessionKey;
+        const escalationLevel = meta.escalation_level ?? 0;
 
-        lines.push(`- ${date} [confidence=${decayedConfidence.toFixed(1)}]: ${title}`);
+        // [Error Escalation Policy] Stronger warning for escalated errors
+        const escalationTag =
+          escalationLevel >= 3
+            ? " [BLOCKER — recurred 7+ times. Do NOT retry without a fundamentally different approach.]"
+            : escalationLevel >= 2
+              ? " [CRITICAL — recurred 5+ times. Previous fixes failed. Try a different approach.]"
+              : escalationLevel >= 1
+                ? " [ELEVATED — recurred 3+ times. Review previous fix attempts.]"
+                : "";
+
+        lines.push(
+          `- ${date} [confidence=${decayedConfidence.toFixed(1)}]: ${title}${escalationTag}`,
+        );
         if (isOtherProject) lines.push(`  (from another project — cross-project pattern)`);
         if (antiPattern) lines.push(`  Anti-pattern: ${antiPattern}`);
         // [P3: Root Cause Analysis] Show root cause if available (Experia pattern)
@@ -1131,11 +1168,17 @@ export function hookPreToolUse(dbPath: string): void {
       }
 
       // [Feature 9] Inject proven fixes from resolved errors
+      // [Fix Decay / Staleness] Warn when injecting fixes older than threshold
       if (resolvedFixes.length > 0) {
         lines.push("");
         lines.push("Proven fixes from past resolved errors:");
+        const stalenessDays = Number(process.env.TDAI_FIX_STALENESS_DAYS ?? 180);
+        const stalenessMs = stalenessDays * 86400000;
         for (const fix of resolvedFixes) {
-          lines.push(`- ${fix.date}: ${fix.title} → ${fix.fix}`);
+          const fixAgeMs = Date.now() - new Date(fix.resolvedAt).getTime();
+          const isStale = fixAgeMs > stalenessMs;
+          const staleTag = isStale ? " [STALE — verify before applying]" : "";
+          lines.push(`- ${fix.date}: ${fix.title} → ${fix.fix}${staleTag}`);
         }
       }
 

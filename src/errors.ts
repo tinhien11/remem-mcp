@@ -1671,3 +1671,233 @@ export function errorsPlaybooks(dbPath: string = defaultDbPath()): void {
 
   db.close();
 }
+
+/**
+ * `tdai-memory-mcp errors stale` — Fix staleness report.
+ * Shows resolved fixes that are older than the staleness threshold.
+ * (Knowledge freshness: fixes can become invalid as codebase evolves)
+ */
+export function errorsStale(dbPath: string = defaultDbPath()): void {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true });
+  } catch {
+    console.error("Error: Could not open database at", dbPath);
+    process.exit(1);
+  }
+
+  console.log("tdai-memory-mcp errors stale — Fix Staleness Report\n");
+  console.log(`${"─".repeat(60)}\n`);
+
+  const stalenessDays = Number(process.env.TDAI_FIX_STALENESS_DAYS ?? 180);
+  const stalenessClause = `datetime('now', '-${stalenessDays} days')`;
+
+  // Find resolved fixes older than threshold
+  const stale = db
+    .prepare(
+      `SELECT
+         id,
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.fix_applied') as fix,
+         json_extract(metadata, '$.resolved_at') as resolved_at,
+         json_extract(metadata, '$.error_type') as etype,
+         json_extract(metadata, '$.severity') as severity
+       FROM captures
+       WHERE type = 'error' AND deleted_at IS NULL
+       AND json_extract(metadata, '$.resolved') = true
+       AND json_extract(metadata, '$.fix_applied') IS NOT NULL
+       AND json_extract(metadata, '$.resolved_at') IS NOT NULL
+       AND json_extract(metadata, '$.resolved_at') < ${stalenessClause}
+       ORDER BY json_extract(metadata, '$.resolved_at') ASC LIMIT 20`,
+    )
+    .all() as {
+    id: string;
+    title: string;
+    fix: string;
+    resolved_at: string;
+    etype: string;
+    severity: string;
+  }[];
+
+  // Also count fresh fixes (for comparison)
+  const fresh = db
+    .prepare(
+      `SELECT COUNT(*) as count
+       FROM captures
+       WHERE type = 'error' AND deleted_at IS NULL
+       AND json_extract(metadata, '$.resolved') = true
+       AND json_extract(metadata, '$.fix_applied') IS NOT NULL
+       AND json_extract(metadata, '$.resolved_at') IS NOT NULL
+       AND json_extract(metadata, '$.resolved_at') >= ${stalenessClause}`,
+    )
+    .get() as { count: number };
+
+  console.log(`Staleness threshold: ${stalenessDays} days (TDAI_FIX_STALENESS_DAYS)`);
+  console.log();
+
+  if (stale.length === 0) {
+    console.log(
+      `No stale fixes found. All ${fresh.count} resolved fix(es) are within ${stalenessDays} days.\n`,
+    );
+    db.close();
+    return;
+  }
+
+  console.log(`Stale fixes (older than ${stalenessDays} days):`);
+  console.log();
+  for (const s of stale) {
+    const ageDays = Math.floor((Date.now() - new Date(s.resolved_at).getTime()) / 86400000);
+    const title = (s.title ?? "Untitled").slice(0, 40);
+    const fix = (s.fix ?? "").slice(0, 50);
+    const date = new Date(s.resolved_at).toISOString().split("T")[0];
+    console.log(`  ${date} (${ageDays}d old)  ${title}`);
+    console.log(`    fix: ${fix}`);
+  }
+  console.log();
+
+  // Summary
+  console.log(`${"─".repeat(60)}`);
+  console.log("Staleness scorecard:");
+  console.log(`  Stale fixes:    ${stale.length}  (older than ${stalenessDays} days)`);
+  console.log(`  Fresh fixes:    ${fresh.count}  (within ${stalenessDays} days)`);
+  const total = stale.length + fresh.count;
+  const staleRate = total > 0 ? ((stale.length / total) * 100).toFixed(0) : "0";
+  console.log(`  Stale rate:     ${staleRate}%`);
+  console.log();
+
+  // Assessment
+  console.log("Assessment:");
+  if (stale.length > fresh.count && total > 0) {
+    console.log("  More stale than fresh fixes — consider pruning or re-validating old fixes.");
+  } else if (stale.length > 0) {
+    console.log("  Some stale fixes detected — PreToolUse will warn [STALE] when injecting them.");
+  }
+  console.log();
+  console.log("Stale fixes are still injected but with a [STALE — verify before applying] tag.");
+  console.log("Set TDAI_FIX_STALENESS_DAYS=N to change the threshold (default: 180).");
+
+  db.close();
+}
+
+/**
+ * `tdai-memory-mcp errors escalations` — Escalation policy report.
+ * Shows errors that have been auto-escalated due to high recurrence.
+ * (PagerDuty pattern: recurrence → escalation → stronger intervention)
+ */
+export function errorsEscalations(dbPath: string = defaultDbPath()): void {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true });
+  } catch {
+    console.error("Error: Could not open database at", dbPath);
+    process.exit(1);
+  }
+
+  console.log("tdai-memory-mcp errors escalations — Escalation Policy Report\n");
+  console.log(`${"─".repeat(60)}\n`);
+
+  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const windowClause = `created_at > datetime('now', '-${days} days')`;
+  const threshold = Number(process.env.TDAI_ESCALATION_THRESHOLD ?? 3);
+
+  // Find escalated errors
+  const escalated = db
+    .prepare(
+      `SELECT
+         id,
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.error_type') as etype,
+         json_extract(metadata, '$.escalation_level') as level,
+         json_extract(metadata, '$.escalated_at') as escalated_at,
+         json_extract(metadata, '$.attempt_count') as attempts,
+         json_extract(metadata, '$.severity') as severity,
+         json_extract(metadata, '$.resolved') as resolved
+       FROM captures
+       WHERE type = 'error' AND deleted_at IS NULL
+       AND ${windowClause}
+       AND CAST(json_extract(metadata, '$.escalation_level') AS INTEGER) > 0
+       ORDER BY CAST(json_extract(metadata, '$.escalation_level') AS INTEGER) DESC,
+                CAST(json_extract(metadata, '$.attempt_count') AS INTEGER) DESC LIMIT 20`,
+    )
+    .all() as {
+    id: string;
+    title: string;
+    etype: string;
+    level: string;
+    escalated_at: string;
+    attempts: string;
+    severity: string;
+    resolved: string;
+  }[];
+
+  console.log(`Escalation threshold: ${threshold} attempts (TDAI_ESCALATION_THRESHOLD)`);
+  console.log(`Analysis window: last ${days} days (TDAI_RETRO_DAYS)`);
+  console.log();
+
+  if (escalated.length === 0) {
+    console.log(`No escalated errors in the last ${days} days.\n`);
+    console.log("Errors auto-escalate when they recur 3+ times:");
+    console.log("  Level 1 (ELEVATED): 3+ attempts — severity bumped to critical");
+    console.log("  Level 2 (CRITICAL): 5+ attempts — severity bumped to blocker");
+    console.log("  Level 3 (BLOCKER):  7+ attempts — strongest warning injected");
+    console.log();
+    db.close();
+    return;
+  }
+
+  const levelLabels: Record<number, string> = {
+    1: "ELEVATED",
+    2: "CRITICAL",
+    3: "BLOCKER",
+  };
+
+  console.log("Escalated errors:");
+  console.log();
+  for (const e of escalated) {
+    const level = Number(e.level);
+    const label = levelLabels[level] ?? `L${level}`;
+    const title = (e.title ?? "Untitled").slice(0, 40);
+    const resolved = e.resolved === "true" ? " ✓" : "";
+    const escDate = e.escalated_at ? new Date(e.escalated_at).toISOString().split("T")[0] : "?";
+    console.log(`  [${label}] ${title}${resolved}`);
+    console.log(
+      `    attempts: ${e.attempts ?? "?"}, severity: ${e.severity ?? "major"}, escalated: ${escDate}`,
+    );
+  }
+  console.log();
+
+  // Summary by level
+  const byLevel: Record<number, number> = { 1: 0, 2: 0, 3: 0 };
+  for (const e of escalated) {
+    const lvl = Number(e.level);
+    byLevel[lvl] = (byLevel[lvl] ?? 0) + 1;
+  }
+
+  console.log(`${"─".repeat(60)}`);
+  console.log("Escalation scorecard:");
+  console.log(`  Total escalated:   ${escalated.length}`);
+  console.log(`  Level 1 (ELEVATED): ${byLevel[1]}  (3+ attempts)`);
+  console.log(`  Level 2 (CRITICAL): ${byLevel[2]}  (5+ attempts)`);
+  console.log(`  Level 3 (BLOCKER):  ${byLevel[3]}  (7+ attempts)`);
+  console.log();
+
+  // Assessment
+  console.log("Assessment:");
+  if (byLevel[3] > 0) {
+    console.log(
+      `  ${byLevel[3]} BLOCKER-level error(s) — these need a fundamentally different approach.`,
+    );
+  }
+  if (byLevel[2] > 0) {
+    console.log(`  ${byLevel[2]} CRITICAL-level error(s) — previous fixes have failed repeatedly.`);
+  }
+  if (byLevel[1] > 0 && byLevel[2] === 0 && byLevel[3] === 0) {
+    console.log(`  ${byLevel[1]} ELEVATED error(s) — monitor for further recurrence.`);
+  }
+  console.log();
+  console.log("Escalated errors get stronger warning text in PreToolUse injections.");
+  console.log("Set TDAI_ESCALATION_THRESHOLD=N to change the trigger (default: 3).");
+  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+
+  db.close();
+}
