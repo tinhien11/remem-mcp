@@ -10,7 +10,7 @@ import * as sqliteVec from "sqlite-vec";
 import { exportArtifact, importArtifact } from "./artifact.js";
 import { backup } from "./backup.js";
 import { atomsCommand } from "./cli/atoms.js";
-import { demo } from "./cli/demo.js";
+import { demo, demoCodegraph } from "./cli/demo.js";
 import { extractCommand } from "./cli/extract.js";
 import { knowledgeCommand } from "./cli/knowledge.js";
 import { personaCommand } from "./cli/persona.js";
@@ -179,6 +179,10 @@ async function main(): Promise<void> {
   }
   if (arg === "demo") {
     await demo();
+    return;
+  }
+  if (arg === "demo-codegraph") {
+    await demoCodegraph();
     return;
   }
   if (arg === "status") {
@@ -701,7 +705,8 @@ async function main(): Promise<void> {
 
 Getting started:
   tdai-memory-mcp setup          One-command install (MCP + hooks + demo)
-  tdai-memory-mcp demo           Watch the learning loop work in 30s
+  tdai-memory-mcp demo           Watch the error learning loop (30s)
+  tdai-memory-mcp demo-codegraph Live CodeGraph demo on facebook/react
   tdai-memory-mcp status         One dashboard: health + all 3 loops + recent
   tdai-memory-mcp viewer         Web UI at localhost:7331
   tdai-memory-mcp doctor         Check setup health
