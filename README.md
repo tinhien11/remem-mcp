@@ -17,27 +17,39 @@ A memory server for coding agents. Runs as an MCP server on SQLite.
 
 | Layer | Stores | Example |
 |---|---|---|
-| **Memory** | Decisions, bugs, learnings, errors | "We chose SQLite over Postgres for local-first storage" |
+| **Memory** | Decisions, bugs, learnings, errors, patterns | "We chose SQLite over Postgres for local-first storage" |
 | **CodeGraph** | Symbols, callers, callees, impact | `useEffect()` is called by 47 components, calls `cleanup()` |
 | **Wiki** | Markdown docs, ADRs, outdated detection | "ADR-007 says use SQLite. 3 files still import Postgres." |
 
 ---
 
-## Error learning system
+## Agent learning system
 
-When a command fails, it's captured automatically. Next time you run a similar command, the past error and proven fix are injected before it runs.
+Three learning loops, all automatic. No user action needed.
 
 ```
-Command fails → PostToolUse captures (error type, anti-pattern, root cause, git context)
-                                    ↓
-Similar command → PreToolUse injects past error + proven fix + rollback plan
-                                    ↓
-Command succeeds → error upvoted, fix recorded, provenance tagged
-                                    ↓
-Error recurs → downvoted, escalated, auto-annotated, pruned at confidence=0
+Foundation: SQLite + RRF + embedding + capture/recall
+    │
+    ├── Moat 1: Error Learning (41 features)
+    │   Command fails → capture (type, anti-pattern, git context)
+    │                 → inject past error + proven fix + rollback before similar command
+    │                 → succeed → upvote, validate, tag provenance
+    │                 → recur → downvote, escalate, auto-annotate, prune at 0
+    │
+    ├── Moat 2: Decision Learning
+    │   npm install / git commit / config → auto-capture decision
+    │                                    → inject past decisions before similar commands
+    │                                    → re-chose → confidence upvote
+    │                                    → retro: follow rate, drift, repeated decisions
+    │
+    └── Moat 3: Pattern Learning
+        Write/Edit code → auto-capture pattern (function, component, class, imports)
+                        → inject same-language patterns before editing
+                        → seen again → confidence upvote
+                        → retro: adoption rate, most used patterns
 ```
 
-### Features
+### Moat 1: Error Learning (41 features)
 
 All automatic. No user action needed.
 
@@ -124,9 +136,11 @@ npx tdai-memory-mcp doctor
 | **Code structure** | Tree-sitter, 9 languages | No | No | No |
 | **Callers/callees** | Yes | No | No | No |
 | **Impact analysis** | Yes | No | No | No |
-| **Error learning** | 27 features (capture, inject, drift, lineage, MTBF, severity, templates, correlations, playbooks, staleness, escalation, context, inheritance, auto-notes, rollback, provenance) | No | No | No |
+| **Error learning** | 41 features (capture, inject, drift, lineage, MTBF, severity, templates, correlations, playbooks, staleness, escalation, context, inheritance, auto-notes, rollback, provenance, mermaid, persona) | No | No | No |
+| **Decision learning** | Auto-capture + inject (npm install, git commit, config) | No | No | No |
+| **Pattern learning** | Auto-capture + inject code patterns (functions, components, classes) | No | No | No |
 | **Pre-action matchers** | Yes (git push --force, rm -rf, DROP TABLE) | No | No | No |
-| **Session retrospective** | Yes (`errors retro`) | No | No | No |
+| **Session retrospective** | Yes (`errors retro`, `decisions retro`, `patterns retro`) | No | No | No |
 | **Drift detection** | Yes (`errors drift`) | Partial | No | No |
 | **Wiki/ADR ingest** | Yes | No | No | No |
 | **Observability** | Yes (`explain_recall`) | No | No | No |
@@ -275,8 +289,8 @@ All automatic. The agent does not need to call any tool.
 - **SessionStart** — injects recent memories before the first message
 - **Stop** — auto-captures the session transcript
 - **SessionEnd** — captures session summary (Claude Code)
-- **PreToolUse** — injects past errors + warns before dangerous commands
-- **PostToolUse** — auto-captures failed commands
+- **PreToolUse** — injects past errors + decisions + patterns, warns before dangerous commands
+- **PostToolUse** — auto-captures failed commands (errors), successful decisions (npm install, git commit), and code patterns (Write/Edit)
 
 ---
 
@@ -331,7 +345,7 @@ const results = await memory.recall("storage decision");
 
 ## Credits
 
-Core based on [TencentDB Agent Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) (MIT, Tencent 2026). Replaces the cloud backend with embedded SQLite + sqlite-vec + FTS5. Adds CodeGraph, Wiki, error learning, and lifecycle hooks.
+Core based on [TencentDB Agent Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) (MIT, Tencent 2026). Replaces the cloud backend with embedded SQLite + sqlite-vec + FTS5. Adds CodeGraph, Wiki, three learning loops (error, decision, pattern), and lifecycle hooks.
 
 ## License
 
