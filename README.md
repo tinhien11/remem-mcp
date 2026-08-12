@@ -125,6 +125,22 @@ All three run via lifecycle hooks. The agent doesn't need to call any tool.
 
 ---
 
+## Advanced tools (opt-in)
+
+Set `TDAI_ENABLE_ADVANCED=1` to enable CodeGraph + Wiki (17 extra MCP tools):
+
+```bash
+npx tdai-memory-mcp index --path src --repo .    # Index code (Tree-sitter, 9 languages)
+npx tdai-memory-mcp wiki ingest --path docs      # Index markdown docs + ADRs
+npx tdai-memory-mcp wiki outdated                 # Find outdated wiki pages
+```
+
+- **CodeGraph** — symbol search, callers/callees, impact analysis. `codegraph_search`, `codegraph_callers`, `codegraph_impact`, etc.
+- **Wiki** — markdown docs, ADRs, outdated detection. `wiki_search`, `wiki_outdated`, etc.
+- **Search** — hybrid BM25 + sqlite-vec vector search with RRF fusion. `explain_recall` shows scores.
+
+---
+
 ## Daily commands
 
 ```bash
