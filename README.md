@@ -23,6 +23,7 @@ That's it. Auto-detects Claude Code, Cursor, Devin, Codex. Registers MCP server 
 
 ```bash
 npx tdai-memory-mcp demo     # Live demo: real build, real errors, real hooks
+npx tdai-memory-mcp demo-codegraph  # Live CodeGraph demo on facebook/react
 npx tdai-memory-mcp status   # One dashboard: everything at a glance
 ```
 
@@ -126,6 +127,8 @@ All three run via lifecycle hooks. The agent doesn't need to call any tool.
 ---
 
 ## Advanced tools
+
+<video src="https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/demo-codegraph.mp4" controls muted width="100%"></video>
 
 ![CodeGraph viewer](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/viewer-demo.gif)
 
