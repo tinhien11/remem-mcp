@@ -976,6 +976,48 @@ export function errorsLineage(dbPath: string = defaultDbPath()): void {
 
   console.log("Legend: E1 = original error, ↓ fix = fix applied, E2 = new error caused by fix");
   console.log();
+
+  // [Mermaid Canvas] Render lineage as Mermaid graph for visual inspection.
+  // (TencentDB symbolic memory pattern: maximum semantics in minimum symbols)
+  if (children.length > 0) {
+    console.log("Mermaid canvas (paste into any Mermaid renderer):");
+    console.log();
+    console.log("```mermaid");
+    console.log("graph LR");
+    const rendered = new Set<string>();
+    for (const child of children) {
+      if (rendered.has(child.id)) continue;
+      rendered.add(child.id);
+
+      // Walk chain
+      const chain: string[] = [];
+      let cur: string | null = child.id;
+      while (cur && allErrors.has(cur) && !chain.includes(cur)) {
+        chain.unshift(cur);
+        const c = children.find((x) => x.id === cur);
+        cur = c?.parent_id ?? null;
+      }
+
+      // Emit nodes + edges
+      for (let i = 0; i < chain.length; i++) {
+        const err = allErrors.get(chain[i])!;
+        const nodeId = `E${chain[i].slice(0, 6)}`;
+        const label = (err.title ?? "Untitled").replace(/["\\]/g, "").slice(0, 30);
+        const status = err.resolved === "true" ? " ✓" : "";
+        console.log(`  ${nodeId}["${label}${status}"]`);
+
+        if (i > 0) {
+          const parentNodeId = `E${chain[i - 1].slice(0, 6)}`;
+          const parentErr = allErrors.get(chain[i - 1])!;
+          const fixLabel = parentErr.fix ? parentErr.fix.replace(/["\\]/g, "").slice(0, 25) : "fix";
+          console.log(`  ${parentNodeId} -->|fix: ${fixLabel}| ${nodeId}`);
+        }
+      }
+    }
+    console.log("```");
+    console.log();
+  }
+
   console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
 
   db.close();
@@ -2195,6 +2237,171 @@ export function errorsProvenance(dbPath: string = defaultDbPath()): void {
   }
   console.log();
   console.log("Provenance is auto-tagged: auto_captured > inherited > template_extracted.");
+  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+
+  db.close();
+}
+
+/**
+ * `tdai-memory-mcp errors persona` — Error persona per project.
+ * Auto-builds an error profile: most common types, branches, severity,
+ * resolution rate, top anti-patterns. (TencentDB L3 Persona layer pattern)
+ */
+export function errorsPersona(dbPath: string = defaultDbPath()): void {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true });
+  } catch {
+    console.error("Error: Could not open database at", dbPath);
+    process.exit(1);
+  }
+
+  console.log("tdai-memory-mcp errors persona — Error Profile per Project\n");
+  console.log(`${"─".repeat(60)}\n`);
+
+  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const windowClause = `created_at > datetime('now', '-${days} days')`;
+
+  // Group by session_key (project)
+  const byProject = db
+    .prepare(
+      `SELECT
+         session_key,
+         COUNT(*) as total,
+         SUM(CASE WHEN json_extract(metadata, '$.resolved') = true THEN 1 ELSE 0 END) as resolved_count,
+         SUM(CASE WHEN json_extract(metadata, '$.severity') = 'blocker' THEN 1 ELSE 0 END) as blockers,
+         SUM(CASE WHEN json_extract(metadata, '$.severity') = 'critical' THEN 1 ELSE 0 END) as critical,
+         SUM(CASE WHEN json_extract(metadata, '$.severity') = 'major' THEN 1 ELSE 0 END) as major,
+         SUM(CASE WHEN json_extract(metadata, '$.severity') = 'minor' THEN 1 ELSE 0 END) as minor,
+         SUM(CASE WHEN json_extract(metadata, '$.drift_count') > 0 THEN 1 ELSE 0 END) as drifted
+       FROM captures
+       WHERE type = 'error' AND deleted_at IS NULL
+       AND ${windowClause}
+       GROUP BY session_key
+       ORDER BY total DESC`,
+    )
+    .all() as {
+    session_key: string;
+    total: number;
+    resolved_count: number;
+    blockers: number;
+    critical: number;
+    major: number;
+    minor: number;
+    drifted: number;
+  }[];
+
+  if (byProject.length === 0) {
+    console.log(`No errors in the last ${days} days.`);
+    console.log("Error personas are auto-built from captured errors.\n");
+    db.close();
+    return;
+  }
+
+  for (const proj of byProject) {
+    const resolveRate =
+      proj.total > 0 ? ((proj.resolved_count / proj.total) * 100).toFixed(0) : "0";
+    const driftRate = proj.total > 0 ? ((proj.drifted / proj.total) * 100).toFixed(0) : "0";
+    const projLabel = proj.session_key.slice(0, 16);
+
+    console.log(`Project: ${projLabel}...`);
+    console.log(`  Total errors:     ${proj.total}`);
+    console.log(`  Resolved:         ${proj.resolved_count} (${resolveRate}%)`);
+    console.log(
+      `  Severity:         ${proj.blockers} blocker, ${proj.critical} critical, ${proj.major} major, ${proj.minor} minor`,
+    );
+    console.log(`  Drift rate:       ${driftRate}%`);
+
+    // Top error types for this project
+    const topTypes = db
+      .prepare(
+        `SELECT
+           json_extract(metadata, '$.error_type') as etype,
+           COUNT(*) as count
+         FROM captures
+         WHERE type = 'error' AND deleted_at IS NULL
+         AND ${windowClause}
+         AND session_key = ?
+         GROUP BY etype
+         ORDER BY count DESC LIMIT 3`,
+      )
+      .all(proj.session_key) as { etype: string; count: number }[];
+
+    if (topTypes.length > 0) {
+      console.log(
+        `  Top error types:  ${topTypes.map((t) => `${t.etype ?? "unknown"} (${t.count})`).join(", ")}`,
+      );
+    }
+
+    // Top branches (from context_enrichment)
+    const topBranches = db
+      .prepare(
+        `SELECT
+           json_extract(metadata, '$.context_enrichment.branch') as branch,
+           COUNT(*) as count
+         FROM captures
+         WHERE type = 'error' AND deleted_at IS NULL
+         AND ${windowClause}
+         AND session_key = ?
+         AND json_extract(metadata, '$.context_enrichment.branch') IS NOT NULL
+         GROUP BY branch
+         ORDER BY count DESC LIMIT 3`,
+      )
+      .all(proj.session_key) as { branch: string; count: number }[];
+
+    if (topBranches.length > 0) {
+      console.log(
+        `  Top branches:     ${topBranches.map((b) => `${b.branch} (${b.count})`).join(", ")}`,
+      );
+    }
+
+    // Top anti-patterns
+    const topAnti = db
+      .prepare(
+        `SELECT
+           json_extract(metadata, '$.anti_pattern') as anti,
+           COUNT(*) as count
+         FROM captures
+         WHERE type = 'error' AND deleted_at IS NULL
+         AND ${windowClause}
+         AND session_key = ?
+         AND json_extract(metadata, '$.anti_pattern') IS NOT NULL
+         GROUP BY anti
+         ORDER BY count DESC LIMIT 2`,
+      )
+      .all(proj.session_key) as { anti: string; count: number }[];
+
+    if (topAnti.length > 0) {
+      console.log("  Anti-patterns:");
+      for (const a of topAnti) {
+        console.log(`    - ${(a.anti ?? "").slice(0, 50)} (${a.count}x)`);
+      }
+    }
+
+    // Persona summary (auto-generated)
+    console.log();
+    const personaParts: string[] = [];
+    if (proj.blockers > 0) personaParts.push("has blocker-level errors");
+    if (proj.critical > proj.major) personaParts.push("critical-heavy");
+    if (Number(driftRate) > 30) personaParts.push("high drift (agent ignores warnings)");
+    if (Number(resolveRate) > 80) personaParts.push("high resolve rate");
+    else if (Number(resolveRate) < 30) personaParts.push("low resolve rate (many unresolved)");
+    if (topTypes[0]?.etype) personaParts.push(`${topTypes[0].etype}-heavy`);
+
+    console.log(`  Persona: This project ${personaParts.join(", ")}.`);
+    console.log();
+  }
+
+  // Summary scorecard
+  console.log(`${"─".repeat(60)}`);
+  console.log("Persona scorecard:");
+  console.log(`  Projects tracked:     ${byProject.length}`);
+  const totalErrors = byProject.reduce((s, p) => s + p.total, 0);
+  const totalResolved = byProject.reduce((s, p) => s + p.resolved_count, 0);
+  console.log(`  Total errors:         ${totalErrors}`);
+  console.log(`  Total resolved:       ${totalResolved}`);
+  console.log();
+  console.log("Error personas are auto-built from captured errors.");
   console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
 
   db.close();

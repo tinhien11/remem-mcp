@@ -3780,4 +3780,160 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     expect(ctx).toContain("Note: Critical severity");
     expect(ctx).toContain("Note: Escalated to level 1");
   });
+
+  // ------------------------------------------------------------------
+  // Test 108: MERMAID: errors lineage outputs Mermaid graph
+  // ------------------------------------------------------------------
+  it("MERMAID: errors lineage outputs Mermaid canvas for chains", () => {
+    const db = makeErrorDb(dbPath);
+
+    // Parent error (resolved with fix)
+    insertError(db, {
+      id: "mermaid-parent",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Missing import error",
+      resolved: true,
+      fixApplied: "Added missing import",
+      fixValidated: true,
+    });
+    // Child error caused by parent's fix
+    insertError(db, {
+      id: "mermaid-child",
+      sessionKey: "proj-a",
+      errorType: "test",
+      command: "npm test",
+      title: "Test failure from import change",
+      causedByErrorId: "mermaid-parent",
+    });
+    db.close();
+
+    const output = runCli("errors lineage", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Mermaid canvas");
+    expect(output).toContain("```mermaid");
+    expect(output).toContain("graph LR");
+    expect(output).toContain("Missing import error");
+    expect(output).toContain("-->|fix:");
+    expect(output).toContain("Test failure from import change");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 109: MERMAID: no chains = no Mermaid output
+  // ------------------------------------------------------------------
+  it("MERMAID: no lineage chains = no Mermaid canvas", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "no-chain-1",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Standalone error",
+    });
+    db.close();
+
+    const output = runCli("errors lineage", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("No fix lineage chains");
+    expect(output).not.toContain("```mermaid");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 110: PERSONA: errors persona shows project profile
+  // ------------------------------------------------------------------
+  it("PERSONA: errors persona shows error profile per project", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "persona-1",
+      sessionKey: "proj-a-hash",
+      errorType: "build",
+      command: "npm run build",
+      title: "Build error 1",
+      severity: "critical",
+      resolved: true,
+      antiPattern: "forgot to add import",
+    });
+    insertError(db, {
+      id: "persona-2",
+      sessionKey: "proj-a-hash",
+      errorType: "build",
+      command: "npm run build",
+      title: "Build error 2",
+      severity: "major",
+      antiPattern: "forgot to add import",
+    });
+    insertError(db, {
+      id: "persona-3",
+      sessionKey: "proj-b-hash",
+      errorType: "test",
+      command: "npm test",
+      title: "Test error 1",
+      severity: "minor",
+    });
+    db.close();
+
+    const output = runCli("errors persona", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Error Profile per Project");
+    expect(output).toContain("proj-a-hash");
+    expect(output).toContain("Total errors:     2");
+    expect(output).toContain("build (2)");
+    expect(output).toContain("forgot to add import");
+    expect(output).toContain("Persona: This project");
+    expect(output).toContain("Projects tracked:     2");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 111: PERSONA: clean DB shows no persona
+  // ------------------------------------------------------------------
+  it("PERSONA: clean DB shows no persona message", () => {
+    makeErrorDb(dbPath);
+
+    const output = runCli("errors persona", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("No errors in the last");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 112: PERSONA: shows branch from context enrichment
+  // ------------------------------------------------------------------
+  it("PERSONA: shows top branches from context enrichment", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "persona-branch-1",
+      sessionKey: "proj-a-hash",
+      errorType: "build",
+      command: "npm run build",
+      title: "Build error on feature branch",
+      severity: "major",
+      contextEnrichment: {
+        branch: "feature/auth",
+        recent_commits: ["abc123"],
+        changed_files: ["src/auth.ts"],
+      },
+    });
+    insertError(db, {
+      id: "persona-branch-2",
+      sessionKey: "proj-a-hash",
+      errorType: "build",
+      command: "npm run build",
+      title: "Another build error on feature branch",
+      severity: "major",
+      contextEnrichment: {
+        branch: "feature/auth",
+        recent_commits: ["def456"],
+        changed_files: ["src/auth.ts"],
+      },
+    });
+    db.close();
+
+    const output = runCli("errors persona", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Top branches:");
+    expect(output).toContain("feature/auth (2)");
+  });
 });

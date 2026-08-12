@@ -64,6 +64,8 @@ All automatic. No user action needed.
 | **Auto-annotation** | System-generated notes: recurrence, severity, drift, validation | — |
 | **Fix rollback plan** | Auto-generates undo instructions (git checkout/revert) | — |
 | **Fix provenance** | Tags: auto_captured / inherited / template_extracted | `errors provenance` |
+| **Mermaid lineage** | Renders E1→F1→E2→F2 as Mermaid graph | `errors lineage` |
+| **Error persona** | Auto-builds error profile per project (types, branches, severity) | `errors persona` |
 | **Session retrospective** | Failure loops, wasted effort, drift, MTBF, scorecard | `errors retro` |
 | **Drift detection** | Detects when injected warnings are ignored | `errors drift` |
 | **Fix lineage chains** | Tracks E1→F1→E2→F2 regression chains | `errors lineage` |
@@ -204,6 +206,7 @@ npx tdai-memory-mcp errors escalations # Auto-escalated errors
 npx tdai-memory-mcp errors context     # Error context (git branch, commits)
 npx tdai-memory-mcp errors inherited   # Cross-project fix inheritance
 npx tdai-memory-mcp errors provenance  # Fix provenance chain
+npx tdai-memory-mcp errors persona     # Error profile per project
 
 # CodeGraph (opt-in: set TDAI_ENABLE_ADVANCED=1)
 npx tdai-memory-mcp index --path src --repo .          # Index code (Tree-sitter, 9 languages)

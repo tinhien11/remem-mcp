@@ -36,6 +36,7 @@ import {
   errorsEscalations,
   errorsInherited,
   errorsLineage,
+  errorsPersona,
   errorsPlaybooks,
   errorsProvenance,
   errorsRetro,
@@ -329,6 +330,10 @@ async function main(): Promise<void> {
     }
     if (sub === "provenance") {
       errorsProvenance(defaultDbPath());
+      return;
+    }
+    if (sub === "persona") {
+      errorsPersona(defaultDbPath());
       return;
     }
     errorsCommand(defaultDbPath());
@@ -659,6 +664,7 @@ Usage:
   tdai-memory-mcp errors context       Error context enrichment (git branch, commits, changed files)
   tdai-memory-mcp errors inherited     Cross-project fix inheritance report
   tdai-memory-mcp errors provenance    Fix provenance chain (auto_captured, inherited, etc.)
+  tdai-memory-mcp errors persona       Error profile per project (types, branches, severity)
 
 CodeGraph commands:
   tdai-memory-mcp index [--path src] [--repo .]  Index code symbols (Tree-sitter)
