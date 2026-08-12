@@ -7,7 +7,14 @@
  * https://github.com/TencentCloud/TencentDB-Agent-Memory
  */
 
-export type CaptureType = "conversation" | "decision" | "learning" | "task" | "error" | "atom";
+export type CaptureType =
+  | "conversation"
+  | "decision"
+  | "learning"
+  | "task"
+  | "error"
+  | "atom"
+  | "pattern";
 
 /** Trust state for a capture. Controls retrieval filtering and ranking. */
 export type TrustState = "candidate" | "verified" | "rejected" | "stale";

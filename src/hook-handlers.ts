@@ -408,8 +408,78 @@ export function hookPostToolUse(dbPath: string): void {
       const toolInput = input.tool_input ?? {};
       const toolResponse = input.tool_response ?? {};
 
-      // Only process Bash/exec commands
-      if (toolName !== "Bash" && toolName !== "exec") {
+      // Process Bash/exec for error + decision capture,
+      // Write/Edit/MultiEdit for pattern capture (Moat 3)
+      const isBash = toolName === "Bash" || toolName === "exec";
+      const isWriteEdit = toolName === "Write" || toolName === "Edit" || toolName === "MultiEdit";
+
+      if (!isBash && !isWriteEdit) {
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+
+      // [Moat 3: Pattern Learning] Capture code patterns from Write/Edit
+      if (isWriteEdit) {
+        try {
+          const db = new Database(dbPath);
+          const pattern = detectPattern(toolName, toolInput);
+          if (pattern) {
+            const id = `pat-${createHash("sha256")
+              .update(pattern.signature + pattern.file_path)
+              .digest("hex")
+              .slice(0, 12)}`;
+            const sessionKey = hashPath(input.cwd ?? process.cwd());
+            const content = `Pattern: ${pattern.title} in ${pattern.file_path}`;
+            const hash = createHash("sha256").update(content).digest("hex").slice(0, 16);
+
+            // Check if this pattern already exists
+            const existing = db.prepare("SELECT id, metadata FROM captures WHERE id = ?").get(id) as
+              | { id: string; metadata: string }
+              | undefined;
+
+            if (existing) {
+              // Upvote existing pattern
+              const meta = JSON.parse(existing.metadata);
+              meta.confidence = (meta.confidence ?? 1) + 1;
+              meta.last_seen = new Date().toISOString();
+              meta.seen_count = (meta.seen_count ?? 1) + 1;
+              db.prepare("UPDATE captures SET metadata = ? WHERE id = ?").run(
+                JSON.stringify(meta),
+                existing.id,
+              );
+            } else {
+              db.prepare(
+                "INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              ).run(
+                id,
+                sessionKey,
+                "auto",
+                "pattern",
+                content,
+                hash,
+                JSON.stringify([pattern.pattern_type, pattern.language]),
+                new Date().toISOString().replace("T", " ").replace("Z", ""),
+                JSON.stringify({
+                  tool: toolName,
+                  title: pattern.title,
+                  pattern_type: pattern.pattern_type,
+                  language: pattern.language,
+                  signature: pattern.signature,
+                  file_path: pattern.file_path,
+                  confidence: 1,
+                  seen_count: 1,
+                  adopted: false,
+                  first_seen: new Date().toISOString(),
+                  last_seen: new Date().toISOString(),
+                }),
+              );
+            }
+            logToFile(`PostToolUse: captured pattern ${pattern.title}`);
+          }
+          db.close();
+        } catch {
+          // non-fatal
+        }
         process.stdout.write(JSON.stringify({}));
         return;
       }
@@ -601,6 +671,64 @@ export function hookPostToolUse(dbPath: string): void {
         // is NOW failing again — this means the "proven fix" caused a regression.
         // Mark the original resolved error with harm_count to prevent re-injection.
         // (errlore pattern: withhold harmful lessons)
+
+        // [Moat 2: Decision Learning] Auto-capture decisions from successful commands.
+        // Detects dependency choices, config decisions, commit-encoded decisions.
+        const decision = detectDecision(command, stdout);
+        if (decision) {
+          try {
+            const decId = `dec-${createHash("sha256")
+              .update(decision.choice + sessionKey)
+              .digest("hex")
+              .slice(0, 12)}`;
+            const existingDec = db
+              .prepare("SELECT id, metadata FROM captures WHERE id = ?")
+              .get(decId) as { id: string; metadata: string } | undefined;
+
+            if (existingDec) {
+              // Decision already exists — upvote confidence
+              const dMeta = JSON.parse(existingDec.metadata);
+              dMeta.confidence = (dMeta.confidence ?? 1) + 1;
+              dMeta.last_seen = new Date().toISOString();
+              dMeta.seen_count = (dMeta.seen_count ?? 1) + 1;
+              db.prepare("UPDATE captures SET metadata = ? WHERE id = ?").run(
+                JSON.stringify(dMeta),
+                decId,
+              );
+            } else {
+              const decContent = `Decision: ${decision.title}`;
+              const decHash = createHash("sha256").update(decContent).digest("hex").slice(0, 16);
+              db.prepare(
+                "INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              ).run(
+                decId,
+                sessionKey,
+                "auto",
+                "decision",
+                decContent,
+                decHash,
+                JSON.stringify([decision.decision_type]),
+                new Date().toISOString().replace("T", " ").replace("Z", ""),
+                JSON.stringify({
+                  title: decision.title,
+                  decision_type: decision.decision_type,
+                  choice: decision.choice,
+                  rationale: decision.rationale,
+                  command: command.slice(0, 200),
+                  confidence: 1,
+                  seen_count: 1,
+                  followed: null,
+                  drift_count: 0,
+                  first_seen: new Date().toISOString(),
+                  last_seen: new Date().toISOString(),
+                }),
+              );
+              logToFile(`PostToolUse: captured decision — ${decision.title}`);
+            }
+          } catch {
+            // non-fatal
+          }
+        }
 
         db.close();
         process.stdout.write(JSON.stringify({}));
@@ -1050,7 +1178,86 @@ export function hookPreToolUse(dbPath: string): void {
             // Non-fatal — prediction is supplementary
           }
         }
-        // For Write/Edit without predictive errors, just return
+
+        // [Moat 3: Pattern Learning] Inject relevant code patterns before editing.
+        // When editing a file, find patterns from the same project with same language.
+        if (filePath) {
+          try {
+            const cwd = input.cwd ?? process.cwd();
+            const sessionKey = hashPath(cwd);
+            const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
+            const langMap: Record<string, string> = {
+              ts: "typescript",
+              tsx: "typescript",
+              js: "javascript",
+              jsx: "javascript",
+              py: "python",
+              rs: "rust",
+              go: "go",
+              java: "java",
+              rb: "ruby",
+            };
+            const language = langMap[ext] ?? "";
+            if (language) {
+              const patDb = new Database(dbPath, { readonly: true });
+              const patterns = patDb
+                .prepare(
+                  `SELECT
+                     json_extract(metadata, '$.title') as title,
+                     json_extract(metadata, '$.pattern_type') as ptype,
+                     json_extract(metadata, '$.signature') as sig,
+                     json_extract(metadata, '$.file_path') as fpath,
+                     json_extract(metadata, '$.seen_count') as seen,
+                     json_extract(metadata, '$.confidence') as conf
+                   FROM captures
+                   WHERE type = 'pattern' AND deleted_at IS NULL
+                   AND session_key = ?
+                   AND json_extract(metadata, '$.language') = ?
+                   AND json_extract(metadata, '$.file_path') != ?
+                   ORDER BY CAST(json_extract(metadata, '$.confidence') AS INTEGER) DESC
+                   LIMIT 3`,
+                )
+                .all(sessionKey, language, filePath) as {
+                title: string;
+                ptype: string;
+                sig: string;
+                fpath: string;
+                seen: number;
+                conf: number;
+              }[];
+              patDb.close();
+
+              if (patterns.length > 0) {
+                const lines: string[] = [
+                  `[tdai-memory] ${patterns.length} code pattern(s) from this project (same language):`,
+                ];
+                for (const p of patterns) {
+                  lines.push(`- [${p.ptype}] ${p.title}`);
+                  if (p.sig) lines.push(`  signature: ${p.sig.slice(0, 60)}`);
+                  if (p.fpath) lines.push(`  from: ${p.fpath}`);
+                }
+                lines.push("");
+                lines.push("Follow these patterns for consistency.");
+
+                const output = {
+                  hookSpecificOutput: {
+                    hookEventName: "PreToolUse",
+                    additionalContext: lines.join("\n"),
+                  },
+                };
+                logToFile(
+                  `PreToolUse: PATTERN — ${patterns.length} pattern(s) injected before editing ${filePath}`,
+                );
+                process.stdout.write(JSON.stringify(output));
+                return;
+              }
+            }
+          } catch {
+            // Non-fatal
+          }
+        }
+
+        // For Write/Edit without patterns or predictive errors, just return
         process.stdout.write(JSON.stringify({}));
         return;
       }
@@ -1207,6 +1414,78 @@ export function hookPreToolUse(dbPath: string): void {
       }
 
       if (errors.length === 0 && resolvedFixes.length === 0) {
+        // [Moat 2: Decision Learning] Even with no errors, inject past decisions
+        // for relevant commands (npm install, git commit, etc.)
+        try {
+          const decDb = new Database(dbPath, { readonly: true });
+          const lowerCmd = command.toLowerCase();
+          let decQuery = "";
+          const decParams: (string | number)[] = [sessionKey];
+
+          if (
+            lowerCmd.includes("npm install") ||
+            lowerCmd.includes("pip install") ||
+            lowerCmd.includes("cargo add")
+          ) {
+            decQuery = `SELECT json_extract(metadata, '$.title') as title,
+                 json_extract(metadata, '$.choice') as choice,
+                 json_extract(metadata, '$.rationale') as rationale,
+                 created_at
+               FROM captures
+               WHERE type = 'decision' AND deleted_at IS NULL
+               AND session_key = ?
+               AND json_extract(metadata, '$.decision_type') = 'dependency'
+               AND created_at > datetime('now', '-90 days')
+               ORDER BY CAST(json_extract(metadata, '$.confidence') AS INTEGER) DESC LIMIT 3`;
+          } else if (lowerCmd.includes("git commit")) {
+            decQuery = `SELECT json_extract(metadata, '$.title') as title,
+                 json_extract(metadata, '$.choice') as choice,
+                 json_extract(metadata, '$.rationale') as rationale,
+                 created_at
+               FROM captures
+               WHERE type = 'decision' AND deleted_at IS NULL
+               AND session_key = ?
+               AND json_extract(metadata, '$.decision_type') = 'commit'
+               AND created_at > datetime('now', '-90 days')
+               ORDER BY created_at DESC LIMIT 3`;
+          }
+
+          if (decQuery) {
+            const decisions = decDb.prepare(decQuery).all(...decParams) as {
+              title: string;
+              choice: string;
+              rationale: string;
+              created_at: string;
+            }[];
+
+            if (decisions.length > 0) {
+              const lines: string[] = [`[tdai-memory] Past decisions for similar commands:`];
+              for (const d of decisions) {
+                const date = new Date(d.created_at).toISOString().split("T")[0];
+                lines.push(`- ${date}: ${d.title}`);
+                if (d.rationale) lines.push(`  rationale: ${d.rationale.slice(0, 60)}`);
+              }
+              lines.push("");
+              lines.push("Consider these past decisions before proceeding.");
+
+              const output = {
+                hookSpecificOutput: {
+                  hookEventName: "PreToolUse",
+                  additionalContext: lines.join("\n"),
+                },
+              };
+              decDb.close();
+              logToFile(
+                `PreToolUse: DECISION — ${decisions.length} decision(s) injected (no errors)`,
+              );
+              process.stdout.write(JSON.stringify(output));
+              return;
+            }
+          }
+          decDb.close();
+        } catch {
+          // non-fatal
+        }
         process.stdout.write(JSON.stringify({}));
         return;
       }
@@ -1315,6 +1594,70 @@ export function hookPreToolUse(dbPath: string): void {
 
       lines.push("");
       lines.push("Fix these issues BEFORE running the command.");
+
+      // [Moat 2: Decision Learning] Inject past decisions before relevant commands.
+      // E.g., before `npm install`, inject past dependency decisions.
+      try {
+        const decDb = new Database(dbPath, { readonly: true });
+        const lowerCmd = command.toLowerCase();
+        let decQuery = "";
+        const decParams: (string | number)[] = [sessionKey];
+
+        if (
+          lowerCmd.includes("npm install") ||
+          lowerCmd.includes("pip install") ||
+          lowerCmd.includes("cargo add")
+        ) {
+          // Inject dependency decisions
+          decQuery = `SELECT json_extract(metadata, '$.title') as title,
+               json_extract(metadata, '$.choice') as choice,
+               json_extract(metadata, '$.rationale') as rationale,
+               json_extract(metadata, '$.seen_count') as seen,
+               created_at
+             FROM captures
+             WHERE type = 'decision' AND deleted_at IS NULL
+             AND session_key = ?
+             AND json_extract(metadata, '$.decision_type') = 'dependency'
+             AND created_at > datetime('now', '-90 days')
+             ORDER BY CAST(json_extract(metadata, '$.confidence') AS INTEGER) DESC LIMIT 3`;
+        } else if (lowerCmd.includes("git commit")) {
+          // Inject commit-encoded decisions
+          decQuery = `SELECT json_extract(metadata, '$.title') as title,
+               json_extract(metadata, '$.choice') as choice,
+               json_extract(metadata, '$.rationale') as rationale,
+               json_extract(metadata, '$.seen_count') as seen,
+               created_at
+             FROM captures
+             WHERE type = 'decision' AND deleted_at IS NULL
+             AND session_key = ?
+             AND json_extract(metadata, '$.decision_type') = 'commit'
+             AND created_at > datetime('now', '-90 days')
+             ORDER BY created_at DESC LIMIT 3`;
+        }
+
+        if (decQuery) {
+          const decisions = decDb.prepare(decQuery).all(...decParams) as {
+            title: string;
+            choice: string;
+            rationale: string;
+            seen: number;
+            created_at: string;
+          }[];
+          decDb.close();
+
+          if (decisions.length > 0) {
+            lines.push("");
+            lines.push("Past decisions for similar commands:");
+            for (const d of decisions) {
+              const date = new Date(d.created_at).toISOString().split("T")[0];
+              lines.push(`- ${date}: ${d.title}`);
+              if (d.rationale) lines.push(`  rationale: ${d.rationale.slice(0, 60)}`);
+            }
+          }
+        }
+      } catch {
+        // non-fatal
+      }
 
       const context = lines.join("\n");
       const k = decayed.length;
@@ -1578,6 +1921,174 @@ function generateAutoNotes(meta: {
   }
 
   return notes;
+}
+
+/**
+ * [Moat 2: Decision Learning] Detect decisions from successful commands.
+ * Captures dependency choices, config decisions, and commit-encoded decisions.
+ * All automatic — no user action needed.
+ */
+function detectDecision(
+  command: string,
+  stdout: string,
+): { title: string; decision_type: string; choice: string; rationale: string } | null {
+  const lower = command.toLowerCase();
+
+  // Dependency install decisions
+  const npmMatch = command.match(/npm\s+install\s+(?:-S\s+|--save\s+)?(@?[a-z0-9][\w@./-]*)/i);
+  if (npmMatch) {
+    const pkg = npmMatch[1];
+    return {
+      title: `Chose to use ${pkg}`,
+      decision_type: "dependency",
+      choice: pkg,
+      rationale: `Installed ${pkg} as a dependency`,
+    };
+  }
+
+  const pipMatch = command.match(/pip\s+install\s+([a-z0-9][\w.-]*)/i);
+  if (pipMatch) {
+    const pkg = pipMatch[1];
+    return {
+      title: `Chose to use ${pkg}`,
+      decision_type: "dependency",
+      choice: pkg,
+      rationale: `Installed ${pkg} via pip`,
+    };
+  }
+
+  const cargoMatch = command.match(/cargo\s+add\s+([a-z0-9][\w-]*)/i);
+  if (cargoMatch) {
+    const pkg = cargoMatch[1];
+    return {
+      title: `Chose to use ${pkg}`,
+      decision_type: "dependency",
+      choice: pkg,
+      rationale: `Added ${pkg} to Cargo.toml`,
+    };
+  }
+
+  // Git commit decisions (extract from commit message)
+  const commitMatch = command.match(/git\s+commit\s+.*-m\s+["'](.+?)["']/i);
+  if (commitMatch) {
+    const msg = commitMatch[1].slice(0, 100);
+    // Only capture if message looks like a decision
+    if (/chose|selected|decided|switched|replaced|migrated|refactored|adopted/i.test(msg)) {
+      return {
+        title: `Decision: ${msg.slice(0, 60)}`,
+        decision_type: "commit",
+        choice: msg,
+        rationale: "Encoded in git commit",
+      };
+    }
+  }
+
+  // Config file creation (implies architecture decision)
+  if (
+    /touch\s+.*\.(env|config|yaml|yml|toml|ini)$/i.test(command) ||
+    /echo.*>.*\.(env|config|yaml|yml|toml)$/i.test(command)
+  ) {
+    const fileMatch = command.match(/([\w.-]+\.(?:env|config|yaml|yml|toml|ini))/i);
+    if (fileMatch) {
+      return {
+        title: `Created config: ${fileMatch[1]}`,
+        decision_type: "config",
+        choice: fileMatch[1],
+        rationale: "Config file creation implies architecture decision",
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * [Moat 3: Pattern Learning] Detect code patterns from Write/Edit tools.
+ * Captures function signatures, import structures, and component patterns.
+ * All automatic — no user action needed.
+ */
+function detectPattern(
+  toolName: string,
+  toolInput: { content?: string; old_string?: string; new_string?: string; file_path?: string },
+): {
+  title: string;
+  pattern_type: string;
+  language: string;
+  signature: string;
+  file_path: string;
+} | null {
+  const filePath = toolInput.file_path ?? "";
+  const content = toolInput.content ?? toolInput.new_string ?? "";
+  if (!content || !filePath) return null;
+
+  // Detect language from file extension
+  const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
+  const langMap: Record<string, string> = {
+    ts: "typescript",
+    tsx: "typescript",
+    js: "javascript",
+    jsx: "javascript",
+    py: "python",
+    rs: "rust",
+    go: "go",
+    java: "java",
+    rb: "ruby",
+  };
+  const language = langMap[ext] ?? "unknown";
+  if (language === "unknown") return null;
+
+  // Extract function/method signatures
+  const fnMatch = content.match(/(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*\(([^)]*)\)/);
+  if (fnMatch) {
+    return {
+      title: `Function pattern: ${fnMatch[1]}(${fnMatch[2].slice(0, 40)})`,
+      pattern_type: "function",
+      language,
+      signature: `${fnMatch[1]}(${fnMatch[2].slice(0, 60)})`,
+      file_path: filePath,
+    };
+  }
+
+  // Extract React component patterns
+  const compMatch = content.match(
+    /(?:export\s+)?(?:const|function)\s+(\w+)\s*[=:]\s*(?:\([^)]*\)|function)\s*=>?\s*[{<]/,
+  );
+  if (compMatch && ext === "tsx") {
+    return {
+      title: `Component pattern: ${compMatch[1]}`,
+      pattern_type: "component",
+      language,
+      signature: compMatch[1],
+      file_path: filePath,
+    };
+  }
+
+  // Extract class patterns
+  const classMatch = content.match(/(?:export\s+)?class\s+(\w+)/);
+  if (classMatch) {
+    return {
+      title: `Class pattern: ${classMatch[1]}`,
+      pattern_type: "class",
+      language,
+      signature: classMatch[1],
+      file_path: filePath,
+    };
+  }
+
+  // Extract import patterns (only if significant)
+  const importMatches = content.match(/^import\s+.*$/gm);
+  if (importMatches && importMatches.length >= 3) {
+    const imports = importMatches.slice(0, 5).join("; ").slice(0, 80);
+    return {
+      title: `Import pattern (${importMatches.length} imports)`,
+      pattern_type: "imports",
+      language,
+      signature: imports,
+      file_path: filePath,
+    };
+  }
+
+  return null;
 }
 
 /**

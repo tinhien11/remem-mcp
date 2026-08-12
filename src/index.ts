@@ -27,6 +27,8 @@ import { loadConfig } from "./config.js";
 import { doctor } from "./doctor.js";
 import { LocalEmbedder } from "./embedding/local.js";
 import {
+  decisionsDashboard,
+  decisionsRetro,
   errorsActions,
   errorsByGoal,
   errors as errorsCommand,
@@ -43,6 +45,8 @@ import {
   errorsSeverity,
   errorsStale,
   errorsTemplates,
+  patternsDashboard,
+  patternsRetro,
 } from "./errors.js";
 import { exportData } from "./export.js";
 import {
@@ -337,6 +341,24 @@ async function main(): Promise<void> {
       return;
     }
     errorsCommand(defaultDbPath());
+    return;
+  }
+  if (arg === "decisions") {
+    const sub = process.argv[3] ?? "";
+    if (sub === "retro") {
+      decisionsRetro(defaultDbPath());
+      return;
+    }
+    decisionsDashboard(defaultDbPath());
+    return;
+  }
+  if (arg === "patterns") {
+    const sub = process.argv[3] ?? "";
+    if (sub === "retro") {
+      patternsRetro(defaultDbPath());
+      return;
+    }
+    patternsDashboard(defaultDbPath());
     return;
   }
   if (arg === "token-stats") {
@@ -665,6 +687,14 @@ Usage:
   tdai-memory-mcp errors inherited     Cross-project fix inheritance report
   tdai-memory-mcp errors provenance    Fix provenance chain (auto_captured, inherited, etc.)
   tdai-memory-mcp errors persona       Error profile per project (types, branches, severity)
+
+Decision learning (Moat 2):
+  tdai-memory-mcp decisions            Decision dashboard (dependency choices, config decisions)
+  tdai-memory-mcp decisions retro      Decision retrospective (follow rate, repeated, drifted)
+
+Pattern learning (Moat 3):
+  tdai-memory-mcp patterns             Pattern dashboard (functions, components, classes)
+  tdai-memory-mcp patterns retro       Pattern retrospective (adoption rate, most used)
 
 CodeGraph commands:
   tdai-memory-mcp index [--path src] [--repo .]  Index code symbols (Tree-sitter)

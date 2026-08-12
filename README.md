@@ -73,6 +73,26 @@ All automatic. No user action needed.
 | **Action item tracker** | Verified/open/recurring fixes | `errors actions` |
 | **Error dashboard** | Patterns, resolution rate, confidence distribution | `errors` |
 
+#### Moat 2: Decision Learning
+
+| Feature | What it does | CLI |
+|---|---|---|
+| **Decision auto-capture** | Captures dependency choices, config decisions, commit-encoded decisions | — |
+| **Decision injection** | Injects past decisions before `npm install`, `git commit`, etc. | — |
+| **Decision confidence** | Upvotes decisions seen multiple times (re-chose same thing) | — |
+| **Decision retro** | Follow rate, repeated decisions, drifted decisions | `decisions retro` |
+| **Decision dashboard** | Top decisions by confidence, type breakdown | `decisions` |
+
+#### Moat 3: Pattern Learning
+
+| Feature | What it does | CLI |
+|---|---|---|
+| **Pattern auto-capture** | Captures function/component/class/import patterns from Write/Edit | — |
+| **Pattern injection** | Injects same-language patterns before editing files | — |
+| **Pattern confidence** | Upvotes patterns seen multiple times (widely used) | — |
+| **Pattern retro** | Adoption rate, most seen patterns | `patterns retro` |
+| **Pattern dashboard** | Top patterns by confidence, type/language breakdown | `patterns` |
+
 ### Observability
 
 `explain_recall` tool shows BM25 score, vector score, RRF fused score, matched/missed keywords for any recall.
@@ -207,6 +227,14 @@ npx tdai-memory-mcp errors context     # Error context (git branch, commits)
 npx tdai-memory-mcp errors inherited   # Cross-project fix inheritance
 npx tdai-memory-mcp errors provenance  # Fix provenance chain
 npx tdai-memory-mcp errors persona     # Error profile per project
+
+# Decision learning (Moat 2)
+npx tdai-memory-mcp decisions          # Decision dashboard
+npx tdai-memory-mcp decisions retro    # Decision retrospective (follow rate, drift)
+
+# Pattern learning (Moat 3)
+npx tdai-memory-mcp patterns           # Pattern dashboard
+npx tdai-memory-mcp patterns retro     # Pattern retrospective (adoption rate)
 
 # CodeGraph (opt-in: set TDAI_ENABLE_ADVANCED=1)
 npx tdai-memory-mcp index --path src --repo .          # Index code (Tree-sitter, 9 languages)

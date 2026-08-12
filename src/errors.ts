@@ -2406,3 +2406,371 @@ export function errorsPersona(dbPath: string = defaultDbPath()): void {
 
   db.close();
 }
+
+// ==================================================================
+// Moat 2: Decision Learning Loop
+// ==================================================================
+
+/**
+ * `tdai-memory-mcp decisions` — Decision dashboard.
+ * Shows captured decisions, follow rate, top choices.
+ */
+export function decisionsDashboard(dbPath: string = defaultDbPath()): void {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true });
+  } catch {
+    console.error("Error: Could not open database at", dbPath);
+    process.exit(1);
+  }
+
+  console.log("tdai-memory-mcp decisions — Decision Learning Dashboard\n");
+  console.log(`${"─".repeat(60)}\n`);
+
+  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const windowClause = `created_at > datetime('now', '-${days} days')`;
+
+  const decisions = db
+    .prepare(
+      `SELECT
+         id,
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.decision_type') as dtype,
+         json_extract(metadata, '$.choice') as choice,
+         json_extract(metadata, '$.rationale') as rationale,
+         json_extract(metadata, '$.confidence') as confidence,
+         json_extract(metadata, '$.seen_count') as seen,
+         json_extract(metadata, '$.followed') as followed,
+         created_at
+       FROM captures
+       WHERE type = 'decision' AND deleted_at IS NULL
+       AND ${windowClause}
+       ORDER BY CAST(json_extract(metadata, '$.confidence') AS INTEGER) DESC
+       LIMIT 20`,
+    )
+    .all() as {
+    id: string;
+    title: string;
+    dtype: string;
+    choice: string;
+    rationale: string;
+    confidence: number;
+    seen: number;
+    followed: string;
+    created_at: string;
+  }[];
+
+  if (decisions.length === 0) {
+    console.log(`No decisions captured in the last ${days} days.`);
+    console.log(
+      "Decisions are auto-captured when you install dependencies, create configs, or commit decisions.\n",
+    );
+    db.close();
+    return;
+  }
+
+  console.log(`Recent decisions (last ${days} days):`);
+  console.log();
+  for (const d of decisions) {
+    const date = new Date(d.created_at).toISOString().split("T")[0];
+    const conf = d.confidence ?? 1;
+    const seen = d.seen ?? 1;
+    console.log(`  ${date} [${d.dtype}] ${d.title}  (confidence=${conf}, seen=${seen}x)`);
+    if (d.rationale) console.log(`    rationale: ${d.rationale.slice(0, 60)}`);
+  }
+
+  // Scorecard
+  console.log(`\n${"─".repeat(60)}`);
+  console.log("Decision scorecard:");
+  console.log(`  Total decisions:    ${decisions.length}`);
+
+  const byType = new Map<string, number>();
+  for (const d of decisions) {
+    byType.set(d.dtype ?? "unknown", (byType.get(d.dtype ?? "unknown") ?? 0) + 1);
+  }
+  for (const [type, count] of byType) {
+    console.log(`  ${type}: ${count}`);
+  }
+
+  const highConf = decisions.filter((d) => (d.confidence ?? 0) >= 3).length;
+  console.log(`  High confidence:    ${highConf} (seen 3+ times)`);
+  console.log();
+  console.log(
+    "Decisions are auto-captured from dependency installs, config creation, and commit messages.",
+  );
+  console.log("Set TDAI_RETRO_DAYS=N to change the window (default: 7).");
+
+  db.close();
+}
+
+/**
+ * `tdai-memory-mcp decisions retro` — Decision retrospective.
+ * Shows follow rate, ignored decisions, repeated decisions.
+ */
+export function decisionsRetro(dbPath: string = defaultDbPath()): void {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true });
+  } catch {
+    console.error("Error: Could not open database at", dbPath);
+    process.exit(1);
+  }
+
+  console.log("tdai-memory-mcp decisions retro — Decision Retrospective\n");
+  console.log(`${"─".repeat(60)}\n`);
+
+  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const windowClause = `created_at > datetime('now', '-${days} days')`;
+
+  const decisions = db
+    .prepare(
+      `SELECT
+         id,
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.decision_type') as dtype,
+         json_extract(metadata, '$.choice') as choice,
+         json_extract(metadata, '$.confidence') as confidence,
+         json_extract(metadata, '$.seen_count') as seen,
+         json_extract(metadata, '$.drift_count') as drift,
+         created_at
+       FROM captures
+       WHERE type = 'decision' AND deleted_at IS NULL
+       AND ${windowClause}
+       ORDER BY created_at DESC`,
+    )
+    .all() as {
+    id: string;
+    title: string;
+    dtype: string;
+    choice: string;
+    confidence: number;
+    seen: number;
+    drift: number;
+    created_at: string;
+  }[];
+
+  if (decisions.length === 0) {
+    console.log(`No decisions in the last ${days} days.\n`);
+    db.close();
+    return;
+  }
+
+  // Repeated decisions (same choice seen 2+ times = agent re-deciding)
+  const repeated = decisions.filter((d) => (d.seen ?? 1) >= 2);
+  if (repeated.length > 0) {
+    console.log("Repeated decisions (seen 2+ times — agent re-chose):");
+    for (const d of repeated) {
+      console.log(`  [${d.dtype}] ${d.title}  (seen ${d.seen}x)`);
+    }
+    console.log();
+  }
+
+  // Drifted decisions (ignored)
+  const drifted = decisions.filter((d) => (d.drift ?? 0) > 0);
+  if (drifted.length > 0) {
+    console.log("Drifted decisions (injected but ignored):");
+    for (const d of drifted) {
+      console.log(`  [${d.dtype}] ${d.title}  (drift=${d.drift})`);
+    }
+    console.log();
+  }
+
+  // Scorecard
+  console.log(`${"─".repeat(60)}`);
+  console.log("Decision retro scorecard:");
+  console.log(`  Total decisions:     ${decisions.length}`);
+  console.log(`  Repeated:            ${repeated.length}`);
+  console.log(`  Drifted:             ${drifted.length}`);
+  const followRate =
+    decisions.length > 0
+      ? (((decisions.length - drifted.length) / decisions.length) * 100).toFixed(0)
+      : "0";
+  console.log(`  Follow rate:         ${followRate}%`);
+  console.log();
+  console.log("Set TDAI_RETRO_DAYS=N to change the window (default: 7).");
+
+  db.close();
+}
+
+// ==================================================================
+// Moat 3: Pattern Learning Loop
+// ==================================================================
+
+/**
+ * `tdai-memory-mcp patterns` — Pattern dashboard.
+ * Shows captured code patterns, adoption rate, top patterns.
+ */
+export function patternsDashboard(dbPath: string = defaultDbPath()): void {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true });
+  } catch {
+    console.error("Error: Could not open database at", dbPath);
+    process.exit(1);
+  }
+
+  console.log("tdai-memory-mcp patterns — Pattern Learning Dashboard\n");
+  console.log(`${"─".repeat(60)}\n`);
+
+  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const windowClause = `created_at > datetime('now', '-${days} days')`;
+
+  const patterns = db
+    .prepare(
+      `SELECT
+         id,
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.pattern_type') as ptype,
+         json_extract(metadata, '$.language') as language,
+         json_extract(metadata, '$.signature') as sig,
+         json_extract(metadata, '$.file_path') as fpath,
+         json_extract(metadata, '$.confidence') as confidence,
+         json_extract(metadata, '$.seen_count') as seen,
+         json_extract(metadata, '$.adopted') as adopted,
+         created_at
+       FROM captures
+       WHERE type = 'pattern' AND deleted_at IS NULL
+       AND ${windowClause}
+       ORDER BY CAST(json_extract(metadata, '$.confidence') AS INTEGER) DESC
+       LIMIT 20`,
+    )
+    .all() as {
+    id: string;
+    title: string;
+    ptype: string;
+    language: string;
+    sig: string;
+    fpath: string;
+    confidence: number;
+    seen: number;
+    adopted: string;
+    created_at: string;
+  }[];
+
+  if (patterns.length === 0) {
+    console.log(`No patterns captured in the last ${days} days.`);
+    console.log(
+      "Patterns are auto-captured when you write/edit code (functions, components, classes, imports).\n",
+    );
+    db.close();
+    return;
+  }
+
+  console.log(`Recent patterns (last ${days} days):`);
+  console.log();
+  for (const p of patterns) {
+    const date = new Date(p.created_at).toISOString().split("T")[0];
+    const conf = p.confidence ?? 1;
+    const seen = p.seen ?? 1;
+    console.log(
+      `  ${date} [${p.ptype}] [${p.language}] ${p.title}  (confidence=${conf}, seen=${seen}x)`,
+    );
+    if (p.fpath) console.log(`    file: ${p.fpath}`);
+  }
+
+  // Scorecard
+  console.log(`\n${"─".repeat(60)}`);
+  console.log("Pattern scorecard:");
+  console.log(`  Total patterns:     ${patterns.length}`);
+
+  const byType = new Map<string, number>();
+  const byLang = new Map<string, number>();
+  for (const p of patterns) {
+    byType.set(p.ptype ?? "unknown", (byType.get(p.ptype ?? "unknown") ?? 0) + 1);
+    byLang.set(p.language ?? "unknown", (byLang.get(p.language ?? "unknown") ?? 0) + 1);
+  }
+  console.log("  By type:");
+  for (const [type, count] of byType) {
+    console.log(`    ${type}: ${count}`);
+  }
+  console.log("  By language:");
+  for (const [lang, count] of byLang) {
+    console.log(`    ${lang}: ${count}`);
+  }
+
+  const highConf = patterns.filter((p) => (p.confidence ?? 0) >= 3).length;
+  console.log(`  High confidence:    ${highConf} (seen 3+ times)`);
+  console.log();
+  console.log("Patterns are auto-captured from Write/Edit tools.");
+  console.log("Set TDAI_RETRO_DAYS=N to change the window (default: 7).");
+
+  db.close();
+}
+
+/**
+ * `tdai-memory-mcp patterns retro` — Pattern retrospective.
+ * Shows adoption rate, ignored patterns, most/least followed.
+ */
+export function patternsRetro(dbPath: string = defaultDbPath()): void {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true });
+  } catch {
+    console.error("Error: Could not open database at", dbPath);
+    process.exit(1);
+  }
+
+  console.log("tdai-memory-mcp patterns retro — Pattern Retrospective\n");
+  console.log(`${"─".repeat(60)}\n`);
+
+  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const windowClause = `created_at > datetime('now', '-${days} days')`;
+
+  const patterns = db
+    .prepare(
+      `SELECT
+         id,
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.pattern_type') as ptype,
+         json_extract(metadata, '$.language') as language,
+         json_extract(metadata, '$.confidence') as confidence,
+         json_extract(metadata, '$.seen_count') as seen,
+         json_extract(metadata, '$.adopted') as adopted,
+         created_at
+       FROM captures
+       WHERE type = 'pattern' AND deleted_at IS NULL
+       AND ${windowClause}
+       ORDER BY CAST(json_extract(metadata, '$.confidence') AS INTEGER) DESC`,
+    )
+    .all() as {
+    id: string;
+    title: string;
+    ptype: string;
+    language: string;
+    confidence: number;
+    seen: number;
+    adopted: string;
+    created_at: string;
+  }[];
+
+  if (patterns.length === 0) {
+    console.log(`No patterns in the last ${days} days.\n`);
+    db.close();
+    return;
+  }
+
+  // Most seen patterns (adopted multiple times)
+  const topPatterns = patterns.filter((p) => (p.seen ?? 1) >= 3);
+  if (topPatterns.length > 0) {
+    console.log("Most seen patterns (seen 3+ times — widely used):");
+    for (const p of topPatterns.slice(0, 10)) {
+      console.log(`  [${p.ptype}] [${p.language}] ${p.title}  (seen ${p.seen}x)`);
+    }
+    console.log();
+  }
+
+  // Scorecard
+  console.log(`${"─".repeat(60)}`);
+  console.log("Pattern retro scorecard:");
+  console.log(`  Total patterns:     ${patterns.length}`);
+  console.log(`  Widely used (3+):   ${topPatterns.length}`);
+  const adoptedCount = patterns.filter((p) => p.adopted === "true").length;
+  console.log(`  Adopted:            ${adoptedCount}`);
+  const adoptionRate =
+    patterns.length > 0 ? ((adoptedCount / patterns.length) * 100).toFixed(0) : "0";
+  console.log(`  Adoption rate:      ${adoptionRate}%`);
+  console.log();
+  console.log("Set TDAI_RETRO_DAYS=N to change the window (default: 7).");
+
+  db.close();
+}
