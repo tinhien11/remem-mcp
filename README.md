@@ -127,8 +127,6 @@ All three run via lifecycle hooks. The agent doesn't need to call any tool.
 
 ## Advanced tools
 
-Enabled by default. Set `TDAI_CORE_ONLY=1` to disable (saves tokens if you only need memory).
-
 ![CodeGraph viewer](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/viewer-demo.gif)
 
 ```bash
