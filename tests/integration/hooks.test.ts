@@ -394,13 +394,13 @@ describe("Integration: install-hooks", () => {
     expect(config.hooks.SessionEnd).toBeDefined();
   });
 
-  it("uninstall-hooks removes only SessionStart and SessionEnd", () => {
+  it("uninstall-hooks removes tdai-memory hooks but preserves user hooks", () => {
     const configPath = join(fakeHome, ".config", "devin", "config.json");
     const configWithHooks = {
       agent: { model: "test" },
       hooks: {
-        SessionStart: [{ hooks: [{ type: "command", command: "test" }] }],
-        SessionEnd: [{ hooks: [{ type: "command", command: "test" }] }],
+        SessionStart: [{ hooks: [{ type: "command", command: "tdai-memory-mcp hook-recall" }] }],
+        SessionEnd: [{ hooks: [{ type: "command", command: "tdai-memory-mcp hook-session-end" }] }],
         PreToolUse: [{ hooks: [{ type: "command", command: "keep-me" }] }],
       },
     };
@@ -423,8 +423,8 @@ describe("Integration: install-hooks", () => {
     const configWithOnlyOurHooks = {
       agent: { model: "test" },
       hooks: {
-        SessionStart: [{ hooks: [{ type: "command", command: "test" }] }],
-        SessionEnd: [{ hooks: [{ type: "command", command: "test" }] }],
+        SessionStart: [{ hooks: [{ type: "command", command: "tdai-memory-mcp hook-recall" }] }],
+        SessionEnd: [{ hooks: [{ type: "command", command: "tdai-memory-mcp hook-session-end" }] }],
       },
     };
     writeFileSync(configPath, JSON.stringify(configWithOnlyOurHooks, null, 2));

@@ -133,8 +133,8 @@ describe("Regression: Claude Code hooks", () => {
     const settingsPath = join(fakeHome, ".claude", "settings.json");
     const withHooks = {
       hooks: {
-        SessionStart: [{ hooks: [{ type: "command", command: "test" }] }],
-        Stop: [{ hooks: [{ type: "command", command: "test" }] }],
+        SessionStart: [{ hooks: [{ type: "command", command: "tdai-memory-mcp hook-recall" }] }],
+        Stop: [{ hooks: [{ type: "command", command: "tdai-memory-mcp hook-stop" }] }],
         PreToolUse: [{ hooks: [{ type: "command", command: "keep-me" }] }],
       },
     };
@@ -188,8 +188,8 @@ describe("Regression: Devin CLI hooks", () => {
     const withHooks = {
       agent: { model: "test" },
       hooks: {
-        SessionStart: [{ hooks: [{ type: "command", command: "test" }] }],
-        Stop: [{ hooks: [{ type: "command", command: "test" }] }],
+        SessionStart: [{ hooks: [{ type: "command", command: "tdai-memory-mcp hook-recall" }] }],
+        Stop: [{ hooks: [{ type: "command", command: "tdai-memory-mcp hook-stop" }] }],
       },
     };
     writeFileSync(configPath, JSON.stringify(withHooks, null, 2));
@@ -210,8 +210,8 @@ describe("Regression: Devin CLI hooks", () => {
     const withHooks = {
       agent: { model: "test" },
       hooks: {
-        SessionStart: [{ hooks: [{ type: "command", command: "test" }] }],
-        Stop: [{ hooks: [{ type: "command", command: "test" }] }],
+        SessionStart: [{ hooks: [{ type: "command", command: "tdai-memory-mcp hook-recall" }] }],
+        Stop: [{ hooks: [{ type: "command", command: "tdai-memory-mcp hook-stop" }] }],
         PreToolUse: [{ hooks: [{ type: "command", command: "keep-me" }] }],
       },
     };

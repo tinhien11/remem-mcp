@@ -46,7 +46,7 @@ const HOOKS_CONFIG = {
   ],
   PreToolUse: [
     {
-      matcher: "Bash",
+      matcher: "Bash|exec",
       hooks: [
         {
           type: "command",
@@ -58,7 +58,19 @@ const HOOKS_CONFIG = {
   ],
   PostToolUse: [
     {
-      matcher: "Bash",
+      matcher: "Bash|exec",
+      hooks: [
+        {
+          type: "command",
+          command: hookCommand("hook-post-tool-use"),
+          timeout: 5,
+        },
+      ],
+    },
+  ],
+  PostToolUseFailure: [
+    {
+      matcher: "Bash|exec",
       hooks: [
         {
           type: "command",
@@ -248,16 +260,34 @@ export async function uninstallHooks(): Promise<void> {
   console.log("Removing lifecycle hooks...\n");
 
   let removed = 0;
+  const tdaiEvents = [
+    "SessionStart",
+    "SessionEnd",
+    "Stop",
+    "PreToolUse",
+    "PostToolUse",
+    "PostToolUseFailure",
+  ];
 
   // Remove from Devin CLI
   const devinPath = join(homedir(), ".config", "devin", "config.json");
   if (existsSync(devinPath)) {
     const config = readJsonConfig(devinPath);
     if (config.hooks) {
-      const hooks = config.hooks as Record<string, unknown>;
-      delete hooks.SessionStart;
-      delete hooks.SessionEnd;
-      delete hooks.Stop;
+      const hooks = config.hooks as Record<string, unknown[]>;
+      for (const ev of tdaiEvents) {
+        if (hooks[ev]) {
+          // Filter out only tdai-memory hooks, preserve user hooks
+          hooks[ev] = (hooks[ev] as { hooks?: { command?: string }[] }[]).filter((entry) => {
+            const entryHooks = entry?.hooks;
+            if (!entryHooks) return true;
+            return !entryHooks.some((h) => h?.command?.includes("tdai-memory"));
+          });
+          if (Array.isArray(hooks[ev]) && hooks[ev].length === 0) {
+            delete hooks[ev];
+          }
+        }
+      }
       if (Object.keys(hooks).length === 0) {
         delete config.hooks;
       }
@@ -272,10 +302,19 @@ export async function uninstallHooks(): Promise<void> {
   if (existsSync(claudePath)) {
     const config = readJsonConfig(claudePath);
     if (config.hooks) {
-      const hooks = config.hooks as Record<string, unknown>;
-      delete hooks.SessionStart;
-      delete hooks.SessionEnd;
-      delete hooks.Stop;
+      const hooks = config.hooks as Record<string, unknown[]>;
+      for (const ev of tdaiEvents) {
+        if (hooks[ev]) {
+          hooks[ev] = (hooks[ev] as { hooks?: { command?: string }[] }[]).filter((entry) => {
+            const entryHooks = entry?.hooks;
+            if (!entryHooks) return true;
+            return !entryHooks.some((h) => h?.command?.includes("tdai-memory"));
+          });
+          if (Array.isArray(hooks[ev]) && hooks[ev].length === 0) {
+            delete hooks[ev];
+          }
+        }
+      }
       if (Object.keys(hooks).length === 0) {
         delete config.hooks;
       }

@@ -291,10 +291,16 @@ export function hookPostToolUse(dbPath: string): void {
         return;
       }
 
+      // Claude Code: { exit_code, stderr, stdout }
+      // Devin CLI: { success, output, error }
+      // PostToolUseFailure (Claude Code): always a failure
+      const isFailureEvent = input.hook_event_name === "PostToolUseFailure";
       const exitCode = toolResponse.exit_code ?? toolResponse.status ?? null;
-      const isError = exitCode !== null && exitCode !== 0;
-      const stderr = toolResponse.stderr ?? "";
-      const stdout = toolResponse.stdout ?? "";
+      const devinSuccess = typeof toolResponse.success === "boolean" ? toolResponse.success : null;
+      const isError =
+        isFailureEvent || devinSuccess === false || (exitCode !== null && exitCode !== 0);
+      const stderr = toolResponse.stderr ?? toolResponse.error ?? "";
+      const stdout = toolResponse.stdout ?? toolResponse.output ?? "";
       const command = toolInput.command ?? "";
       const cwd = input.cwd ?? process.cwd();
       const sessionKey = hashPath(cwd);
