@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -168,6 +168,53 @@ async function main(): Promise<void> {
         );
       }
       console.log(`\n${rows.length} capture(s).`);
+    }
+    db.close();
+    return;
+  }
+  if (arg === "stats") {
+    const db = openDbWithSchema(defaultDbPath());
+    const byType = db
+      .prepare(
+        "SELECT type, COUNT(*) as cnt FROM captures WHERE deleted_at IS NULL GROUP BY type ORDER BY cnt DESC",
+      )
+      .all() as { type: string; cnt: number }[];
+    const total = byType.reduce((s, r) => s + r.cnt, 0);
+    const byTrust = db
+      .prepare(
+        "SELECT trust_state, COUNT(*) as cnt FROM captures WHERE deleted_at IS NULL GROUP BY trust_state",
+      )
+      .all() as { trust_state: string; cnt: number }[];
+    const withVectors = db
+      .prepare(
+        "SELECT COUNT(*) as cnt FROM captures_vec WHERE id IN (SELECT id FROM captures WHERE deleted_at IS NULL)",
+      )
+      .get() as { cnt: number };
+    const oldest = db
+      .prepare("SELECT MIN(created_at) as ts FROM captures WHERE deleted_at IS NULL")
+      .get() as { ts: number | null };
+    const newest = db
+      .prepare("SELECT MAX(created_at) as ts FROM captures WHERE deleted_at IS NULL")
+      .get() as { ts: number | null };
+    const dbSize = statSync(defaultDbPath()).size;
+
+    console.log("tdai-memory-mcp stats\n");
+    console.log(`  Total captures: ${total}`);
+    console.log(
+      `  With vectors:   ${withVectors.cnt} (${total > 0 ? Math.round((withVectors.cnt / total) * 100) : 0}%)`,
+    );
+    console.log(`  DB size:        ${(dbSize / 1024 / 1024).toFixed(1)} MB`);
+    if (oldest.ts)
+      console.log(`  Oldest:         ${new Date(oldest.ts).toISOString().split("T")[0]}`);
+    if (newest.ts)
+      console.log(`  Newest:         ${new Date(newest.ts).toISOString().split("T")[0]}`);
+    console.log("\n  By type:");
+    for (const r of byType) {
+      console.log(`    ${r.type.padEnd(15)} ${r.cnt}`);
+    }
+    console.log("\n  By trust state:");
+    for (const r of byTrust) {
+      console.log(`    ${r.trust_state.padEnd(15)} ${r.cnt}`);
     }
     db.close();
     return;
@@ -512,6 +559,9 @@ Usage:
   tdai-memory-mcp install-hooks  Install lifecycle hooks (SessionStart, Stop, SessionEnd)
   tdai-memory-mcp uninstall-hooks  Remove lifecycle hooks
   tdai-memory-mcp hook-post-commit  Auto-index changed files (git post-commit hook)
+  tdai-memory-mcp doctor         Check setup health
+  tdai-memory-mcp recent [N]     Show N most recent captures (default: 20)
+  tdai-memory-mcp stats          Show memory statistics (by type, trust, size)
 
 CodeGraph commands:
   tdai-memory-mcp index [--path src] [--repo .]  Index code symbols (Tree-sitter)

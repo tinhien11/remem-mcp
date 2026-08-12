@@ -734,6 +734,68 @@ const TOOLS: Tool[] = [
       required: ["repo_path"],
     },
   },
+  {
+    name: "update",
+    description:
+      "Update an existing memory entry. Use this when a capture needs corrections " +
+      "(wrong info, missing tags, needs rewording). Preserves the original ID and created_at.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: {
+          type: "string",
+          description: "The ID of the capture to update.",
+        },
+        content: {
+          type: "string",
+          description: "The new content. If omitted, the original content is kept.",
+        },
+        tags: {
+          type: "array",
+          items: { type: "string" },
+          description: "The new tags. Replaces existing tags entirely.",
+        },
+        type: {
+          type: "string",
+          enum: ["conversation", "decision", "learning", "task", "error", "atom"],
+          description: "The new type. If omitted, the original type is kept.",
+        },
+        verified: {
+          type: "boolean",
+          default: false,
+          description: "Set to true to mark as verified.",
+        },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "consolidate",
+    description:
+      "Find and merge duplicate or near-duplicate memories. " +
+      "Use this when you suspect redundant captures (e.g. same decision captured twice). " +
+      "Returns groups of similar captures. Set confirm=true to merge them.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_key: {
+          type: "string",
+          description:
+            "The session key to consolidate. Default is hash(cwd). Use 'all' for all projects.",
+        },
+        threshold: {
+          type: "number",
+          default: 0.75,
+          description: "Similarity threshold (0-1). Higher = stricter matching. Default 0.75.",
+        },
+        confirm: {
+          type: "boolean",
+          default: false,
+          description: "Set to true to merge duplicates. Without confirm, returns candidates only.",
+        },
+      },
+    },
+  },
 ];
 
 /**
@@ -749,6 +811,8 @@ const CORE_TOOL_NAMES = new Set([
   "resolve",
   "handoff",
   "adr",
+  "update",
+  "consolidate",
 ]);
 
 function getTools(): Tool[] {
@@ -896,6 +960,10 @@ export function createServer(opts: ServerOptions): Server {
         return handleWikiGet(args, opts);
       case "wiki_outdated":
         return handleWikiOutdated(args, opts);
+      case "update":
+        return handleUpdate(args, opts);
+      case "consolidate":
+        return handleConsolidate(args, opts);
       default:
         return {
           content: [{ type: "text", text: `Error: Unknown tool "${name}".` }],
@@ -1377,6 +1445,170 @@ async function handleForget(
       {
         type: "text",
         text: `${action}: ${result.captures} captures, ${result.atoms} atoms, ${result.scenarios} scenarios`,
+      },
+    ],
+  };
+}
+
+/** Handle the update tool. */
+async function handleUpdate(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  const id = args.id as string;
+  if (!id) {
+    return { content: [{ type: "text", text: "Error: id is required." }], isError: true };
+  }
+
+  const db = getDb(opts);
+  const row = db.prepare("SELECT * FROM captures WHERE id = ? AND deleted_at IS NULL").get(id) as
+    | Record<string, unknown>
+    | undefined;
+  if (!row) {
+    return { content: [{ type: "text", text: `Error: Capture ${id} not found.` }], isError: true };
+  }
+
+  const newContent = (args.content as string) ?? (row.content as string);
+  const newTags = args.tags ? JSON.stringify(args.tags) : (row.tags as string);
+  const newType = (args.type as string) ?? (row.type as string);
+  const newTrust = args.verified ? "verified" : (row.trust_state as string);
+
+  // Update content hash
+  const contentHash = createHash("sha256").update(newContent).digest("hex");
+
+  db.prepare(
+    "UPDATE captures SET content = ?, tags = ?, type = ?, trust_state = ?, content_hash = ? WHERE id = ?",
+  ).run(newContent, newTags, newType, newTrust, contentHash, id);
+
+  // Update FTS index
+  const rowid =
+    (row.rowid as number) ?? db.prepare("SELECT rowid FROM captures WHERE id = ?").get(id)?.rowid;
+  if (rowid) {
+    db.prepare(
+      "INSERT INTO captures_fts(captures_fts, rowid, content, tags, type) VALUES('delete', ?, '', '', '')",
+    ).run(rowid);
+    db.prepare(
+      "INSERT INTO captures_fts (rowid, id, content, tags, type) VALUES (?, ?, ?, ?, ?)",
+    ).run(rowid, id, newContent, newTags, newType);
+  }
+
+  return {
+    content: [{ type: "text", text: `Updated: ${id}\nType: ${newType}\nTrust: ${newTrust}` }],
+  };
+}
+
+/** Handle the consolidate tool. */
+async function handleConsolidate(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  const threshold = (args.threshold as number) ?? 0.75;
+  const confirm = (args.confirm as boolean) ?? false;
+  const sessionKey = (args.session_key as string) ?? defaultSessionKey();
+  const db = getDb(opts);
+
+  // Get all non-deleted captures for the session (or all if session_key === "all")
+  let sql = "SELECT id, content, type, tags, created_at FROM captures WHERE deleted_at IS NULL";
+  const params: unknown[] = [];
+  if (sessionKey !== "all") {
+    sql += " AND session_key = ?";
+    params.push(sessionKey);
+  }
+  sql += " ORDER BY created_at DESC";
+  const rows = db.prepare(sql).all(...params) as {
+    id: string;
+    content: string;
+    type: string;
+    tags: string;
+    created_at: number;
+  }[];
+
+  if (rows.length < 2) {
+    return {
+      content: [{ type: "text", text: "Not enough captures to consolidate (need at least 2)." }],
+    };
+  }
+
+  // Find duplicates by comparing content similarity (Jaccard on word sets)
+  const groups: { ids: string[]; similarity: number; preview: string }[] = [];
+  const seen = new Set<string>();
+
+  for (let i = 0; i < rows.length; i++) {
+    if (seen.has(rows[i].id)) continue;
+    const words1 = new Set(rows[i].content.toLowerCase().split(/\s+/));
+    const group = [rows[i].id];
+
+    for (let j = i + 1; j < rows.length; j++) {
+      if (seen.has(rows[j].id)) continue;
+      const words2 = new Set(rows[j].content.toLowerCase().split(/\s+/));
+      const intersection = [...words1].filter((w) => words2.has(w)).length;
+      const union = new Set([...words1, ...words2]).size;
+      const sim = union > 0 ? intersection / union : 0;
+      if (sim >= threshold) {
+        group.push(rows[j].id);
+        seen.add(rows[j].id);
+      }
+    }
+
+    if (group.length > 1) {
+      seen.add(rows[i].id);
+      groups.push({
+        ids: group,
+        similarity: threshold,
+        preview: rows[i].content.slice(0, 80).replace(/\n/g, " "),
+      });
+    }
+  }
+
+  if (groups.length === 0) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `No duplicates found (threshold: ${threshold}). ${rows.length} captures checked.`,
+        },
+      ],
+    };
+  }
+
+  if (!confirm) {
+    const lines: string[] = [
+      `Found ${groups.length} duplicate group(s) (threshold: ${threshold}):`,
+    ];
+    for (const g of groups) {
+      lines.push(`\n  Group (${g.ids.length} captures): ${g.preview}...`);
+      for (const id of g.ids) {
+        lines.push(`    - ${id}`);
+      }
+    }
+    lines.push("\nSet confirm=true to merge (keeps oldest, deletes rest).");
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  }
+
+  // Merge: keep the oldest capture, soft-delete the rest
+  let merged = 0;
+  for (const g of groups) {
+    // Sort by created_at ascending (oldest first)
+    const groupRows = g.ids
+      .map((id) => rows.find((r) => r.id === id))
+      .filter(Boolean)
+      .sort((a, b) => a!.created_at - b!.created_at);
+    const keeper = groupRows[0]!;
+    const dups = groupRows.slice(1);
+    for (const dup of dups) {
+      db.prepare("UPDATE captures SET deleted_at = ? WHERE id = ?").run(Date.now(), dup.id);
+      db.prepare("DELETE FROM captures_vec WHERE id = ?").run(dup.id);
+      merged++;
+    }
+    // Log the merge
+    void keeper;
+  }
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: `Consolidated ${groups.length} group(s), merged ${merged} duplicate(s). Kept oldest capture in each group.`,
       },
     ],
   };

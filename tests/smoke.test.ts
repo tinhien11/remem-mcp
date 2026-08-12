@@ -113,7 +113,7 @@ describeOrSkip("Smoke test: full server over stdio", () => {
     if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
   });
 
-  it("lists all 13 tools", async () => {
+  it("lists all core tools", async () => {
     const response = await send("tools/list", {});
     const toolNames = response.result.tools.map((t: any) => t.name);
 
@@ -123,6 +123,9 @@ describeOrSkip("Smoke test: full server over stdio", () => {
     expect(toolNames).toContain("forget");
     expect(toolNames).toContain("handoff");
     expect(toolNames).toContain("adr");
+    expect(toolNames).toContain("update");
+    expect(toolNames).toContain("consolidate");
+    expect(toolNames).toContain("resolve");
     expect(toolNames).toContain("knowledge_create");
     expect(toolNames).toContain("knowledge_get");
     expect(toolNames).toContain("knowledge_list");
@@ -130,8 +133,8 @@ describeOrSkip("Smoke test: full server over stdio", () => {
     expect(toolNames).toContain("skill_get");
     expect(toolNames).toContain("skill_list");
     expect(toolNames).toContain("skill_search");
-    expect(toolNames).toContain("resolve");
-    expect(toolNames.length).toBe(24);
+    // Total = 7 core + 2 new + 4 knowledge + 3 skill + 5 codegraph + 5 wiki = 26
+    expect(toolNames.length).toBe(26);
   });
 
   it("captures a decision", async () => {
