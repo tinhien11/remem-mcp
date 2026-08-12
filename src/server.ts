@@ -841,9 +841,8 @@ const TOOLS: Tool[] = [
 ];
 
 /**
- * Core tools always available. Advanced tools (CodeGraph, Wiki, Knowledge, Skill)
- * are only included when TDAI_ENABLE_ADVANCED is set, to reduce token overhead
- * for users who only need memory.
+ * All tools available by default. Set TDAI_CORE_ONLY=1 to reduce token
+ * overhead by excluding CodeGraph, Wiki, Knowledge, and Skill tools.
  */
 const CORE_TOOL_NAMES = new Set([
   "recall",
@@ -858,10 +857,9 @@ const CORE_TOOL_NAMES = new Set([
 ]);
 
 function getTools(): Tool[] {
-  const enableAdvanced =
-    process.env.TDAI_ENABLE_ADVANCED === "1" || process.env.TDAI_ENABLE_ADVANCED === "true";
-  if (enableAdvanced) return TOOLS;
-  return TOOLS.filter((t) => CORE_TOOL_NAMES.has(t.name));
+  const coreOnly = process.env.TDAI_CORE_ONLY === "1" || process.env.TDAI_CORE_ONLY === "true";
+  if (coreOnly) return TOOLS.filter((t) => CORE_TOOL_NAMES.has(t.name));
+  return TOOLS;
 }
 
 /** Create the MCP server with all tools registered. */

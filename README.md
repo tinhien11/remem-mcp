@@ -125,9 +125,9 @@ All three run via lifecycle hooks. The agent doesn't need to call any tool.
 
 ---
 
-## Advanced tools (opt-in)
+## Advanced tools
 
-Set `TDAI_ENABLE_ADVANCED=1` to enable CodeGraph + Wiki (17 extra MCP tools):
+Enabled by default. Set `TDAI_CORE_ONLY=1` to disable (saves tokens if you only need memory).
 
 ```bash
 npx tdai-memory-mcp index --path src --repo .    # Index code (Tree-sitter, 9 languages)
@@ -164,7 +164,7 @@ All settings have defaults. Config file is optional: `~/.config/tdai-memory-mcp/
 | Cross-project memory | `TDAI_GLOBAL_SESSION_KEY` | _(unset)_ |
 | Cross-project errors | `TDAI_GLOBAL_ERRORS` | _(unset, set to `1`)_ |
 | Retro window (days) | `TDAI_RETRO_DAYS` | `7` |
-| Advanced tools (CodeGraph, Wiki) | `TDAI_ENABLE_ADVANCED` | _(unset, set to `1`)_ |
+| Core-only mode (disable advanced tools) | `TDAI_CORE_ONLY` | _(unset, set to `1`)_ |
 | LLM API key (pipeline) | `TDAI_LLM_API_KEY` | _(unset)_ |
 
 ---
