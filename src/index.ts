@@ -703,6 +703,7 @@ Getting started:
   tdai-memory-mcp setup          One-command install (MCP + hooks + demo)
   tdai-memory-mcp demo           Watch the learning loop work in 30s
   tdai-memory-mcp status         One dashboard: health + all 3 loops + recent
+  tdai-memory-mcp viewer         Web UI at localhost:7331
   tdai-memory-mcp doctor         Check setup health
   tdai-memory-mcp version        Print version
 
