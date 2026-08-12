@@ -605,40 +605,9 @@ export function hookPreToolUse(dbPath: string): void {
 
       db.close();
 
-      if (errors.length === 0) {
-        process.stdout.write(JSON.stringify({}));
-        return;
-      }
-
-      // [Feature 6] Stale detection: check if file paths in error still exist
-      const validErrors = errors.filter((err) => {
-        const meta = JSON.parse(err.metadata);
-        const filesInError = extractFilePaths(err.content);
-        if (filesInError.length === 0) return true; // No file refs = still valid
-        // Valid if at least one referenced file still exists
-        return filesInError.some((f) => existsSync(join(cwd, f)));
-      });
-
-      if (validErrors.length === 0) {
-        logToFile("PreToolUse: all past errors are stale (files no longer exist)");
-        process.stdout.write(JSON.stringify({}));
-        return;
-      }
-
-      // [Feature 8] Apply confidence decay at read time (Ebbinghaus curve)
-      // Re-rank by decayed confidence, then take top 2 (k=2 optimal per ReasoningBank)
-      const decayed = validErrors
-        .map((err) => {
-          const meta = JSON.parse(err.metadata);
-          const base = meta.confidence ?? 2;
-          const decayed = applyConfidenceDecay(base, err.created_at, meta.last_recurred);
-          return { err, meta, decayedConfidence: decayed };
-        })
-        .sort((a, b) => b.decayedConfidence - a.decayedConfidence)
-        .slice(0, 2);
-
-      // [Feature 9] Error-to-fix linking — also fetch RESOLVED errors with fixes
-      // to inject the proven fix, not just the anti-pattern
+      // [Feature 9] Error-to-fix linking — fetch RESOLVED errors with fixes
+      // This runs BEFORE the unresolved errors check so proven fixes are
+      // injected even when there are no unresolved errors to warn about.
       let resolvedFixes: { title: string; fix: string; date: string }[] = [];
       try {
         const rDb = new Database(dbPath, { readonly: true });
@@ -647,7 +616,7 @@ export function hookPreToolUse(dbPath: string): void {
             `SELECT content, metadata, created_at FROM captures
              WHERE type = 'error' ${sessionFilter}
              AND deleted_at IS NULL
-             AND json_extract(metadata, '$.resolved') = true
+             AND json_extract(metadata, '$.resolved') = 1
              AND json_extract(metadata, '$.fix_applied') IS NOT NULL
              ORDER BY created_at DESC LIMIT 2`,
           )
@@ -664,6 +633,38 @@ export function hookPreToolUse(dbPath: string): void {
       } catch {
         // non-fatal — fixes are bonus context
       }
+
+      if (errors.length === 0 && resolvedFixes.length === 0) {
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+
+      // [Feature 6] Stale detection: check if file paths in error still exist
+      const validErrors = errors.filter((err) => {
+        const meta = JSON.parse(err.metadata);
+        const filesInError = extractFilePaths(err.content);
+        if (filesInError.length === 0) return true; // No file refs = still valid
+        // Valid if at least one referenced file still exists
+        return filesInError.some((f) => existsSync(join(cwd, f)));
+      });
+
+      if (validErrors.length === 0 && resolvedFixes.length === 0) {
+        logToFile("PreToolUse: all past errors are stale and no proven fixes");
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+
+      // [Feature 8] Apply confidence decay at read time (Ebbinghaus curve)
+      // Re-rank by decayed confidence, then take top 2 (k=2 optimal per ReasoningBank)
+      const decayed = validErrors
+        .map((err) => {
+          const meta = JSON.parse(err.metadata);
+          const base = meta.confidence ?? 2;
+          const decayed = applyConfidenceDecay(base, err.created_at, meta.last_recurred);
+          return { err, meta, decayedConfidence: decayed };
+        })
+        .sort((a, b) => b.decayedConfidence - a.decayedConfidence)
+        .slice(0, 2);
 
       // Build structured warning context (ReasoningBank format)
       const lines: string[] = [`[tdai-memory] Past error to avoid repeating:`];
@@ -904,7 +905,7 @@ function extractFilePaths(content: string): string[] {
 }
 
 /** Hash a file path to a session key (same as storage layer). */
-function hashPath(path: string): string {
+export function hashPath(path: string): string {
   return createHash("sha256").update(path).digest("hex").slice(0, 16);
 }
 
