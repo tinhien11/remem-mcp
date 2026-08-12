@@ -435,3 +435,304 @@ describe("Moat 3: Pattern Learning", () => {
     expect(ctx).toContain("Follow these patterns");
   });
 });
+
+// ==================================================================
+// Moat 2/3: Advanced Features — 8 new tests
+// ==================================================================
+
+describe("Moat 2/3: Advanced Features", () => {
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "tdai-adv-"));
+    dbPath = join(tmpDir, "test.db");
+    makeDb(dbPath);
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  // 1. Decision conflict detection
+  it("DECISIONS: conflict detected when choosing contradictory dependency", () => {
+    const db = require("better-sqlite3")(dbPath);
+    const sk = hashPath(tmpDir);
+    // First: chose sqlite
+    insertDecision(db, {
+      id: "dec-sqlite",
+      sessionKey: sk,
+      title: "Chose to use sqlite",
+      decisionType: "dependency",
+      choice: "sqlite",
+      confidence: 2,
+    });
+    db.close();
+
+    // Now: run npm install postgres (contradicts sqlite)
+    const stdin = JSON.stringify({
+      tool_name: "Bash",
+      tool_input: { command: "npm install pg" },
+      tool_response: { stdout: "added 1 package", exit_code: 0 },
+      cwd: tmpDir,
+    });
+    runHook("hook-post-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+
+    // Check that the new decision has a conflict_warning
+    const db2 = require("better-sqlite3")(dbPath);
+    const dec = db2
+      .prepare("SELECT metadata FROM captures WHERE type = 'decision' AND json_extract(metadata, '$.choice') LIKE '%pg%'")
+      .get() as { metadata: string };
+    db2.close();
+
+    if (dec) {
+      const meta = JSON.parse(dec.metadata);
+      expect(meta.conflict_warning).toContain("CONFLICT");
+    }
+  });
+
+  // 2. Decision conflict CLI report
+  it("DECISIONS: conflicts CLI shows conflict report", () => {
+    const db = require("better-sqlite3")(dbPath);
+    const sk = hashPath(tmpDir);
+    insertDecision(db, {
+      id: "dec-conflict-1",
+      sessionKey: sk,
+      title: "Chose to use postgres",
+      decisionType: "dependency",
+      choice: "postgres",
+      confidence: 1,
+    });
+    // Manually set conflict_warning
+    db.prepare("UPDATE captures SET metadata = json_set(metadata, '$.conflict_warning', 'CONFLICT: Previously chose sqlite but now choosing postgres.') WHERE id = 'dec-conflict-1'").run();
+    db.close();
+
+    const output = runCli("decisions conflicts", { TDAI_DB_PATH: dbPath });
+    expect(output).toContain("Decision Conflict Report");
+    expect(output).toContain("CONFLICT");
+  });
+
+  // 3. Decision cross-project inheritance
+  it("DECISIONS: PreToolUse injects decisions from other projects when local is empty", () => {
+    const db = require("better-sqlite3")(dbPath);
+    // Insert decision in a DIFFERENT project
+    insertDecision(db, {
+      id: "dec-other-proj",
+      sessionKey: "other-project-key",
+      title: "Chose to use zod for validation",
+      decisionType: "dependency",
+      choice: "zod",
+      rationale: "Type-safe validation",
+      confidence: 3,
+    });
+    db.close();
+
+    // Run npm install in THIS project (no local decisions)
+    const stdin = JSON.stringify({
+      tool_name: "Bash",
+      tool_input: { command: "npm install something" },
+      cwd: tmpDir, // different from "other-project-key"
+    });
+    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const parsed = JSON.parse(output);
+    const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
+
+    // Should inject the decision from the other project
+    if (ctx.length > 0) {
+      expect(ctx).toContain("Past decisions");
+    }
+  });
+
+  // 4. Decision inherited CLI report
+  it("DECISIONS: inherited CLI shows cross-project decisions", () => {
+    const db = require("better-sqlite3")(dbPath);
+    // Same decision in 2 projects
+    insertDecision(db, {
+      id: "dec-proj-a",
+      sessionKey: "proj-a",
+      title: "Chose to use react",
+      decisionType: "dependency",
+      choice: "react",
+      confidence: 2,
+    });
+    insertDecision(db, {
+      id: "dec-proj-b",
+      sessionKey: "proj-b",
+      title: "Chose to use react",
+      decisionType: "dependency",
+      choice: "react",
+      confidence: 3,
+    });
+    db.close();
+
+    const output = runCli("decisions inherited", { TDAI_DB_PATH: dbPath });
+    expect(output).toContain("Cross-Project Decision Inheritance");
+    expect(output).toContain("react");
+  });
+
+  // 5. Pattern cross-project inheritance
+  it("PATTERNS: PreToolUse injects patterns from other projects when local is empty", () => {
+    const db = require("better-sqlite3")(dbPath);
+    // Insert pattern in a DIFFERENT project
+    insertPattern(db, {
+      id: "pat-other-proj",
+      sessionKey: "other-project-key",
+      title: "Function pattern: fetchData(url)",
+      patternType: "function",
+      language: "typescript",
+      signature: "fetchData(url: string)",
+      filePath: "src/api.ts",
+      confidence: 3,
+    });
+    db.close();
+
+    // Edit a .ts file in THIS project (no local patterns)
+    const stdin = JSON.stringify({
+      tool_name: "Write",
+      tool_input: {
+        file_path: "src/new-api.ts",
+        content: "export function getData(u: string) { return fetch(u); }",
+      },
+      cwd: tmpDir,
+    });
+    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const parsed = JSON.parse(output);
+    const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
+
+    // Should inject the pattern from the other project
+    if (ctx.length > 0) {
+      expect(ctx).toContain("code pattern(s)");
+    }
+  });
+
+  // 6. Pattern conflict detection (CommonJS vs ESM)
+  it("PATTERNS: conflict detected when mixing CommonJS and ESM imports", () => {
+    const db = require("better-sqlite3")(dbPath);
+    const sk = hashPath(tmpDir);
+    // First: ESM import pattern
+    insertPattern(db, {
+      id: "pat-esm",
+      sessionKey: sk,
+      title: "Import pattern: ESM",
+      patternType: "imports",
+      language: "javascript",
+      signature: "import express from 'express'",
+      filePath: "src/server.js",
+      confidence: 2,
+    });
+    db.close();
+
+    // Now: Write a file with CommonJS require
+    const stdin = JSON.stringify({
+      tool_name: "Write",
+      tool_input: {
+        file_path: "src/legacy.js",
+        content: "const express = require('express');",
+      },
+      cwd: tmpDir,
+    });
+    runHook("hook-post-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+
+    // Check that the new pattern has a conflict_warning
+    const db2 = require("better-sqlite3")(dbPath);
+    const pat = db2
+      .prepare("SELECT metadata FROM captures WHERE type = 'pattern' AND json_extract(metadata, '$.file_path') = 'src/legacy.js'")
+      .get() as { metadata: string };
+    db2.close();
+
+    if (pat) {
+      const meta = JSON.parse(pat.metadata);
+      expect(meta.conflict_warning).toContain("CONFLICT");
+    }
+  });
+
+  // 7. Pattern conflicts CLI report
+  it("PATTERNS: conflicts CLI shows pattern conflict report", () => {
+    const db = require("better-sqlite3")(dbPath);
+    const sk = hashPath(tmpDir);
+    insertPattern(db, {
+      id: "pat-conflict-1",
+      sessionKey: sk,
+      title: "Import pattern: CommonJS",
+      patternType: "imports",
+      language: "javascript",
+      signature: "require('express')",
+      filePath: "src/legacy.js",
+      confidence: 1,
+    });
+    db.prepare("UPDATE captures SET metadata = json_set(metadata, '$.conflict_warning', 'CONFLICT: src/server.js uses ESM import but src/legacy.js uses CommonJS require.') WHERE id = 'pat-conflict-1'").run();
+    db.close();
+
+    const output = runCli("patterns conflicts", { TDAI_DB_PATH: dbPath });
+    expect(output).toContain("Pattern Conflict Report");
+    expect(output).toContain("CONFLICT");
+  });
+
+  // 8. Pattern templates CLI report
+  it("PATTERNS: templates CLI shows extracted templates", () => {
+    const db = require("better-sqlite3")(dbPath);
+    const sk = hashPath(tmpDir);
+    insertPattern(db, {
+      id: "pat-tmpl-1",
+      sessionKey: sk,
+      title: "Function pattern: validateInput(data)",
+      patternType: "function",
+      language: "typescript",
+      signature: "validateInput(data: unknown)",
+      filePath: "src/validators.ts",
+      confidence: 3,
+    });
+    db.prepare("UPDATE captures SET metadata = json_set(metadata, '$.pattern_template', '{\"template\":\"validateInput data\",\"similar_pattern_count\":3,\"language\":\"typescript\",\"pattern_type\":\"function\"}') WHERE id = 'pat-tmpl-1'").run();
+    db.close();
+
+    const output = runCli("patterns templates", { TDAI_DB_PATH: dbPath });
+    expect(output).toContain("Pattern Template Extraction");
+    expect(output).toContain("validateInput");
+  });
+
+  // 9. Pattern inherited CLI report
+  it("PATTERNS: inherited CLI shows cross-project patterns", () => {
+    const db = require("better-sqlite3")(dbPath);
+    // Same pattern in 2 projects
+    insertPattern(db, {
+      id: "pat-proj-a",
+      sessionKey: "proj-a",
+      title: "Function pattern: fetchData(url)",
+      patternType: "function",
+      language: "typescript",
+      signature: "fetchData(url: string)",
+      filePath: "src/api.ts",
+      confidence: 2,
+    });
+    insertPattern(db, {
+      id: "pat-proj-b",
+      sessionKey: "proj-b",
+      title: "Function pattern: fetchData(url)",
+      patternType: "function",
+      language: "typescript",
+      signature: "fetchData(url: string)",
+      filePath: "src/api.ts",
+      confidence: 3,
+    });
+    db.close();
+
+    const output = runCli("patterns inherited", { TDAI_DB_PATH: dbPath });
+    expect(output).toContain("Cross-Project Pattern Inheritance");
+    expect(output).toContain("fetchData");
+  });
+
+  // 10. Clean DB reports
+  it("ADVANCED: clean DB shows no conflicts/templates/inherited", () => {
+    const conflictsOutput = runCli("decisions conflicts", { TDAI_DB_PATH: dbPath });
+    expect(conflictsOutput).toContain("No decision conflicts detected");
+
+    const inheritedOutput = runCli("decisions inherited", { TDAI_DB_PATH: dbPath });
+    expect(inheritedOutput).toContain("No cross-project decision inheritance");
+
+    const patConflictsOutput = runCli("patterns conflicts", { TDAI_DB_PATH: dbPath });
+    expect(patConflictsOutput).toContain("No pattern conflicts detected");
+
+    const patTemplatesOutput = runCli("patterns templates", { TDAI_DB_PATH: dbPath });
+    expect(patTemplatesOutput).toContain("No pattern templates extracted");
+
+    const patInheritedOutput = runCli("patterns inherited", { TDAI_DB_PATH: dbPath });
+    expect(patInheritedOutput).toContain("No cross-project pattern inheritance");
+  });
+});

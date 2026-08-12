@@ -2774,3 +2774,312 @@ export function patternsRetro(dbPath: string = defaultDbPath()): void {
 
   db.close();
 }
+
+// ==================================================================
+// Moat 2/3: Conflict Detection + Inheritance Reports
+// ==================================================================
+
+/**
+ * `tdai-memory-mcp decisions conflicts` — Show contradictory decisions.
+ */
+export function decisionsConflicts(dbPath: string = defaultDbPath()): void {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true });
+  } catch {
+    console.error("Error: Could not open database at", dbPath);
+    process.exit(1);
+  }
+
+  console.log("tdai-memory-mcp decisions conflicts — Decision Conflict Report\n");
+  console.log(`${"─".repeat(60)}\n`);
+
+  const conflicts = db
+    .prepare(
+      `SELECT
+         id,
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.choice') as choice,
+         json_extract(metadata, '$.decision_type') as dtype,
+         json_extract(metadata, '$.conflict_warning') as warning,
+         json_extract(metadata, '$.confidence') as confidence,
+         created_at
+       FROM captures
+       WHERE type = 'decision' AND deleted_at IS NULL
+       AND json_extract(metadata, '$.conflict_warning') IS NOT NULL
+       ORDER BY created_at DESC`,
+    )
+    .all() as {
+    id: string;
+    title: string;
+    choice: string;
+    dtype: string;
+    warning: string;
+    confidence: number;
+    created_at: string;
+  }[];
+
+  if (conflicts.length === 0) {
+    console.log("No decision conflicts detected.\n");
+    db.close();
+    return;
+  }
+
+  console.log(`Found ${conflicts.length} decision conflict(s):\n`);
+  for (const c of conflicts) {
+    const date = new Date(c.created_at).toISOString().split("T")[0];
+    console.log(`  ${date} [${c.dtype}] ${c.title}`);
+    console.log(`    ⚠ ${c.warning}`);
+  }
+
+  console.log(`\n${"─".repeat(60)}`);
+  console.log(
+    "Conflicts are detected when you choose a dependency that contradicts a past choice.",
+  );
+  db.close();
+}
+
+/**
+ * `tdai-memory-mcp decisions inherited` — Cross-project decision inheritance report.
+ */
+export function decisionsInherited(dbPath: string = defaultDbPath()): void {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true });
+  } catch {
+    console.error("Error: Could not open database at", dbPath);
+    process.exit(1);
+  }
+
+  console.log("tdai-memory-mcp decisions inherited — Cross-Project Decision Inheritance\n");
+  console.log(`${"─".repeat(60)}\n`);
+
+  const inherited = db
+    .prepare(
+      `SELECT
+         json_extract(metadata, '$.choice') as choice,
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.decision_type') as dtype,
+         COUNT(DISTINCT session_key) as project_count,
+         SUM(CAST(json_extract(metadata, '$.confidence') AS INTEGER)) as total_confidence
+       FROM captures
+       WHERE type = 'decision' AND deleted_at IS NULL
+       GROUP BY json_extract(metadata, '$.choice'), json_extract(metadata, '$.decision_type')
+       HAVING project_count > 1
+       ORDER BY project_count DESC, total_confidence DESC
+       LIMIT 20`,
+    )
+    .all() as {
+    choice: string;
+    title: string;
+    dtype: string;
+    project_count: number;
+    total_confidence: number;
+  }[];
+
+  if (inherited.length === 0) {
+    console.log("No cross-project decision inheritance detected.\n");
+    db.close();
+    return;
+  }
+
+  console.log(`Found ${inherited.length} decision(s) shared across projects:\n`);
+  for (const d of inherited) {
+    console.log(`  [${d.dtype}] ${d.title}`);
+    console.log(`    choice: ${d.choice}`);
+    console.log(`    projects: ${d.project_count}, total confidence: ${d.total_confidence}`);
+  }
+
+  console.log(`\n${"─".repeat(60)}`);
+  console.log("These decisions are auto-injected when you run similar commands in new projects.");
+  db.close();
+}
+
+/**
+ * `tdai-memory-mcp patterns conflicts` — Show contradictory patterns.
+ */
+export function patternsConflicts(dbPath: string = defaultDbPath()): void {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true });
+  } catch {
+    console.error("Error: Could not open database at", dbPath);
+    process.exit(1);
+  }
+
+  console.log("tdai-memory-mcp patterns conflicts — Pattern Conflict Report\n");
+  console.log(`${"─".repeat(60)}\n`);
+
+  const conflicts = db
+    .prepare(
+      `SELECT
+         id,
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.pattern_type') as ptype,
+         json_extract(metadata, '$.language') as language,
+         json_extract(metadata, '$.file_path') as fpath,
+         json_extract(metadata, '$.conflict_warning') as warning,
+         created_at
+       FROM captures
+       WHERE type = 'pattern' AND deleted_at IS NULL
+       AND json_extract(metadata, '$.conflict_warning') IS NOT NULL
+       ORDER BY created_at DESC`,
+    )
+    .all() as {
+    id: string;
+    title: string;
+    ptype: string;
+    language: string;
+    fpath: string;
+    warning: string;
+    created_at: string;
+  }[];
+
+  if (conflicts.length === 0) {
+    console.log("No pattern conflicts detected.\n");
+    db.close();
+    return;
+  }
+
+  console.log(`Found ${conflicts.length} pattern conflict(s):\n`);
+  for (const c of conflicts) {
+    const date = new Date(c.created_at).toISOString().split("T")[0];
+    console.log(`  ${date} [${c.ptype}] [${c.language}] ${c.title}`);
+    console.log(`    file: ${c.fpath}`);
+    console.log(`    ⚠ ${c.warning}`);
+  }
+
+  console.log(`\n${"─".repeat(60)}`);
+  console.log(
+    "Conflicts are detected when patterns use inconsistent styles (e.g., CommonJS vs ESM).",
+  );
+  db.close();
+}
+
+/**
+ * `tdai-memory-mcp patterns templates` — Show extracted pattern templates.
+ */
+export function patternsTemplates(dbPath: string = defaultDbPath()): void {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true });
+  } catch {
+    console.error("Error: Could not open database at", dbPath);
+    process.exit(1);
+  }
+
+  console.log("tdai-memory-mcp patterns templates — Pattern Template Extraction\n");
+  console.log(`${"─".repeat(60)}\n`);
+
+  const templates = db
+    .prepare(
+      `SELECT
+         id,
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.pattern_type') as ptype,
+         json_extract(metadata, '$.language') as language,
+         json_extract(metadata, '$.pattern_template') as template,
+         created_at
+       FROM captures
+       WHERE type = 'pattern' AND deleted_at IS NULL
+       AND json_extract(metadata, '$.pattern_template') IS NOT NULL
+       ORDER BY created_at DESC`,
+    )
+    .all() as {
+    id: string;
+    title: string;
+    ptype: string;
+    language: string;
+    template: string;
+    created_at: string;
+  }[];
+
+  if (templates.length === 0) {
+    console.log("No pattern templates extracted yet.\n");
+    console.log(
+      "Templates are auto-extracted when 3+ similar patterns are found in the same language.",
+    );
+    db.close();
+    return;
+  }
+
+  console.log(`Found ${templates.length} pattern template(s):\n`);
+  for (const t of templates) {
+    const date = new Date(t.created_at).toISOString().split("T")[0];
+    let templateData: { template: string; similar_pattern_count: number } | null = null;
+    try {
+      templateData = JSON.parse(t.template);
+    } catch {
+      // skip
+    }
+    console.log(`  ${date} [${t.ptype}] [${t.language}] ${t.title}`);
+    if (templateData) {
+      console.log(`    template: ${templateData.template}`);
+      console.log(`    matches: ${templateData.similar_pattern_count} patterns`);
+    }
+  }
+
+  console.log(`\n${"─".repeat(60)}`);
+  console.log("Templates are auto-extracted from 3+ similar patterns (same type, same language).");
+  db.close();
+}
+
+/**
+ * `tdai-memory-mcp patterns inherited` — Cross-project pattern inheritance report.
+ */
+export function patternsInherited(dbPath: string = defaultDbPath()): void {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true });
+  } catch {
+    console.error("Error: Could not open database at", dbPath);
+    process.exit(1);
+  }
+
+  console.log("tdai-memory-mcp patterns inherited — Cross-Project Pattern Inheritance\n");
+  console.log(`${"─".repeat(60)}\n`);
+
+  const inherited = db
+    .prepare(
+      `SELECT
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.pattern_type') as ptype,
+         json_extract(metadata, '$.language') as language,
+         json_extract(metadata, '$.signature') as sig,
+         COUNT(DISTINCT session_key) as project_count,
+         SUM(CAST(json_extract(metadata, '$.confidence') AS INTEGER)) as total_confidence
+       FROM captures
+       WHERE type = 'pattern' AND deleted_at IS NULL
+       GROUP BY json_extract(metadata, '$.signature'), json_extract(metadata, '$.language')
+       HAVING project_count > 1
+       ORDER BY project_count DESC, total_confidence DESC
+       LIMIT 20`,
+    )
+    .all() as {
+    title: string;
+    ptype: string;
+    language: string;
+    sig: string;
+    project_count: number;
+    total_confidence: number;
+  }[];
+
+  if (inherited.length === 0) {
+    console.log("No cross-project pattern inheritance detected.\n");
+    db.close();
+    return;
+  }
+
+  console.log(`Found ${inherited.length} pattern(s) shared across projects:\n`);
+  for (const p of inherited) {
+    console.log(`  [${p.ptype}] [${p.language}] ${p.title}`);
+    console.log(`    signature: ${(p.sig ?? "").slice(0, 60)}`);
+    console.log(`    projects: ${p.project_count}, total confidence: ${p.total_confidence}`);
+  }
+
+  console.log(`\n${"─".repeat(60)}`);
+  console.log(
+    "These patterns are auto-injected when you edit files in new projects (same language).",
+  );
+  db.close();
+}

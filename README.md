@@ -36,16 +36,23 @@ Foundation: SQLite + RRF + embedding + capture/recall
     │                 → succeed → upvote, validate, tag provenance
     │                 → recur → downvote, escalate, auto-annotate, prune at 0
     │
-    ├── Moat 2: Decision Learning
+    ├── Moat 2: Decision Learning (9 features)
     │   npm install / git commit / config → auto-capture decision
     │                                    → inject past decisions before similar commands
-    │                                    → re-chose → confidence upvote
+    │                                    → re-chose → confidence upvote, followed=true
+    │                                    → chose differently → drift_count++
+    │                                    → contradictory choice → conflict_warning
+    │                                    → no local → inherit from other projects
     │                                    → retro: follow rate, drift, repeated decisions
     │
-    └── Moat 3: Pattern Learning
+    └── Moat 3: Pattern Learning (10 features)
         Write/Edit code → auto-capture pattern (function, component, class, imports)
                         → inject same-language patterns before editing
-                        → seen again → confidence upvote
+                        → seen again → confidence upvote, adopted=true
+                        → wrote different style → drift_count++
+                        → inconsistent style → conflict_warning (CommonJS vs ESM)
+                        → 3+ similar → extract reusable template
+                        → no local → inherit from other projects
                         → retro: adoption rate, most used patterns
 ```
 
@@ -92,6 +99,10 @@ All automatic. No user action needed.
 | **Decision auto-capture** | Captures dependency choices, config decisions, commit-encoded decisions | — |
 | **Decision injection** | Injects past decisions before `npm install`, `git commit`, etc. | — |
 | **Decision confidence** | Upvotes decisions seen multiple times (re-chose same thing) | — |
+| **Decision drift detection** | Tracks when injected decisions are ignored (agent chose differently) | — |
+| **Decision follow rate** | Sets `followed=true` when agent re-chose same decision | — |
+| **Decision conflict detection** | Detects contradictory choices (e.g., chose SQLite then Postgres) | `decisions conflicts` |
+| **Cross-project decision inheritance** | Injects decisions from other projects when local is empty | `decisions inherited` |
 | **Decision retro** | Follow rate, repeated decisions, drifted decisions | `decisions retro` |
 | **Decision dashboard** | Top decisions by confidence, type breakdown | `decisions` |
 
@@ -102,6 +113,11 @@ All automatic. No user action needed.
 | **Pattern auto-capture** | Captures function/component/class/import patterns from Write/Edit | — |
 | **Pattern injection** | Injects same-language patterns before editing files | — |
 | **Pattern confidence** | Upvotes patterns seen multiple times (widely used) | — |
+| **Pattern adoption tracking** | Sets `adopted=true` when pattern is seen again in new file | — |
+| **Pattern drift detection** | Tracks when injected patterns are ignored (agent wrote different style) | — |
+| **Pattern conflict detection** | Detects inconsistent styles (e.g., CommonJS vs ESM imports) | `patterns conflicts` |
+| **Pattern template extraction** | Extracts reusable template from 3+ similar patterns | `patterns templates` |
+| **Cross-project pattern inheritance** | Injects patterns from other projects (same language) when local is empty | `patterns inherited` |
 | **Pattern retro** | Adoption rate, most seen patterns | `patterns retro` |
 | **Pattern dashboard** | Top patterns by confidence, type/language breakdown | `patterns` |
 
@@ -137,8 +153,8 @@ npx tdai-memory-mcp doctor
 | **Callers/callees** | Yes | No | No | No |
 | **Impact analysis** | Yes | No | No | No |
 | **Error learning** | 41 features (capture, inject, drift, lineage, MTBF, severity, templates, correlations, playbooks, staleness, escalation, context, inheritance, auto-notes, rollback, provenance, mermaid, persona) | No | No | No |
-| **Decision learning** | Auto-capture + inject (npm install, git commit, config) | No | No | No |
-| **Pattern learning** | Auto-capture + inject code patterns (functions, components, classes) | No | No | No |
+| **Decision learning** | 9 features (capture, inject, drift, follow rate, conflict, inheritance, retro) | No | No | No |
+| **Pattern learning** | 10 features (capture, inject, adoption, drift, conflict, template, inheritance, retro) | No | No | No |
 | **Pre-action matchers** | Yes (git push --force, rm -rf, DROP TABLE) | No | No | No |
 | **Session retrospective** | Yes (`errors retro`, `decisions retro`, `patterns retro`) | No | No | No |
 | **Drift detection** | Yes (`errors drift`) | Partial | No | No |
@@ -245,10 +261,15 @@ npx tdai-memory-mcp errors persona     # Error profile per project
 # Decision learning (Moat 2)
 npx tdai-memory-mcp decisions          # Decision dashboard
 npx tdai-memory-mcp decisions retro    # Decision retrospective (follow rate, drift)
+npx tdai-memory-mcp decisions conflicts  # Contradictory decision report
+npx tdai-memory-mcp decisions inherited  # Cross-project decision inheritance
 
 # Pattern learning (Moat 3)
 npx tdai-memory-mcp patterns           # Pattern dashboard
 npx tdai-memory-mcp patterns retro     # Pattern retrospective (adoption rate)
+npx tdai-memory-mcp patterns conflicts   # Pattern conflict report
+npx tdai-memory-mcp patterns templates   # Extracted pattern templates
+npx tdai-memory-mcp patterns inherited   # Cross-project pattern inheritance
 
 # CodeGraph (opt-in: set TDAI_ENABLE_ADVANCED=1)
 npx tdai-memory-mcp index --path src --repo .          # Index code (Tree-sitter, 9 languages)

@@ -47,6 +47,227 @@ function driftFilePath(sessionKey: string): string {
 }
 
 /**
+ * [Moat 2/3: Drift Detection] Log decision/pattern injection for drift tracking.
+ * Same mechanism as error drift — PreToolUse logs, PostToolUse checks.
+ */
+function logInjectionDrift(
+  sessionKey: string,
+  captureType: "decision" | "pattern",
+  captureId: string,
+  command: string,
+): void {
+  try {
+    const path = join(tmpdir(), `tdai-drift-${sessionKey}.jsonl`);
+    const record = JSON.stringify({
+      type: captureType,
+      content_hash: captureId,
+      error_id: captureId, // reuse field name for checkDriftInjection compat
+      command: command.slice(0, 200),
+      injected_at: Date.now(),
+    });
+    appendFileSync(path, `${record}\n`);
+  } catch {
+    // Best-effort
+  }
+}
+
+/**
+ * [Moat 2: Decision Conflict] Detect contradictory decisions.
+ * E.g., chose SQLite then chose Postgres for the same project.
+ */
+function detectDecisionConflict(
+  db: Database.Database,
+  sessionKey: string,
+  newChoice: string,
+  decisionType: string,
+): string | null {
+  // Only check dependency conflicts (chose X then chose Y for same role)
+  if (decisionType !== "dependency") return null;
+
+  // Known conflict pairs (same role, different choice)
+  // Includes common npm package name aliases (e.g., "pg" = postgres)
+  const conflictPairs: Record<string, string[]> = {
+    sqlite: [
+      "postgres",
+      "postgresql",
+      "pg",
+      "mysql",
+      "mysql2",
+      "mongodb",
+      "mongo",
+      "redis",
+      "ioredis",
+    ],
+    postgres: ["sqlite", "pg", "mysql", "mysql2", "mongodb", "mongo", "redis", "ioredis"],
+    postgresql: ["sqlite", "pg", "mysql", "mysql2", "mongodb", "mongo", "redis", "ioredis"],
+    pg: ["sqlite", "mysql", "mysql2", "mongodb", "mongo", "redis", "ioredis"],
+    mysql: ["sqlite", "postgres", "postgresql", "pg", "mongodb", "mongo", "redis", "ioredis"],
+    mysql2: ["sqlite", "postgres", "postgresql", "pg", "mongodb", "mongo", "redis", "ioredis"],
+    mongodb: ["sqlite", "postgres", "postgresql", "pg", "mysql", "mysql2", "redis", "ioredis"],
+    mongo: ["sqlite", "postgres", "postgresql", "pg", "mysql", "mysql2", "redis", "ioredis"],
+    redis: ["sqlite", "postgres", "postgresql", "pg", "mysql", "mysql2", "mongodb", "mongo"],
+    ioredis: ["sqlite", "postgres", "postgresql", "pg", "mysql", "mysql2", "mongodb", "mongo"],
+    react: ["vue", "svelte", "angular", "solid-js", "preact"],
+    vue: ["react", "svelte", "angular", "solid-js", "preact"],
+    svelte: ["react", "vue", "angular", "solid-js", "preact"],
+    angular: ["react", "vue", "svelte", "solid-js", "preact"],
+    zod: ["yup", "joi", "ajv"],
+    yup: ["zod", "joi", "ajv"],
+    joi: ["zod", "yup", "ajv"],
+    axios: ["fetch", "got", "ky", "node-fetch"],
+    fetch: ["axios", "got", "ky", "node-fetch"],
+    jest: ["vitest", "mocha", "jasmine", "ava"],
+    vitest: ["jest", "mocha", "jasmine", "ava"],
+    mocha: ["jest", "vitest", "jasmine", "ava"],
+    tailwind: ["bootstrap", "bulma", "styled-components", "emotion"],
+    bootstrap: ["tailwind", "bulma", "styled-components", "emotion"],
+  };
+
+  const newLower = newChoice.toLowerCase();
+  const conflicts = conflictPairs[newLower];
+  if (!conflicts) return null;
+
+  // Check if any conflicting dependency was previously chosen
+  for (const conflict of conflicts) {
+    const existing = db
+      .prepare(
+        `SELECT id, json_extract(metadata, '$.title') as title
+         FROM captures
+         WHERE type = 'decision' AND deleted_at IS NULL
+         AND session_key = ?
+         AND json_extract(metadata, '$.decision_type') = 'dependency'
+         AND LOWER(json_extract(metadata, '$.choice')) = ?
+         LIMIT 1`,
+      )
+      .get(sessionKey, conflict) as { id: string; title: string } | undefined;
+
+    if (existing) {
+      return `CONFLICT: Previously chose ${conflict} but now choosing ${newLower}. Review before proceeding.`;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * [Moat 3: Pattern Conflict] Detect contradictory code patterns.
+ * E.g., one file uses CommonJS require, another uses ESM import.
+ */
+function detectPatternConflict(
+  db: Database.Database,
+  sessionKey: string,
+  newPattern: { pattern_type: string; language: string; signature: string; file_path: string },
+): string | null {
+  // Check import style conflicts (require vs import)
+  if (newPattern.pattern_type !== "imports") return null;
+
+  const usesRequire = /require\s*\(/.test(newPattern.signature);
+  const usesImport = /^import\s+/.test(newPattern.signature);
+
+  if (!usesRequire && !usesImport) return null;
+
+  const oppositeStyle = usesRequire ? "import" : "require";
+  const existing = db
+    .prepare(
+      `SELECT id, json_extract(metadata, '$.file_path') as fpath, json_extract(metadata, '$.signature') as sig
+       FROM captures
+       WHERE type = 'pattern' AND deleted_at IS NULL
+       AND session_key = ?
+       AND json_extract(metadata, '$.pattern_type') = 'imports'
+       AND json_extract(metadata, '$.language') = ?
+       AND json_extract(metadata, '$.file_path') != ?
+       LIMIT 1`,
+    )
+    .get(sessionKey, newPattern.language, newPattern.file_path) as
+    | { id: string; fpath: string; sig: string }
+    | undefined;
+
+  if (existing) {
+    const existingUsesRequire = /require\s*\(/.test(existing.sig);
+    const existingUsesImport = /^import\s+/.test(existing.sig);
+
+    if (usesRequire && existingUsesImport) {
+      return `CONFLICT: ${existing.fpath} uses ESM import but ${newPattern.file_path} uses CommonJS require. Use one style consistently.`;
+    }
+    if (usesImport && existingUsesRequire) {
+      return `CONFLICT: ${existing.fpath} uses CommonJS require but ${newPattern.file_path} uses ESM import. Use one style consistently.`;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * [Moat 3: Pattern Template Extraction] Extract reusable template from 3+ similar patterns.
+ * E.g., 3+ function patterns with similar signatures → extract common structure.
+ */
+function extractPatternTemplate(
+  db: Database.Database,
+  sessionKey: string,
+  language: string,
+  patternType: string,
+): { template: string; count: number } | null {
+  const patterns = db
+    .prepare(
+      `SELECT json_extract(metadata, '$.signature') as sig, json_extract(metadata, '$.title') as title
+       FROM captures
+       WHERE type = 'pattern' AND deleted_at IS NULL
+       AND session_key = ?
+       AND json_extract(metadata, '$.language') = ?
+       AND json_extract(metadata, '$.pattern_type') = ?
+       ORDER BY CAST(json_extract(metadata, '$.confidence') AS INTEGER) DESC
+       LIMIT 10`,
+    )
+    .all(sessionKey, language, patternType) as { sig: string; title: string }[];
+
+  if (patterns.length < 3) return null;
+
+  // Extract common words from signatures
+  const allWords = patterns
+    .flatMap((p) => (p.sig ?? "").split(/[\s(),:;]+/))
+    .filter(
+      (w) =>
+        w.length > 2 &&
+        ![
+          "string",
+          "number",
+          "boolean",
+          "void",
+          "any",
+          "unknown",
+          "return",
+          "const",
+          "let",
+          "var",
+          "function",
+          "export",
+          "async",
+          "await",
+        ].includes(w),
+    );
+
+  const wordCounts = new Map<string, number>();
+  for (const w of allWords) {
+    wordCounts.set(w, (wordCounts.get(w) ?? 0) + 1);
+  }
+
+  const commonWords = [...wordCounts.entries()]
+    .filter(([, count]) => count >= Math.ceil(patterns.length * 0.5))
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([w]) => w);
+
+  if (commonWords.length >= 2) {
+    return {
+      template: commonWords.join(" "),
+      count: patterns.length,
+    };
+  }
+
+  return null;
+}
+
+/**
  * [Drift Detection] Log an error injection from PreToolUse.
  * Called when an error is injected before a command. PostToolUse will
  * check this file to detect if the agent ignored the warning.
@@ -120,6 +341,58 @@ function checkDriftInjection(
     return match;
   } catch {
     return null;
+  }
+}
+
+/**
+ * [Moat 2/3: Drift Detection] Get ALL recent drift injection records.
+ * Used by PostToolUse to check if any decision/pattern was injected but ignored.
+ */
+function checkAllDriftInjections(sessionKey: string): {
+  type: string;
+  content_hash: string;
+  error_id: string;
+  command: string;
+  injected_at: number;
+}[] {
+  try {
+    const path = driftFilePath(sessionKey);
+    if (!existsSync(path)) return [];
+
+    const content = readFileSync(path, "utf-8");
+    const lines = content.trim().split("\n").filter(Boolean);
+    const now = Date.now();
+    const maxAge = 30 * 60 * 1000; // 30 minutes
+
+    const results: {
+      type: string;
+      content_hash: string;
+      error_id: string;
+      command: string;
+      injected_at: number;
+    }[] = [];
+    const recent: string[] = [];
+
+    for (const line of lines) {
+      try {
+        const record = JSON.parse(line);
+        if (now - record.injected_at < maxAge) {
+          recent.push(line);
+          results.push(record);
+        }
+      } catch {
+        // Skip malformed lines
+      }
+    }
+
+    // Clean up old entries
+    if (recent.length !== lines.length) {
+      writeFileSync(path, recent.join("\n") + (recent.length > 0 ? "\n" : ""));
+    }
+
+    return results;
+  } catch {
+    return [];
   }
 }
 
@@ -422,15 +695,26 @@ export function hookPostToolUse(dbPath: string): void {
       if (isWriteEdit) {
         try {
           const db = new Database(dbPath);
+          const sessionKey = hashPath(input.cwd ?? process.cwd());
           const pattern = detectPattern(toolName, toolInput);
           if (pattern) {
             const id = `pat-${createHash("sha256")
               .update(pattern.signature + pattern.file_path)
               .digest("hex")
               .slice(0, 12)}`;
-            const sessionKey = hashPath(input.cwd ?? process.cwd());
             const content = `Pattern: ${pattern.title} in ${pattern.file_path}`;
             const hash = createHash("sha256").update(content).digest("hex").slice(0, 16);
+
+            // [Moat 3: Pattern Conflict Detection] Check for contradictory patterns
+            const patternConflict = detectPatternConflict(db, sessionKey, {
+              pattern_type: pattern.pattern_type,
+              language: pattern.language,
+              signature: pattern.signature,
+              file_path: pattern.file_path,
+            });
+            if (patternConflict) {
+              logToFile(`PostToolUse: PATTERN CONFLICT — ${patternConflict}`);
+            }
 
             // Check if this pattern already exists
             const existing = db.prepare("SELECT id, metadata FROM captures WHERE id = ?").get(id) as
@@ -443,6 +727,12 @@ export function hookPostToolUse(dbPath: string): void {
               meta.confidence = (meta.confidence ?? 1) + 1;
               meta.last_seen = new Date().toISOString();
               meta.seen_count = (meta.seen_count ?? 1) + 1;
+              // [Moat 3: Adoption Tracking] Pattern seen again = adopted
+              meta.adopted = true;
+              meta.adopted_count = (meta.adopted_count ?? 0) + 1;
+              if (patternConflict) {
+                meta.conflict_warning = patternConflict;
+              }
               db.prepare("UPDATE captures SET metadata = ? WHERE id = ?").run(
                 JSON.stringify(meta),
                 existing.id,
@@ -469,14 +759,97 @@ export function hookPostToolUse(dbPath: string): void {
                   confidence: 1,
                   seen_count: 1,
                   adopted: false,
+                  adopted_count: 0,
+                  conflict_warning: patternConflict,
                   first_seen: new Date().toISOString(),
                   last_seen: new Date().toISOString(),
                 }),
               );
             }
             logToFile(`PostToolUse: captured pattern ${pattern.title}`);
+
+            // [Moat 3: Pattern Template Extraction] After capturing, check if 3+ similar
+            // patterns exist → extract a reusable template
+            try {
+              const template = extractPatternTemplate(
+                db,
+                sessionKey,
+                pattern.language,
+                pattern.pattern_type,
+              );
+              if (template) {
+                // Store template on the most recent pattern
+                const recentPat = db
+                  .prepare(
+                    `SELECT id, metadata FROM captures
+                     WHERE type = 'pattern' AND session_key = ?
+                     AND json_extract(metadata, '$.language') = ?
+                     AND json_extract(metadata, '$.pattern_type') = ?
+                     ORDER BY created_at DESC LIMIT 1`,
+                  )
+                  .get(sessionKey, pattern.language, pattern.pattern_type) as
+                  | { id: string; metadata: string }
+                  | undefined;
+                if (recentPat) {
+                  const tMeta = JSON.parse(recentPat.metadata);
+                  tMeta.pattern_template = {
+                    template: template.template,
+                    similar_pattern_count: template.count,
+                    language: pattern.language,
+                    pattern_type: pattern.pattern_type,
+                    extracted_at: new Date().toISOString(),
+                  };
+                  db.prepare("UPDATE captures SET metadata = ? WHERE id = ?").run(
+                    JSON.stringify(tMeta),
+                    recentPat.id,
+                  );
+                  logToFile(
+                    `PostToolUse: PATTERN TEMPLATE extracted — "${template.template}" matches ${template.count} ${pattern.pattern_type} patterns in ${pattern.language}`,
+                  );
+                }
+              }
+            } catch {
+              // non-fatal
+            }
           }
           db.close();
+
+          // [Moat 3: Pattern Drift Detection] Check if patterns were recently injected
+          // but agent wrote a different pattern style → drift
+          try {
+            const driftRecords = checkAllDriftInjections(sessionKey);
+            if (driftRecords.length > 0 && pattern) {
+              const driftDb = new Database(dbPath);
+              for (const dr of driftRecords) {
+                if (dr.type === "pattern") {
+                  const injectedPat = driftDb
+                    .prepare("SELECT id, metadata FROM captures WHERE id = ?")
+                    .get(dr.content_hash) as { id: string; metadata: string } | undefined;
+                  if (injectedPat) {
+                    const injMeta = JSON.parse(injectedPat.metadata);
+                    // If the injected pattern's signature differs significantly from the new pattern
+                    if (
+                      injMeta.signature &&
+                      pattern.signature &&
+                      injMeta.signature !== pattern.signature
+                    ) {
+                      injMeta.drift_count = (injMeta.drift_count ?? 0) + 1;
+                      injMeta.last_drift_at = new Date().toISOString();
+                      driftDb
+                        .prepare("UPDATE captures SET metadata = ? WHERE id = ?")
+                        .run(JSON.stringify(injMeta), injectedPat.id);
+                      logToFile(
+                        `PostToolUse: PATTERN DRIFT — injected ${dr.content_hash} but agent wrote different pattern`,
+                      );
+                    }
+                  }
+                }
+              }
+              driftDb.close();
+            }
+          } catch {
+            // non-fatal
+          }
         } catch {
           // non-fatal
         }
@@ -685,12 +1058,57 @@ export function hookPostToolUse(dbPath: string): void {
               .prepare("SELECT id, metadata FROM captures WHERE id = ?")
               .get(decId) as { id: string; metadata: string } | undefined;
 
+            // [Moat 2: Decision Conflict Detection] Check for contradictory decisions
+            const conflict = detectDecisionConflict(
+              db,
+              sessionKey,
+              decision.choice,
+              decision.decision_type,
+            );
+            if (conflict) {
+              logToFile(`PostToolUse: DECISION CONFLICT — ${conflict}`);
+            }
+
+            // [Moat 2: Decision Drift Detection] Check if a different decision was recently injected
+            // If so, the agent ignored the injected decision and chose differently → drift
+            try {
+              const driftRecords = checkAllDriftInjections(sessionKey);
+              for (const dr of driftRecords) {
+                if (dr.type === "decision" && dr.content_hash !== decId) {
+                  // A different decision was injected but agent chose this one instead
+                  const injectedDec = db
+                    .prepare("SELECT id, metadata FROM captures WHERE id = ?")
+                    .get(dr.content_hash) as { id: string; metadata: string } | undefined;
+                  if (injectedDec) {
+                    const injMeta = JSON.parse(injectedDec.metadata);
+                    injMeta.drift_count = (injMeta.drift_count ?? 0) + 1;
+                    injMeta.last_drift_at = new Date().toISOString();
+                    db.prepare("UPDATE captures SET metadata = ? WHERE id = ?").run(
+                      JSON.stringify(injMeta),
+                      injectedDec.id,
+                    );
+                    logToFile(
+                      `PostToolUse: DECISION DRIFT — injected ${dr.content_hash} but agent chose ${decision.choice}`,
+                    );
+                  }
+                }
+              }
+            } catch {
+              // non-fatal
+            }
+
             if (existingDec) {
               // Decision already exists — upvote confidence
+              // [Moat 2: Follow Rate Tracking] Agent re-chose same decision → followed=true
               const dMeta = JSON.parse(existingDec.metadata);
               dMeta.confidence = (dMeta.confidence ?? 1) + 1;
               dMeta.last_seen = new Date().toISOString();
               dMeta.seen_count = (dMeta.seen_count ?? 1) + 1;
+              dMeta.followed = true;
+              dMeta.follow_count = (dMeta.follow_count ?? 0) + 1;
+              if (conflict) {
+                dMeta.conflict_warning = conflict;
+              }
               db.prepare("UPDATE captures SET metadata = ? WHERE id = ?").run(
                 JSON.stringify(dMeta),
                 decId,
@@ -718,7 +1136,9 @@ export function hookPostToolUse(dbPath: string): void {
                   confidence: 1,
                   seen_count: 1,
                   followed: null,
+                  follow_count: 0,
                   drift_count: 0,
+                  conflict_warning: conflict,
                   first_seen: new Date().toISOString(),
                   last_seen: new Date().toISOString(),
                 }),
@@ -1225,6 +1645,41 @@ export function hookPreToolUse(dbPath: string): void {
                 seen: number;
                 conf: number;
               }[];
+
+              // [Moat 3: Cross-Project Pattern Inheritance] If no local patterns,
+              // check OTHER projects for same language patterns.
+              if (patterns.length === 0) {
+                const inherited = patDb
+                  .prepare(
+                    `SELECT
+                       json_extract(metadata, '$.title') as title,
+                       json_extract(metadata, '$.pattern_type') as ptype,
+                       json_extract(metadata, '$.signature') as sig,
+                       json_extract(metadata, '$.file_path') as fpath,
+                       json_extract(metadata, '$.seen_count') as seen,
+                       json_extract(metadata, '$.confidence') as conf,
+                       session_key
+                     FROM captures
+                     WHERE type = 'pattern' AND deleted_at IS NULL
+                     AND session_key != ?
+                     AND json_extract(metadata, '$.language') = ?
+                     ORDER BY CAST(json_extract(metadata, '$.confidence') AS INTEGER) DESC
+                     LIMIT 2`,
+                  )
+                  .all(sessionKey, language) as {
+                  title: string;
+                  ptype: string;
+                  sig: string;
+                  fpath: string;
+                  seen: number;
+                  conf: number;
+                  session_key: string;
+                }[];
+
+                for (const p of inherited) {
+                  (patterns as any[]).push({ ...p });
+                }
+              }
               patDb.close();
 
               if (patterns.length > 0) {
@@ -1238,6 +1693,15 @@ export function hookPreToolUse(dbPath: string): void {
                 }
                 lines.push("");
                 lines.push("Follow these patterns for consistency.");
+
+                // [Moat 3: Pattern Drift] Log injection for drift tracking
+                for (const p of patterns) {
+                  const patId = `pat-${createHash("sha256")
+                    .update((p.sig ?? p.title) + (p.fpath ?? ""))
+                    .digest("hex")
+                    .slice(0, 12)}`;
+                  logInjectionDrift(sessionKey, "pattern", patId, `edit ${filePath}`);
+                }
 
                 const output = {
                   hookSpecificOutput: {
@@ -1458,6 +1922,35 @@ export function hookPreToolUse(dbPath: string): void {
               created_at: string;
             }[];
 
+            // [Moat 2: Cross-Project Decision Inheritance] If no local decisions,
+            // check OTHER projects for same decision type.
+            if (decisions.length === 0) {
+              const inheritedDecisions = decDb
+                .prepare(
+                  `SELECT json_extract(metadata, '$.title') as title,
+                       json_extract(metadata, '$.choice') as choice,
+                       json_extract(metadata, '$.rationale') as rationale,
+                       created_at, session_key
+                   FROM captures
+                   WHERE type = 'decision' AND deleted_at IS NULL
+                   AND session_key != ?
+                   AND json_extract(metadata, '$.decision_type') = ?
+                   AND created_at > datetime('now', '-90 days')
+                   ORDER BY CAST(json_extract(metadata, '$.confidence') AS INTEGER) DESC LIMIT 2`,
+                )
+                .all(sessionKey, decParams.includes("dependency") ? "dependency" : "commit") as {
+                title: string;
+                choice: string;
+                rationale: string;
+                created_at: string;
+                session_key: string;
+              }[];
+
+              for (const d of inheritedDecisions) {
+                (decisions as any[]).push({ ...d });
+              }
+            }
+
             if (decisions.length > 0) {
               const lines: string[] = [`[tdai-memory] Past decisions for similar commands:`];
               for (const d of decisions) {
@@ -1467,6 +1960,19 @@ export function hookPreToolUse(dbPath: string): void {
               }
               lines.push("");
               lines.push("Consider these past decisions before proceeding.");
+
+              // [Moat 2: Decision Drift] Log injection for drift tracking
+              for (const d of decisions) {
+                logInjectionDrift(
+                  sessionKey,
+                  "decision",
+                  `dec-${createHash("sha256")
+                    .update(d.choice + sessionKey)
+                    .digest("hex")
+                    .slice(0, 12)}`,
+                  command,
+                );
+              }
 
               const output = {
                 hookSpecificOutput: {
@@ -1643,6 +2149,45 @@ export function hookPreToolUse(dbPath: string): void {
             seen: number;
             created_at: string;
           }[];
+
+          // [Moat 2: Cross-Project Decision Inheritance] If no local decisions,
+          // check OTHER projects for same decision type.
+          if (decisions.length === 0) {
+            const inherited = decDb
+              .prepare(
+                `SELECT json_extract(metadata, '$.title') as title,
+                     json_extract(metadata, '$.choice') as choice,
+                     json_extract(metadata, '$.rationale') as rationale,
+                     json_extract(metadata, '$.seen_count') as seen,
+                     created_at, session_key
+                 FROM captures
+                 WHERE type = 'decision' AND deleted_at IS NULL
+                 AND session_key != ?
+                 AND json_extract(metadata, '$.decision_type') = ?
+                 AND created_at > datetime('now', '-90 days')
+                 ORDER BY CAST(json_extract(metadata, '$.confidence') AS INTEGER) DESC LIMIT 2`,
+              )
+              .all(
+                sessionKey,
+                lowerCmd.includes("npm install") ||
+                  lowerCmd.includes("pip install") ||
+                  lowerCmd.includes("cargo add")
+                  ? "dependency"
+                  : "commit",
+              ) as {
+              title: string;
+              choice: string;
+              rationale: string;
+              seen: number;
+              created_at: string;
+              session_key: string;
+            }[];
+
+            for (const d of inherited) {
+              (decisions as any[]).push({ ...d });
+            }
+          }
+
           decDb.close();
 
           if (decisions.length > 0) {
@@ -1652,6 +2197,19 @@ export function hookPreToolUse(dbPath: string): void {
               const date = new Date(d.created_at).toISOString().split("T")[0];
               lines.push(`- ${date}: ${d.title}`);
               if (d.rationale) lines.push(`  rationale: ${d.rationale.slice(0, 60)}`);
+            }
+
+            // [Moat 2: Decision Drift] Log injection for drift tracking
+            for (const d of decisions) {
+              logInjectionDrift(
+                sessionKey,
+                "decision",
+                `dec-${createHash("sha256")
+                  .update(d.choice + sessionKey)
+                  .digest("hex")
+                  .slice(0, 12)}`,
+                command,
+              );
             }
           }
         }

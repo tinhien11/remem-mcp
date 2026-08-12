@@ -27,7 +27,9 @@ import { loadConfig } from "./config.js";
 import { doctor } from "./doctor.js";
 import { LocalEmbedder } from "./embedding/local.js";
 import {
+  decisionsConflicts,
   decisionsDashboard,
+  decisionsInherited,
   decisionsRetro,
   errorsActions,
   errorsByGoal,
@@ -45,8 +47,11 @@ import {
   errorsSeverity,
   errorsStale,
   errorsTemplates,
+  patternsConflicts,
   patternsDashboard,
+  patternsInherited,
   patternsRetro,
+  patternsTemplates,
 } from "./errors.js";
 import { exportData } from "./export.js";
 import {
@@ -349,6 +354,14 @@ async function main(): Promise<void> {
       decisionsRetro(defaultDbPath());
       return;
     }
+    if (sub === "conflicts") {
+      decisionsConflicts(defaultDbPath());
+      return;
+    }
+    if (sub === "inherited") {
+      decisionsInherited(defaultDbPath());
+      return;
+    }
     decisionsDashboard(defaultDbPath());
     return;
   }
@@ -356,6 +369,18 @@ async function main(): Promise<void> {
     const sub = process.argv[3] ?? "";
     if (sub === "retro") {
       patternsRetro(defaultDbPath());
+      return;
+    }
+    if (sub === "conflicts") {
+      patternsConflicts(defaultDbPath());
+      return;
+    }
+    if (sub === "templates") {
+      patternsTemplates(defaultDbPath());
+      return;
+    }
+    if (sub === "inherited") {
+      patternsInherited(defaultDbPath());
       return;
     }
     patternsDashboard(defaultDbPath());
