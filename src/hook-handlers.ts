@@ -341,6 +341,13 @@ export function hookPostToolUse(dbPath: string): void {
       const cwd = input.cwd ?? process.cwd();
       const sessionKey = hashPath(cwd);
 
+      // Noise filter: skip error capture for obvious test/noise commands
+      if (isNoiseCommand(command)) {
+        logToFile(`PostToolUse: skipping noise command: ${command.slice(0, 80)}`);
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+
       let db: Database.Database;
       try {
         db = new Database(dbPath);
@@ -635,6 +642,21 @@ export function hookPreToolUse(dbPath: string): void {
       process.stdout.write(JSON.stringify({}));
     }
   });
+}
+
+/**
+ * Noise filter: detect commands that are not worth capturing as errors.
+ * These are typically test commands, intentional failures, or one-off probes.
+ */
+function isNoiseCommand(command: string): boolean {
+  const lower = command.toLowerCase().trim();
+  // Nonexistent/test file paths
+  if (/\/nonexistent|\/tmp\/test|\/test\/fake|example\.ts|foo\.ts|bar\.ts/.test(lower)) return true;
+  // Explicit test markers in the command itself
+  if (/^echo\s+/.test(lower)) return true;
+  // Very short commands that are just probes (ls <fake>, cat <fake>)
+  if (/^ls\s+\/[a-z_]+$/.test(lower) && lower.length < 30) return true;
+  return false;
 }
 
 /** Classify error type from command and error output. */

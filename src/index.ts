@@ -129,9 +129,13 @@ async function main(): Promise<void> {
     } else {
       console.log("Test capture already exists (duplicate).");
     }
-    console.log("\nSetup complete. Restart your agent to activate hooks.");
-    console.log("\nOptional: run `npx tdai-memory-mcp install-skill` to teach your");
-    console.log("agent when to recall/capture mid-session (adds ~4K tokens to context).");
+    console.log("\n✓ Setup complete.");
+    console.log("\nNext steps:");
+    console.log("  1. Restart your agent (close and reopen the session)");
+    console.log("  2. On restart, SessionStart hook loads recent memory automatically");
+    console.log("  3. Run `npx tdai-memory-mcp doctor` to verify everything is wired");
+    console.log("\nOptional: `npx tdai-memory-mcp install-skill` teaches your agent");
+    console.log("when to recall/capture mid-session (adds ~4K tokens to context).");
     return;
   }
   if (arg === "uninstall-hooks") {

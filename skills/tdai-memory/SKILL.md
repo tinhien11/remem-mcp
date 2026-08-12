@@ -4,7 +4,21 @@ description: Long-term memory for coding agents. Automatically recall project co
 user-invocable: false
 ---
 
-You have access to a long-term memory server via MCP. It has 24 tools: `recall`, `capture`, `search`, `forget`, `resolve`, `handoff`, `adr`, `knowledge_create`, `knowledge_get`, `knowledge_list`, `knowledge_delete`, `skill_get`, `skill_list`, `skill_search`, `codegraph_index`, `codegraph_search`, `codegraph_callers`, `codegraph_callees`, `codegraph_impact`, `codegraph_list`, `wiki_ingest`, `wiki_search`, `wiki_get`, and `wiki_outdated`. Use them automatically as described below. Do not ask the user for permission to use memory.
+You have access to a long-term memory server via MCP. Use the tools automatically as described below. Do not ask the user for permission to use memory.
+
+### Core tools (always available)
+
+`recall` `capture` `search` `forget` `resolve` `handoff` `adr` `update` `consolidate`
+
+### Advanced tools (only when `TDAI_ENABLE_ADVANCED=1`)
+
+**CodeGraph:** `codegraph_index` `codegraph_search` `codegraph_callers` `codegraph_callees` `codegraph_impact` `codegraph_list`
+
+**Wiki:** `wiki_ingest` `wiki_search` `wiki_get` `wiki_outdated`
+
+**Knowledge:** `knowledge_create` `knowledge_get` `knowledge_list` `knowledge_delete`
+
+**Skill:** `skill_get` `skill_list` `skill_search`
 
 ## When to recall
 
@@ -191,6 +205,30 @@ capture({
 })
 ```
 
+## When to update a capture
+
+Call `update` when a capture needs corrections — wrong info, missing tags, or needs rewording. Preserves the original ID and created_at.
+
+```
+update({
+  "id": "<capture_id>",
+  "content": "Corrected content here.",
+  "tags": ["arch", "storage", "corrected"]
+})
+```
+
+Omit `content`, `tags`, `type`, or `verified` to keep the original value for that field.
+
+## When to consolidate
+
+Call `consolidate` when you suspect duplicate or near-duplicate captures (e.g. same decision captured twice). Without `confirm`, it returns candidate groups. Set `confirm: true` to merge them.
+
+```
+consolidate({ "threshold": 0.75 })          // dry run — see duplicates
+consolidate({ "confirm": true })             // merge duplicates
+consolidate({ "session_key": "all", "confirm": true })  // across all projects
+```
+
 ## When to handoff
 
 Call `handoff` at the end of a session, or before switching to a different agent. This creates a structured packet that the next agent loads via `recall`, saving 60-85% of tokens compared to re-reading files.
@@ -260,7 +298,7 @@ adr({
 - The decision is easily reversible
 - You are just implementing what was already decided
 
-## Knowledge management
+## Knowledge management (advanced — requires `TDAI_ENABLE_ADVANCED=1`)
 
 Use `knowledge_create` to register a knowledge asset (wiki or code-graph) for the team. The asset metadata is stored locally. The actual content is processed by an external knowledge service.
 
@@ -276,7 +314,7 @@ knowledge_create({
 
 Use `knowledge_list` to list assets for a team, `knowledge_get` to retrieve one by ID, and `knowledge_delete` to remove assets.
 
-## Skill management
+## Skill management (advanced — requires `TDAI_ENABLE_ADVANCED=1`)
 
 Use `skill_list` to list reusable workflows bound to a team. Use `skill_search` to find skills by keyword. Use `skill_get` to retrieve the full content of a skill.
 
@@ -284,7 +322,7 @@ Use `skill_list` to list reusable workflows bound to a team. Use `skill_search` 
 skill_search({ "team_id": "team-1", "agent_id": "agent-x", "query": "deploy" })
 ```
 
-## CodeGraph
+## CodeGraph (advanced — requires `TDAI_ENABLE_ADVANCED=1`)
 
 The CodeGraph indexes code symbols (functions, classes, methods) and call relationships from your project. It uses Tree-sitter to parse TypeScript, JavaScript, Python, Go, Rust, Java, C, C++, and C# files.
 
@@ -362,7 +400,7 @@ To auto-index after each commit, add this to `.git/hooks/post-commit`:
 npx tdai-memory-mcp hook-post-commit
 ```
 
-## Wiki
+## Wiki (advanced — requires `TDAI_ENABLE_ADVANCED=1`)
 
 The Wiki indexes markdown documentation files. It parses frontmatter, headings, `[[wikilinks]]`, and `[text](url)` links to build a page graph.
 
@@ -453,7 +491,7 @@ If hooks are installed (`npx tdai-memory-mcp install-hooks`), memory works autom
 - **SessionStart**: Recent captures are injected into your context. You do not need to call `recall` manually.
 - **SessionEnd**: When the session ends, a hook silently captures the session summary (first user message + last assistant message) to the memory DB. You do not need to do anything — this runs automatically on session exit.
 
-You can still call `recall`, `capture`, `search`, `forget`, `resolve`, `handoff`, and `adr` manually at any time.
+You can still call `recall`, `capture`, `search`, `forget`, `resolve`, `handoff`, `adr`, `update`, and `consolidate` manually at any time.
 
 ## Global + project memory (hybrid mode)
 

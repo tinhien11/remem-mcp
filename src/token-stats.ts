@@ -175,10 +175,7 @@ export function tokenStats(dbPath: string): void {
  *
  * All token counts measured with gpt-tokenizer cl100k_base.
  */
-function printReactExample(
-  fmt: (n: number) => string,
-  _countTok: (text: string) => number,
-): void {
+function printReactExample(fmt: (n: number) => string, _countTok: (text: string) => number): void {
   // File tokens measured from /data/tools/ardupilot
   const fileTokens: Record<string, number> = {
     "AC_WPNav.cpp": 11464,
