@@ -108,7 +108,23 @@ Analyzes your last 7 days (configurable via `TDAI_RETRO_DAYS`):
 - **Recurred resolved** — "resolved" errors that came back (fix is wrong)
 - **Most expensive commands** — ranked by failure count
 - **Harmful fixes** — blocked by harm gate, don't re-apply
+- **Drift violations** — errors injected as warnings but agent still failed
 - **Scorecard + recommendations**
+
+### Drift detection
+
+```bash
+npx tdai-memory-mcp errors drift
+```
+
+Detects when stored error learnings are NOT being applied. When PreToolUse injects an error warning but the agent still hits the same error, that's a drift violation.
+
+- **Severity**: ● 1 drift, ●● 2 drifts, ●●● 3+ drifts (agent repeatedly ignored warning)
+- **Drift rate**: percentage of errors with drift vs total errors
+- **Effectiveness assessment**: low (<10%), moderate (10-30%), high (>30%)
+- **Scorecard**: total errors, errors with drift, total drift events
+
+This closes the feedback loop: capture → inject → measure if the agent heeded the warning.
 
 ### Error dashboard
 
@@ -239,9 +255,10 @@ The agent does not need to call any tool. Memory just works.
 | **Code structure** | Tree-sitter, 9 languages | No | No | No |
 | **Callers/callees** | Yes | No | No | No |
 | **Impact analysis** | Yes | No | No | No |
-| **Error learning** | Auto-capture + inject + harm gate + A/B validation | No | No | No |
+| **Error learning** | Auto-capture + inject + harm gate + A/B validation + drift detection | No | No | No |
 | **Pre-action matchers** | Yes (git push --force, rm -rf, DROP TABLE, etc.) | No | No | No |
 | **Session retrospective** | Yes (`errors retro`) | No | No | No |
+| **Drift detection** | Yes (`errors drift`) | Partial (`sheal drift`) | No | No |
 | **Observability** | Yes (`explain_recall` tool) | No | No | No |
 | **Wiki/ADR ingest** | Yes | No | No | No |
 | **Setup** | `npx setup` | API key + cloud | Built-in | `pip install` |
@@ -326,7 +343,8 @@ npx tdai-memory-mcp import <file>      # Import captures from JSON
 
 # Error learning
 npx tdai-memory-mcp errors             # Error dashboard (patterns, fixes, resolution rate)
-npx tdai-memory-mcp errors retro       # Session retrospective (failure loops, wasted effort)
+npx tdai-memory-mcp errors retro       # Session retrospective (failure loops, wasted effort, drift)
+npx tdai-memory-mcp errors drift       # Drift report (injected errors that still occurred)
 
 # CodeGraph (opt-in: set TDAI_ENABLE_ADVANCED=1)
 npx tdai-memory-mcp index --path src --repo .          # Index code (Tree-sitter, 9 languages)

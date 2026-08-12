@@ -95,6 +95,9 @@ function insertError(
     downvotes?: number;
     fixValidated?: boolean;
     fixHarmCount?: number;
+    driftCount?: number;
+    lastDriftAt?: string;
+    contentHash?: string;
   },
 ): void {
   const meta = {
@@ -113,10 +116,12 @@ function insertError(
     ...(opts.semanticHash ? { semantic_hash: opts.semanticHash } : {}),
     ...(opts.fixValidated !== undefined ? { fix_validated: opts.fixValidated } : {}),
     ...(opts.fixHarmCount !== undefined ? { fix_harm_count: opts.fixHarmCount } : {}),
+    ...(opts.driftCount !== undefined ? { drift_count: opts.driftCount } : {}),
+    ...(opts.lastDriftAt ? { last_drift_at: opts.lastDriftAt } : {}),
   };
 
   const content = opts.content ?? `Command failed: ${opts.command}\nError (${opts.errorType}): something went wrong`;
-  const hash = require("node:crypto").createHash("sha256").update(content).digest("hex").slice(0, 16);
+  const hash = opts.contentHash ?? require("node:crypto").createHash("sha256").update(content).digest("hex").slice(0, 16);
 
   db.prepare(
     "INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -2185,5 +2190,280 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       TDAI_RETRO_DAYS: "30",
     });
     expect(output30).toContain("Total errors:        1");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 52: DRIFT — errors drift command shows violations
+  // ------------------------------------------------------------------
+  it("DRIFT: errors drift shows violations when drift_count > 0", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "drift-1",
+      sessionKey: "proj-a",
+      errorType: "lint",
+      command: "npm run lint",
+      title: "Unused variable",
+      confidence: 2,
+      driftCount: 2,
+      lastDriftAt: new Date().toISOString(),
+    });
+    db.close();
+
+    const output = runCli("errors drift", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Drift Detection Report");
+    expect(output).toContain("Drift violations");
+    expect(output).toContain("Unused variable");
+    expect(output).toContain("[drift=2]");
+    expect(output).toContain("●●");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 53: DRIFT — clean DB shows no violations
+  // ------------------------------------------------------------------
+  it("DRIFT: clean DB shows no drift violations", () => {
+    makeErrorDb(dbPath);
+
+    const output = runCli("errors drift", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Drift Detection Report");
+    expect(output).toContain("No drift violations");
+    expect(output).toContain("injection is effective");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 54: DRIFT — severity breakdown (3+ drifts = high)
+  // ------------------------------------------------------------------
+  it("DRIFT: severity breakdown shows high for 3+ drifts", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "drift-high",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Missing import",
+      confidence: 1,
+      driftCount: 3,
+      lastDriftAt: new Date().toISOString(),
+    });
+    db.close();
+
+    const output = runCli("errors drift", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("●●●");
+    expect(output).toContain("High (3+ drifts)");
+    expect(output).toContain("1"); // 1 high severity
+  });
+
+  // ------------------------------------------------------------------
+  // Test 55: DRIFT — drift rate calculation
+  // ------------------------------------------------------------------
+  it("DRIFT: drift rate calculated correctly", () => {
+    const db = makeErrorDb(dbPath);
+
+    // 5 errors total, 1 with drift
+    for (let i = 0; i < 4; i++) {
+      insertError(db, {
+        id: `no-drift-${i}`,
+        sessionKey: "proj-a",
+        errorType: "lint",
+        command: "npm run lint",
+        title: `Error ${i}`,
+        confidence: 2,
+      });
+    }
+    insertError(db, {
+      id: "with-drift",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Drifted error",
+      confidence: 1,
+      driftCount: 1,
+      lastDriftAt: new Date().toISOString(),
+    });
+    db.close();
+
+    const output = runCli("errors drift", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Drift scorecard");
+    expect(output).toContain("Total errors:          5");
+    expect(output).toContain("Errors with drift:     1");
+    expect(output).toContain("Drift rate:            20.0%");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 56: DRIFT — effectiveness assessment (low rate)
+  // ------------------------------------------------------------------
+  it("DRIFT: low drift rate shows effective assessment", () => {
+    const db = makeErrorDb(dbPath);
+
+    // 10 errors, 1 with drift = 10% rate
+    for (let i = 0; i < 9; i++) {
+      insertError(db, {
+        id: `ok-${i}`,
+        sessionKey: "proj-a",
+        errorType: "lint",
+        command: "npm run lint",
+        title: `Error ${i}`,
+        confidence: 2,
+      });
+    }
+    insertError(db, {
+      id: "drifted",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Drifted",
+      confidence: 1,
+      driftCount: 1,
+      lastDriftAt: new Date().toISOString(),
+    });
+    db.close();
+
+    const output = runCli("errors drift", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Low drift rate");
+    expect(output).toContain("injection is mostly effective");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 57: DRIFT — high drift rate shows warning
+  // ------------------------------------------------------------------
+  it("DRIFT: high drift rate shows warning assessment", () => {
+    const db = makeErrorDb(dbPath);
+
+    // 3 errors, 2 with drift = 66% rate
+    insertError(db, {
+      id: "ok-1",
+      sessionKey: "proj-a",
+      errorType: "lint",
+      command: "npm run lint",
+      title: "OK error",
+      confidence: 2,
+    });
+    insertError(db, {
+      id: "drift-1",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Drifted 1",
+      confidence: 1,
+      driftCount: 2,
+      lastDriftAt: new Date().toISOString(),
+    });
+    insertError(db, {
+      id: "drift-2",
+      sessionKey: "proj-a",
+      errorType: "test",
+      command: "npm test",
+      title: "Drifted 2",
+      confidence: 1,
+      driftCount: 1,
+      lastDriftAt: new Date().toISOString(),
+    });
+    db.close();
+
+    const output = runCli("errors drift", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("High drift rate");
+    expect(output).toContain("Review the injection format");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 58: DRIFT — retro includes drift section
+  // ------------------------------------------------------------------
+  it("DRIFT: errors retro includes drift violations section", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "drift-retro",
+      sessionKey: "proj-a",
+      errorType: "lint",
+      command: "npm run lint",
+      title: "Ignored warning",
+      confidence: 1,
+      driftCount: 2,
+      lastDriftAt: new Date().toISOString(),
+    });
+    db.close();
+
+    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Drift violations");
+    expect(output).toContain("Ignored warning");
+    expect(output).toContain("[drift=2]");
+    expect(output).toContain("Drift violations:    1");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 59: DRIFT — retro clean DB shows 0 drift violations
+  // ------------------------------------------------------------------
+  it("DRIFT: errors retro clean DB shows 0 drift violations", () => {
+    makeErrorDb(dbPath);
+
+    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Drift violations:    0");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 60: DRIFT — retro recommendation includes drift
+  // ------------------------------------------------------------------
+  it("DRIFT: errors retro recommends reviewing injection when drift detected", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "drift-rec",
+      sessionKey: "proj-a",
+      errorType: "lint",
+      command: "npm run lint",
+      title: "Ignored",
+      confidence: 1,
+      driftCount: 1,
+      lastDriftAt: new Date().toISOString(),
+    });
+    db.close();
+
+    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("drift violation(s)");
+    expect(output).toContain("Review injection format");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 61: DRIFT — TDAI_RETRO_DAYS affects drift window
+  // ------------------------------------------------------------------
+  it("DRIFT: TDAI_RETRO_DAYS affects drift analysis window", () => {
+    const db = makeErrorDb(dbPath);
+
+    // Old drift (10 days ago)
+    const oldDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+    insertError(db, {
+      id: "old-drift",
+      sessionKey: "proj-a",
+      errorType: "lint",
+      command: "npm run lint",
+      title: "Old drift",
+      confidence: 1,
+      driftCount: 1,
+      lastDriftAt: oldDate,
+      createdAt: oldDate,
+    });
+    db.close();
+
+    // Default 7-day window: old drift should NOT appear
+    const output7 = runCli("errors drift", { TDAI_DB_PATH: dbPath });
+    expect(output7).toContain("No drift violations");
+
+    // 30-day window: old drift SHOULD appear
+    const output30 = runCli("errors drift", {
+      TDAI_DB_PATH: dbPath,
+      TDAI_RETRO_DAYS: "30",
+    });
+    expect(output30).toContain("Old drift");
+    expect(output30).toContain("[drift=1]");
   });
 });

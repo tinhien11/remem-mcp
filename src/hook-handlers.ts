@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 
@@ -34,6 +34,92 @@ function logToFile(text: string): void {
     appendFileSync(logPath, `[${ts}] ${text}\n`);
   } catch {
     // Logging is best-effort. Do not block the hook on log errors.
+  }
+}
+
+/**
+ * [Drift Detection] Get the temp file path for tracking error injections.
+ * Each session gets its own file. Injections are logged here by PreToolUse
+ * and checked by PostToolUse.
+ */
+function driftFilePath(sessionKey: string): string {
+  return join(tmpdir(), `tdai-drift-${sessionKey}.jsonl`);
+}
+
+/**
+ * [Drift Detection] Log an error injection from PreToolUse.
+ * Called when an error is injected before a command. PostToolUse will
+ * check this file to detect if the agent ignored the warning.
+ */
+function logDriftInjection(
+  sessionKey: string,
+  contentHash: string,
+  errorId: string,
+  command: string,
+): void {
+  try {
+    const path = driftFilePath(sessionKey);
+    const record = JSON.stringify({
+      content_hash: contentHash,
+      error_id: errorId,
+      command: command.slice(0, 200),
+      injected_at: Date.now(),
+    });
+    appendFileSync(path, `${record}\n`);
+  } catch {
+    // Best-effort — drift tracking is supplementary
+  }
+}
+
+/**
+ * [Drift Detection] Check if a content_hash was recently injected.
+ * Returns the injection record if found, or null if not.
+ * Cleans up entries older than 30 minutes.
+ */
+function checkDriftInjection(
+  sessionKey: string,
+  contentHash: string,
+): { content_hash: string; error_id: string; command: string; injected_at: number } | null {
+  try {
+    const path = driftFilePath(sessionKey);
+    if (!existsSync(path)) return null;
+
+    const content = readFileSync(path, "utf-8");
+    const lines = content.trim().split("\n").filter(Boolean);
+    const now = Date.now();
+    const maxAge = 30 * 60 * 1000; // 30 minutes
+
+    // Filter to recent entries only
+    const recent: string[] = [];
+    let match: {
+      content_hash: string;
+      error_id: string;
+      command: string;
+      injected_at: number;
+    } | null = null;
+
+    for (const line of lines) {
+      try {
+        const record = JSON.parse(line);
+        if (now - record.injected_at < maxAge) {
+          recent.push(line);
+          if (record.content_hash === contentHash && !match) {
+            match = record;
+          }
+        }
+      } catch {
+        // Skip malformed lines
+      }
+    }
+
+    // Clean up old entries (rewrite file with only recent entries)
+    if (recent.length !== lines.length) {
+      writeFileSync(path, recent.join("\n") + (recent.length > 0 ? "\n" : ""));
+    }
+
+    return match;
+  } catch {
+    return null;
   }
 }
 
@@ -474,6 +560,18 @@ export function hookPostToolUse(dbPath: string): void {
           meta.downvotes = (meta.downvotes ?? 0) + 1;
           meta.confidence = Math.max(0, (meta.confidence ?? 2) - 1);
           meta.last_recurred = new Date().toISOString();
+
+          // [Drift Detection] Check if this error was injected by PreToolUse
+          // recently. If so, the agent was warned but still hit the same error.
+          const driftHit = checkDriftInjection(sessionKey, contentHash);
+          if (driftHit) {
+            meta.drift_count = (meta.drift_count ?? 0) + 1;
+            meta.last_drift_at = new Date().toISOString();
+            logToFile(
+              `PostToolUse: DRIFT detected — error ${recent.id} was injected but agent still failed (drift_count=${meta.drift_count})`,
+            );
+          }
+
           db.prepare("UPDATE captures SET metadata = ? WHERE id = ?").run(
             JSON.stringify(meta),
             recent.id,
@@ -523,6 +621,15 @@ export function hookPostToolUse(dbPath: string): void {
         return;
       }
 
+      // [Drift Detection] Check if this error was injected by PreToolUse
+      // recently. If so, the agent was warned but still hit the same error.
+      const driftHit = checkDriftInjection(sessionKey, contentHash);
+      if (driftHit) {
+        logToFile(
+          `PostToolUse: DRIFT detected — error was injected but agent still failed (content_hash=${contentHash})`,
+        );
+      }
+
       // [Feature 1] Capture with structured metadata
       db.prepare(`
         INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata)
@@ -553,6 +660,9 @@ export function hookPostToolUse(dbPath: string): void {
           downvotes: 0,
           // [Feature 4] Success correlation
           resolved: false,
+          // [Drift Detection] Track if this error was injected but still occurred
+          drift_count: driftHit ? 1 : 0,
+          last_drift_at: driftHit ? new Date().toISOString() : undefined,
         }),
       );
 
@@ -665,7 +775,7 @@ export function hookPreToolUse(dbPath: string): void {
 
       const errors = db
         .prepare(
-          `SELECT id, content, tags, created_at, metadata, session_key FROM captures
+          `SELECT id, content, content_hash, tags, created_at, metadata, session_key FROM captures
            WHERE type = 'error' ${sessionFilter}
            AND deleted_at IS NULL
            AND created_at > datetime('now', '-30 days')
@@ -676,6 +786,7 @@ export function hookPreToolUse(dbPath: string): void {
         .all(...params) as {
         id: string;
         content: string;
+        content_hash: string | null;
         tags: string | null;
         created_at: string;
         metadata: string;
@@ -786,6 +897,14 @@ export function hookPreToolUse(dbPath: string): void {
       logToFile(
         `PreToolUse: injected ${k} past error(s) (k=${k}, decayed confidence, ${resolvedFixes.length} fixes) before: ${command.slice(0, 60)}`,
       );
+
+      // [Drift Detection] Log each injected error so PostToolUse can detect
+      // if the agent ignored the warning and hit the same error again.
+      for (const { err } of decayed) {
+        if (err.content_hash) {
+          logDriftInjection(sessionKey, err.content_hash, err.id, command);
+        }
+      }
 
       const output = {
         hookSpecificOutput: {

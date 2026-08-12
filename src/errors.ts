@@ -414,7 +414,38 @@ export function errorsRetro(dbPath: string = defaultDbPath()): void {
     );
   }
 
-  // 6. Summary scorecard
+  // 6. Drift violations — errors injected but still occurred
+  const driftViolations = db
+    .prepare(
+      `SELECT
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.command') as cmd,
+         CAST(json_extract(metadata, '$.drift_count') AS INTEGER) as drift_count,
+         json_extract(metadata, '$.last_drift_at') as last_drift
+       FROM captures
+       WHERE type = 'error' AND deleted_at IS NULL
+       AND ${windowClause}
+       AND CAST(json_extract(metadata, '$.drift_count') AS INTEGER) > 0
+       ORDER BY drift_count DESC LIMIT 5`,
+    )
+    .all() as { title: string; cmd: string; drift_count: number; last_drift: string }[];
+
+  if (driftViolations.length > 0) {
+    console.log(`Drift violations (injected errors that still occurred):`);
+    for (const d of driftViolations) {
+      const title = (d.title ?? "Untitled").slice(0, 45);
+      const cmd = (d.cmd ?? "unknown").slice(0, 30);
+      const severity = d.drift_count >= 3 ? "●●●" : d.drift_count === 2 ? "●●" : "●";
+      console.log(`  ${severity} [drift=${d.drift_count}] ${title}`);
+      console.log(`       cmd: ${cmd}`);
+    }
+    console.log(
+      `\n  💡 These errors were injected as warnings but the agent still hit them.\n` +
+        `     Run \`tdai-memory-mcp errors drift\` for the full report.\n`,
+    );
+  }
+
+  // 7. Summary scorecard
   const totalErrors = db
     .prepare(
       `SELECT COUNT(*) as c FROM captures WHERE type = 'error' AND deleted_at IS NULL AND ${windowClause}`,
@@ -444,6 +475,7 @@ export function errorsRetro(dbPath: string = defaultDbPath()): void {
   console.log(`  Wasted effort:       ${wasted.length}`);
   console.log(`  Recurred resolved:   ${recurred.length}`);
   console.log(`  Harmful fixes:       ${harmful.length}`);
+  console.log(`  Drift violations:    ${driftViolations.length}`);
   console.log();
 
   // Recommendations
@@ -464,9 +496,175 @@ export function errorsRetro(dbPath: string = defaultDbPath()): void {
   if (harmful.length > 0) {
     console.log(`  4. ${harmful.length} harmful fix(es) — find alternative approaches.`);
   }
-  if (loops.length === 0 && wasted.length === 0 && recurred.length === 0 && harmful.length === 0) {
+  if (driftViolations.length > 0) {
+    console.log(
+      `  5. ${driftViolations.length} drift violation(s) — injected warnings were ignored. Review injection format.`,
+    );
+  }
+  if (
+    loops.length === 0 &&
+    wasted.length === 0 &&
+    recurred.length === 0 &&
+    harmful.length === 0 &&
+    driftViolations.length === 0
+  ) {
     console.log("  ✓ No issues detected. Error learning is working well.");
   }
+  console.log();
+  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+
+  db.close();
+}
+
+/**
+ * `tdai-memory-mcp errors drift` — Drift detection report.
+ * Shows errors that were injected by PreToolUse but still occurred
+ * (the agent was warned but ignored the warning).
+ *
+ * (sheal pattern: `sheal drift` — detects when stored learnings are not applied)
+ */
+export function errorsDrift(dbPath: string = defaultDbPath()): void {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true });
+  } catch {
+    console.error("Error: Could not open database at", dbPath);
+    process.exit(1);
+  }
+
+  console.log("tdai-memory-mcp errors drift — Drift Detection Report\n");
+  console.log(`${"─".repeat(60)}\n`);
+
+  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const windowClause = `created_at > datetime('now', '-${days} days')`;
+
+  // 1. Drift violations — errors with drift_count > 0
+  const violations = db
+    .prepare(
+      `SELECT
+         id,
+         content,
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.command') as cmd,
+         json_extract(metadata, '$.error_type') as etype,
+         CAST(json_extract(metadata, '$.drift_count') AS INTEGER) as drift_count,
+         json_extract(metadata, '$.last_drift_at') as last_drift,
+         CAST(json_extract(metadata, '$.confidence') AS INTEGER) as confidence,
+         CAST(json_extract(metadata, '$.downvotes') AS INTEGER) as downvotes,
+         json_extract(metadata, '$.resolved') as resolved,
+         created_at
+       FROM captures
+       WHERE type = 'error' AND deleted_at IS NULL
+       AND ${windowClause}
+       AND CAST(json_extract(metadata, '$.drift_count') AS INTEGER) > 0
+       ORDER BY drift_count DESC, created_at DESC LIMIT 20`,
+    )
+    .all() as {
+    id: string;
+    content: string;
+    title: string;
+    cmd: string;
+    etype: string;
+    drift_count: number;
+    last_drift: string;
+    confidence: number;
+    downvotes: number;
+    resolved: string;
+    created_at: string;
+  }[];
+
+  if (violations.length > 0) {
+    console.log(`Drift violations (errors injected but still occurred in last ${days} days):`);
+    console.log();
+    for (const v of violations) {
+      const title = (v.title ?? "Untitled").slice(0, 50);
+      const cmd = (v.cmd ?? "unknown").slice(0, 35);
+      const date = new Date(v.created_at).toISOString().split("T")[0];
+      const severity = v.drift_count >= 3 ? "●●●" : v.drift_count === 2 ? "●●" : "●";
+      const resolvedTag = v.resolved === "true" ? " ✓resolved" : "";
+      const driftDate = v.last_drift ? new Date(v.last_drift).toISOString().split("T")[0] : "?";
+
+      console.log(`  ${severity} [drift=${v.drift_count}] ${title}`);
+      console.log(`       cmd: ${cmd}  type: ${v.etype ?? "unknown"}`);
+      console.log(
+        `       captured: ${date}  last_drift: ${driftDate}  conf=${v.confidence}  downvotes=${v.downvotes}${resolvedTag}`,
+      );
+      console.log();
+    }
+  } else {
+    console.log(`No drift violations in the last ${days} days. ✓`);
+    console.log("All injected errors were heeded by the agent.\n");
+  }
+
+  // 2. Summary stats
+  const totalDrift = db
+    .prepare(
+      `SELECT COUNT(*) as c, SUM(CAST(json_extract(metadata, '$.drift_count') AS INTEGER)) as total_drifts
+       FROM captures
+       WHERE type = 'error' AND deleted_at IS NULL
+       AND ${windowClause}
+       AND CAST(json_extract(metadata, '$.drift_count') AS INTEGER) > 0`,
+    )
+    .get() as { c: number; total_drifts: number };
+
+  const totalErrors = db
+    .prepare(
+      `SELECT COUNT(*) as c FROM captures WHERE type = 'error' AND deleted_at IS NULL AND ${windowClause}`,
+    )
+    .get() as { c: number };
+
+  const totalInjections = db
+    .prepare(
+      `SELECT COUNT(*) as c FROM captures
+       WHERE type = 'error' AND deleted_at IS NULL
+       AND ${windowClause}
+       AND json_extract(metadata, '$.downvotes') IS NOT NULL`,
+    )
+    .get() as { c: number };
+
+  console.log(`${"─".repeat(60)}`);
+  console.log("Drift scorecard:");
+  console.log(`  Total errors:          ${totalErrors.c}`);
+  console.log(`  Errors with drift:     ${totalDrift.c}`);
+  console.log(`  Total drift events:    ${totalDrift.total_drifts ?? 0}`);
+  if (totalErrors.c > 0) {
+    const driftRate = ((totalDrift.c / totalErrors.c) * 100).toFixed(1);
+    console.log(`  Drift rate:            ${driftRate}%`);
+  }
+  console.log();
+
+  // 3. Effectiveness assessment
+  console.log("Effectiveness assessment:");
+  if (totalDrift.c === 0) {
+    console.log("  ✓ Error injection is effective — no drift detected.");
+  } else if (totalErrors.c > 0) {
+    const rate = (totalDrift.c / totalErrors.c) * 100;
+    if (rate <= 10) {
+      console.log("  ✓ Low drift rate — injection is mostly effective.");
+    } else if (rate < 30) {
+      console.log("  ⚠ Moderate drift rate — some errors are not being heeded.");
+      console.log("    Consider improving the anti-pattern or correct_approach text.");
+    } else {
+      console.log("  ⚠ High drift rate — many injected errors are still occurring.");
+      console.log("    The agent may be ignoring warnings. Review the injection format.");
+    }
+  }
+  console.log();
+
+  // 4. Severity breakdown
+  if (violations.length > 0) {
+    const high = violations.filter((v) => v.drift_count >= 3).length;
+    const mid = violations.filter((v) => v.drift_count === 2).length;
+    const low = violations.filter((v) => v.drift_count === 1).length;
+    console.log("Severity breakdown:");
+    console.log(`  ●●● High (3+ drifts):   ${high}  (agent repeatedly ignored warning)`);
+    console.log(`  ●●  Medium (2 drifts):  ${mid}  (warning ignored twice)`);
+    console.log(`  ●   Low (1 drift):      ${low}  (first drift event)`);
+    console.log();
+  }
+
+  console.log("Legend: ● = 1 drift, ●● = 2 drifts, ●●● = 3+ drifts");
+  console.log("Drift = error was injected by PreToolUse but agent still failed.");
   console.log();
   console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
 
