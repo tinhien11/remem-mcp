@@ -490,6 +490,27 @@ If hooks are installed (`npx tdai-memory-mcp install-hooks`), memory works autom
 
 - **SessionStart**: Recent captures are injected into your context. You do not need to call `recall` manually.
 - **SessionEnd**: When the session ends, a hook silently captures the session summary (first user message + last assistant message) to the memory DB. You do not need to do anything — this runs automatically on session exit.
+- **PreToolUse**: Before running lint/build/test commands, past errors from this project are injected into your context. Fix them BEFORE running the command. Set `TDAI_GLOBAL_ERRORS=1` to inject errors from ALL your projects.
+- **PostToolUse**: When a command fails, the error is auto-captured with structured metadata (error type, anti-pattern, suggested fix). When a previously-failed command succeeds, the error is upvoted and the proven fix is recorded. Cross-project error patterns are detected and alerted.
+
+### Error learning system
+
+The error learning system is the core differentiator. It is based on Reflexion (NeurIPS 2023), ReasoningBank (ICLR 2026), and ExpeL (AAAI 2024):
+
+1. **Auto-capture** — Failed commands are captured with error type, anti-pattern, and suggested fix
+2. **Proactive injection** — Past errors are injected before risky commands (k=2, decayed confidence ranking)
+3. **Success correlation** — Success after failure → upvote + record proven fix
+4. **Confidence decay** — Old errors decay via Ebbinghaus curve (0.95^days)
+5. **Cross-project patterns** — Same error type across 2+ projects triggers an alert
+6. **Pruning** — Recurring errors get downvoted; at confidence=0 they are pruned
+
+To see your error learning dashboard:
+
+```bash
+npx tdai-memory-mcp errors
+```
+
+This shows: top recurring error types, cross-project patterns, confidence distribution, recent errors, and proven fixes.
 
 You can still call `recall`, `capture`, `search`, `forget`, `resolve`, `handoff`, `adr`, `update`, and `consolidate` manually at any time.
 

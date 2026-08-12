@@ -26,6 +26,7 @@ import {
 import { loadConfig } from "./config.js";
 import { doctor } from "./doctor.js";
 import { LocalEmbedder } from "./embedding/local.js";
+import { errors as errorsCommand } from "./errors.js";
 import { exportData } from "./export.js";
 import {
   hookPostCommit,
@@ -254,6 +255,10 @@ async function main(): Promise<void> {
   }
   if (arg === "stats") {
     stats(defaultDbPath());
+    return;
+  }
+  if (arg === "errors") {
+    errorsCommand(defaultDbPath());
     return;
   }
   if (arg === "token-stats") {
@@ -566,6 +571,7 @@ Usage:
   tdai-memory-mcp doctor         Check setup health
   tdai-memory-mcp recent [N]     Show N most recent captures (default: 20)
   tdai-memory-mcp stats          Show memory statistics (by type, trust, size)
+  tdai-memory-mcp errors         Error learning dashboard (patterns, fixes, resolution rate)
 
 CodeGraph commands:
   tdai-memory-mcp index [--path src] [--repo .]  Index code symbols (Tree-sitter)

@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/tdai-memory-mcp.svg)](https://www.npmjs.com/package/tdai-memory-mcp)
 [![GitHub stars](https://img.shields.io/github/stars/tinhien11/tdai-memory-mcp.svg)](https://github.com/tinhien11/tdai-memory-mcp)
 
-> The only memory tool that understands your code. Not just text — symbols, callers, impact, errors, and the decisions behind them.
+> The only memory tool that **learns from your mistakes**. Auto-captures failed commands, injects past errors before you repeat them, and tracks proven fixes across sessions and projects.
 
 ![Bug fix chain](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/handoff-demo.gif)
 
@@ -17,17 +17,35 @@
 
 ## Why this exists
 
-Every memory tool stores text. Mem0, Zep, Letta, PMB, Claude Code's MEMORY.md — they all treat code as words. None of them know what a function is, who calls it, or what breaks when it changes.
+Every memory tool stores text. Mem0, Zep, Letta, PMB, Claude Code's MEMORY.md — they all treat code as words. None of them learn from your failures.
 
-**tdai-memory-mcp is different.** It has three layers in one SQLite file:
+**tdai-memory-mcp is different.** It has three layers in one SQLite file, plus an error learning system that no competitor has:
 
-| Layer | What it knows | Example |
+| Feature | What it does | Example |
 |---|---|---|
+| **Error Learning** | Auto-captures failed commands, injects past errors before risky commands, tracks proven fixes | "Last time you ran `npm run build`, it failed on missing import. Here's the fix that worked." |
 | **Memory** | Decisions, bugs, learnings, errors | "We chose SQLite over Postgres for local-first storage" |
 | **CodeGraph** | Symbols, callers, callees, impact | `useEffect()` is called by 47 components, calls `cleanup()` |
 | **Wiki** | Markdown docs, ADRs, outdated detection | "ADR-007 says use SQLite. 3 files still import Postgres." |
 
-One `recall("useEffect")` returns the bug fix you did last week + the function that caused it + who calls it + the ADR that decided the pattern. No other tool does this.
+### The error learning moat
+
+Based on Reflexion (NeurIPS 2023), ReasoningBank (ICLR 2026), and ExpeL (AAAI 2024):
+
+1. **Auto-capture** — PostToolUse hook captures failed commands with structured metadata (error type, anti-pattern, suggested fix)
+2. **Proactive injection** — PreToolUse hook injects past errors before lint/build/test commands, so the agent fixes them BEFORE running
+3. **Success correlation** — When a previously-failed command succeeds, the error is upvoted and the proven fix is recorded
+4. **Confidence decay** — Old errors decay via Ebbinghaus forgetting curve (0.95^days), making room for fresh ones
+5. **Cross-project patterns** — Detects when the same error type recurs across multiple projects and alerts you
+6. **Pruning** — Errors that keep recurring get downvoted; at confidence=0 they're pruned (ExpeL removal threshold)
+
+```bash
+npx tdai-memory-mcp errors
+```
+
+Shows your error learning dashboard: top recurring patterns, resolution rate, confidence distribution, and proven fixes.
+
+> Set `TDAI_GLOBAL_ERRORS=1` to inject errors from ALL your projects, not just the current one.
 
 ---
 
@@ -45,6 +63,12 @@ That is it. Auto-detects Claude Code, Devin, Cursor, Codex. Registers MCP server
 
 ```bash
 npx tdai-memory-mcp doctor
+```
+
+### See your error patterns
+
+```bash
+npx tdai-memory-mcp errors
 ```
 
 ---

@@ -378,12 +378,20 @@ export function hookPostToolUse(dbPath: string): void {
           meta.resolved_at = new Date().toISOString();
           meta.resolution = "Command succeeded after previous failure";
           meta.confidence = confidence;
+          // [Feature 9] Record the fix that worked — extract from stdout (success output)
+          // This becomes the "proven fix" injected by PreToolUse for similar future errors
+          const successSummary = (stdout || "").trim().slice(0, 200);
+          if (successSummary) {
+            meta.fix_applied = `Command succeeded. Output: ${successSummary.slice(0, 150)}`;
+          } else {
+            meta.fix_applied = meta.correct_approach ?? "Command succeeded after fix.";
+          }
           db.prepare("UPDATE captures SET metadata = ? WHERE id = ?").run(
             JSON.stringify(meta),
             prevError.id,
           );
           logToFile(
-            `PostToolUse: success correlation — upvoted error ${prevError.id} (confidence=${confidence})`,
+            `PostToolUse: success correlation — upvoted error ${prevError.id} (confidence=${confidence}, fix recorded)`,
           );
         }
 
@@ -488,12 +496,17 @@ export function hookPostToolUse(dbPath: string): void {
 
       logToFile(`PostToolUse: auto-captured ${errorType} error. id=${id}`);
 
+      // [Feature 7] Cross-project error pattern detection
+      // Check if the same error type + similar command failed in other projects
+      const patternAlert = detectCrossProjectPattern(dbPath, sessionKey, errorType, command);
+
       // [Feature 3] Self-reflection prompt (Reflexion pattern)
       // Inject a prompt asking the agent to reflect on the error
       const reflection = `[tdai-memory] Auto-captured ${errorType} error: ${title}
 
 Anti-pattern: ${antiPattern}
 Suggested fix: ${correctApproach}
+${patternAlert ? `\n⚠️ CROSS-PROJECT PATTERN: ${patternAlert}` : ""}
 
 Before retrying, reflect on WHY this failed and what you should do differently. Call capture() with type="learning" to save your reflection.`;
 
@@ -566,22 +579,28 @@ export function hookPreToolUse(dbPath: string): void {
       }
 
       // [Feature 2] k=1-2 optimal retrieval (ReasoningBank finding)
-      // Get top 2 errors by confidence, filtered by relevance to current command
+      // [Feature 5] Global error injection — query all projects when TDAI_GLOBAL_ERRORS=1
+      const globalErrors = process.env.TDAI_GLOBAL_ERRORS === "1";
+      const sessionFilter = globalErrors ? "" : `AND session_key = ?`;
+      const params = globalErrors ? [] : [sessionKey];
+
       const errors = db
         .prepare(
-          `SELECT id, content, tags, created_at, metadata FROM captures
-           WHERE type = 'error' AND session_key = ?
+          `SELECT id, content, tags, created_at, metadata, session_key FROM captures
+           WHERE type = 'error' ${sessionFilter}
+           AND deleted_at IS NULL
            AND created_at > datetime('now', '-30 days')
            AND json_extract(metadata, '$.resolved') IS NOT true
            ORDER BY CAST(json_extract(metadata, '$.confidence') AS INTEGER) DESC,
-                    created_at DESC LIMIT 2`,
+                    created_at DESC LIMIT 5`,
         )
-        .all(sessionKey) as {
+        .all(...params) as {
         id: string;
         content: string;
         tags: string | null;
         created_at: string;
         metadata: string;
+        session_key: string;
       }[];
 
       db.close();
@@ -606,27 +625,78 @@ export function hookPreToolUse(dbPath: string): void {
         return;
       }
 
+      // [Feature 8] Apply confidence decay at read time (Ebbinghaus curve)
+      // Re-rank by decayed confidence, then take top 2 (k=2 optimal per ReasoningBank)
+      const decayed = validErrors
+        .map((err) => {
+          const meta = JSON.parse(err.metadata);
+          const base = meta.confidence ?? 2;
+          const decayed = applyConfidenceDecay(base, err.created_at, meta.last_recurred);
+          return { err, meta, decayedConfidence: decayed };
+        })
+        .sort((a, b) => b.decayedConfidence - a.decayedConfidence)
+        .slice(0, 2);
+
+      // [Feature 9] Error-to-fix linking — also fetch RESOLVED errors with fixes
+      // to inject the proven fix, not just the anti-pattern
+      let resolvedFixes: { title: string; fix: string; date: string }[] = [];
+      try {
+        const rDb = new Database(dbPath, { readonly: true });
+        const resolved = rDb
+          .prepare(
+            `SELECT content, metadata, created_at FROM captures
+             WHERE type = 'error' ${sessionFilter}
+             AND deleted_at IS NULL
+             AND json_extract(metadata, '$.resolved') = true
+             AND json_extract(metadata, '$.fix_applied') IS NOT NULL
+             ORDER BY created_at DESC LIMIT 2`,
+          )
+          .all(...params) as { content: string; metadata: string; created_at: string }[];
+        rDb.close();
+        resolvedFixes = resolved.map((r) => {
+          const m = JSON.parse(r.metadata);
+          return {
+            title: m.title ?? "Untitled",
+            fix: m.fix_applied ?? m.correct_approach ?? "",
+            date: new Date(r.created_at).toISOString().split("T")[0],
+          };
+        });
+      } catch {
+        // non-fatal — fixes are bonus context
+      }
+
       // Build structured warning context (ReasoningBank format)
       const lines: string[] = [`[tdai-memory] Past error to avoid repeating:`];
-      for (const err of validErrors) {
-        const meta = JSON.parse(err.metadata);
+      for (const { err, meta, decayedConfidence } of decayed) {
         const date = new Date(err.created_at).toISOString().split("T")[0];
         const title = meta.title ?? "Untitled error";
         const antiPattern = meta.anti_pattern ?? "";
         const correctApproach = meta.correct_approach ?? "";
-        const confidence = meta.confidence ?? 2;
+        const isOtherProject = err.session_key !== sessionKey;
 
-        lines.push(`- ${date} [confidence=${confidence}]: ${title}`);
+        lines.push(`- ${date} [confidence=${decayedConfidence.toFixed(1)}]: ${title}`);
+        if (isOtherProject) lines.push(`  (from another project — cross-project pattern)`);
         if (antiPattern) lines.push(`  Anti-pattern: ${antiPattern}`);
         if (correctApproach) lines.push(`  Fix: ${correctApproach}`);
         if (meta.resolved) lines.push(`  (Previously resolved — may recur)`);
       }
+
+      // [Feature 9] Inject proven fixes from resolved errors
+      if (resolvedFixes.length > 0) {
+        lines.push("");
+        lines.push("Proven fixes from past resolved errors:");
+        for (const fix of resolvedFixes) {
+          lines.push(`- ${fix.date}: ${fix.title} → ${fix.fix}`);
+        }
+      }
+
       lines.push("");
       lines.push("Fix these issues BEFORE running the command.");
 
       const context = lines.join("\n");
+      const k = decayed.length;
       logToFile(
-        `PreToolUse: injected ${validErrors.length} past error(s) (k=${validErrors.length}) before: ${command.slice(0, 60)}`,
+        `PreToolUse: injected ${k} past error(s) (k=${k}, decayed confidence, ${resolvedFixes.length} fixes) before: ${command.slice(0, 60)}`,
       );
 
       const output = {
@@ -658,6 +728,98 @@ function isNoiseCommand(command: string): boolean {
   // Very short commands that are just probes (ls <fake>, cat <fake>)
   if (/^ls\s+\/[a-z_]+$/.test(lower) && lower.length < 30) return true;
   return false;
+}
+
+/**
+ * [Feature 7] Cross-project error pattern detection.
+ * Checks if the same error type + similar command root failed in other projects.
+ * Returns an alert string if a pattern is found, or null if not.
+ */
+function detectCrossProjectPattern(
+  dbPath: string,
+  currentSessionKey: string,
+  errorType: string,
+  command: string,
+): string | null {
+  try {
+    const db = new Database(dbPath, { readonly: true });
+    // Extract command root (e.g. "npm run build" → "npm build", "npx tsc" → "tsc")
+    const cmdRoot = extractCommandRoot(command);
+
+    // Find same error_type in OTHER session keys (last 30 days)
+    const others = db
+      .prepare(
+        `SELECT session_key, content, metadata, created_at FROM captures
+         WHERE type = 'error' AND session_key != ?
+         AND deleted_at IS NULL
+         AND created_at > datetime('now', '-30 days')
+         AND json_extract(metadata, '$.error_type') = ?
+         ORDER BY created_at DESC LIMIT 10`,
+      )
+      .all(currentSessionKey, errorType) as {
+      session_key: string;
+      content: string;
+      metadata: string;
+      created_at: string;
+    }[];
+
+    db.close();
+
+    if (others.length < 2) return null;
+
+    // Check if any have a similar command root
+    const matching = others.filter((o) => {
+      try {
+        const meta = JSON.parse(o.metadata);
+        return extractCommandRoot(meta.command ?? "") === cmdRoot;
+      } catch {
+        return false;
+      }
+    });
+
+    if (matching.length >= 2) {
+      const projects = new Set(matching.map((m) => m.session_key.slice(0, 8)));
+      return `This ${errorType} error on "${cmdRoot}" also occurred in ${matching.length} other session(s) across ${projects.size} project(s). This is a recurring pattern — check if there's a systemic cause.`;
+    }
+
+    // Same error type in 3+ different projects (even if different command)
+    if (others.length >= 3) {
+      const projects = new Set(others.map((o) => o.session_key.slice(0, 8)));
+      if (projects.size >= 3) {
+        return `${errorType} errors are appearing across ${projects.size} projects (${others.length} total). Consider reviewing common dependencies or shared configurations.`;
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Extract the command root for pattern matching (e.g. "npm run build" → "npm build"). */
+function extractCommandRoot(command: string): string {
+  const parts = command.trim().split(/\s+/);
+  // Skip "run" and "exec" subcommands
+  const filtered = parts.filter((p) => p !== "run" && p !== "exec" && p !== "--");
+  return filtered.slice(0, 3).join(" ").toLowerCase();
+}
+
+/**
+ * [Feature 8] Error confidence decay (Ebbinghaus forgetting curve).
+ * Errors that haven't recurred in a while should decay, making room for fresh ones.
+ * Decay formula: confidence *= 0.95^(days_since_last_seen)
+ * Applied at read time (PreToolUse) to avoid write overhead.
+ */
+function applyConfidenceDecay(
+  baseConfidence: number,
+  createdAt: string,
+  lastRecurred?: string,
+): number {
+  const referenceDate = lastRecurred ? new Date(lastRecurred) : new Date(createdAt);
+  const daysSince = (Date.now() - referenceDate.getTime()) / (1000 * 60 * 60 * 24);
+  // Decay: 0.95^days. After 14 days → 0.49x. After 30 days → 0.21x.
+  const decayFactor = 0.95 ** daysSince;
+  return Math.round(baseConfidence * decayFactor * 100) / 100;
 }
 
 /** Classify error type from command and error output. */
