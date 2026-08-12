@@ -34,7 +34,7 @@ function checkHooksConfig(name: string, path: string): { ok: boolean; detail: st
         h.hooks?.some((hook: { command: string }) => hook.command?.includes("tdai-memory")),
       );
     const required = ["SessionStart", "Stop"];
-    const optional = ["PreToolUse", "PostToolUse", "PostToolUseFailure", "SessionEnd"];
+    const optional = ["PreToolUse", "PostToolUse", "SessionEnd"];
     const missing = required.filter((ev) => !hasTdai(ev));
     const presentOptional = optional.filter((ev) => hasTdai(ev));
     if (missing.length > 0) {

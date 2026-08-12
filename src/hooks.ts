@@ -68,18 +68,10 @@ const HOOKS_CONFIG = {
       ],
     },
   ],
-  PostToolUseFailure: [
-    {
-      matcher: "Bash|exec",
-      hooks: [
-        {
-          type: "command",
-          command: hookCommand("hook-post-tool-use"),
-          timeout: 5,
-        },
-      ],
-    },
-  ],
+  // Note: PostToolUseFailure is not supported by Devin CLI.
+  // Devin supports: PreToolUse, PostToolUse, UserPromptSubmit, Stop,
+  // PostCompaction, SessionStart, SessionEnd, PermissionRequest.
+  // Error capture is handled via PostToolUse with exit code 2.
   Stop: [
     {
       hooks: [
@@ -260,14 +252,7 @@ export async function uninstallHooks(): Promise<void> {
   console.log("Removing lifecycle hooks...\n");
 
   let removed = 0;
-  const tdaiEvents = [
-    "SessionStart",
-    "SessionEnd",
-    "Stop",
-    "PreToolUse",
-    "PostToolUse",
-    "PostToolUseFailure",
-  ];
+  const tdaiEvents = ["SessionStart", "SessionEnd", "Stop", "PreToolUse", "PostToolUse"];
 
   // Remove from Devin CLI
   const devinPath = join(homedir(), ".config", "devin", "config.json");
