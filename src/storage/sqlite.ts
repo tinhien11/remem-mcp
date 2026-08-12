@@ -633,7 +633,7 @@ export class SQLiteBackend implements StorageBackend {
         const ageMs = now - row.created_at;
         const decay = 0.5 ** (ageMs / HALF_LIFE_MS);
         const trustBoost = TRUST_BOOST[row.trust_state ?? "candidate"] ?? 1.0;
-        const decayed = r.score * decay;
+        const decayed = Number.isNaN(r.score) ? 0 : r.score * decay;
         // BM25 scores are negative (lower = better). For negative scores, divide by boost
         // so a lower boost makes the score more negative (ranks lower). For positive scores
         // (RRF fusion), multiply so a lower boost makes the score lower.

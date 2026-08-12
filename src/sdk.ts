@@ -245,9 +245,14 @@ export class Memory {
     lines.push(opts.decision);
     lines.push("");
 
-    if (opts.alternatives && opts.alternatives.length > 0) {
+    const alternatives = Array.isArray(opts.alternatives)
+      ? opts.alternatives
+      : typeof opts.alternatives === "string" && opts.alternatives
+        ? [opts.alternatives]
+        : [];
+    if (alternatives.length > 0) {
       lines.push("## Alternatives considered");
-      for (const alt of opts.alternatives) lines.push(`- ${alt}`);
+      for (const alt of alternatives) lines.push(`- ${alt}`);
       lines.push("");
     }
     if (opts.consequences) {
@@ -261,7 +266,7 @@ export class Memory {
       title: opts.title,
       context: opts.context,
       decision: opts.decision,
-      alternatives: opts.alternatives ?? [],
+      alternatives,
       consequences: opts.consequences ?? "",
     });
     const contentHash = createHash("sha256").update(dedupPayload).digest("hex");
@@ -282,7 +287,7 @@ export class Memory {
         title: opts.title,
         context: opts.context,
         decision: opts.decision,
-        alternatives: opts.alternatives ?? [],
+        alternatives,
         consequences: opts.consequences ?? "",
       },
       contentHash,

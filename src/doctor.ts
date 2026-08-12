@@ -29,19 +29,19 @@ function checkHooksConfig(name: string, path: string): { ok: boolean; detail: st
   try {
     const config = JSON.parse(readFileSync(path, "utf-8"));
     const hooks = config.hooks || {};
-    const hasStart = hooks.SessionStart?.some((h: { hooks: { command: string }[] }) =>
-      h.hooks?.some((hook: { command: string }) => hook.command?.includes("tdai-memory")),
-    );
-    const hasStop = hooks.Stop?.some((h: { hooks: { command: string }[] }) =>
-      h.hooks?.some((hook: { command: string }) => hook.command?.includes("tdai-memory")),
-    );
-    if (hasStart && hasStop) {
-      return { ok: true, detail: `${name}: hooks wired (SessionStart + Stop)` };
+    const hasTdai = (event: string) =>
+      hooks[event]?.some((h: { hooks: { command: string }[] }) =>
+        h.hooks?.some((hook: { command: string }) => hook.command?.includes("tdai-memory")),
+      );
+    const required = ["SessionStart", "Stop"];
+    const optional = ["PreToolUse", "PostToolUse", "PostToolUseFailure", "SessionEnd"];
+    const missing = required.filter((ev) => !hasTdai(ev));
+    const presentOptional = optional.filter((ev) => hasTdai(ev));
+    if (missing.length > 0) {
+      return { ok: false, detail: `${name}: missing ${missing.join(", ")}` };
     }
-    if (hasStart) {
-      return { ok: false, detail: `${name}: only SessionStart hook (missing Stop)` };
-    }
-    return { ok: false, detail: `${name}: hooks NOT wired` };
+    const optStr = presentOptional.length > 0 ? ` + ${presentOptional.join(", ")}` : "";
+    return { ok: true, detail: `${name}: hooks wired (SessionStart + Stop${optStr})` };
   } catch {
     return { ok: false, detail: `${name}: config unreadable` };
   }

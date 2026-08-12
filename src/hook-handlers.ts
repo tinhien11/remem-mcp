@@ -232,6 +232,42 @@ export function hookStop(dbPath?: string): void {
       return;
     }
 
+    // Check if session is trivial (1-2 user messages, no file edits).
+    // Skip reminder for trivial sessions to avoid noise.
+    const isTrivial = (() => {
+      const tpath = input.transcript_path;
+      if (!tpath || !existsSync(tpath)) return false;
+      try {
+        const lines = readFileSync(tpath, "utf-8").trim().split("\n");
+        let userCount = 0;
+        let hasEdit = false;
+        for (const line of lines) {
+          try {
+            const entry = JSON.parse(line);
+            if (entry.role === "user" || entry.type === "user") userCount++;
+            if (
+              entry.tool_name === "edit" ||
+              entry.tool_name === "write" ||
+              entry.tool_name === "Edit" ||
+              entry.tool_name === "Write"
+            )
+              hasEdit = true;
+          } catch {
+            // Not JSON, skip
+          }
+        }
+        return userCount <= 2 && !hasEdit;
+      } catch {
+        return false;
+      }
+    })();
+
+    if (isTrivial) {
+      logToFile("Stop: trivial session, skipping reminder");
+      process.stdout.write(JSON.stringify({}));
+      return;
+    }
+
     // First fire: send a brief reminder (capture already happened above).
     const reminder =
       "Session transcript auto-captured. If you made important decisions or " +

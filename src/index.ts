@@ -142,6 +142,36 @@ async function main(): Promise<void> {
     await doctor();
     return;
   }
+  if (arg === "recent" || arg === "list") {
+    const limit = parseInt(process.argv[3] ?? "20", 10);
+    const db = new Database(defaultDbPath(), { readonly: true });
+    const rows = db
+      .prepare(
+        `SELECT id, type, content, tags, created_at FROM captures WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ?`,
+      )
+      .all(limit) as {
+      id: string;
+      type: string;
+      content: string;
+      tags: string;
+      created_at: number;
+    }[];
+    if (rows.length === 0) {
+      console.log("No captures found.");
+    } else {
+      for (const r of rows) {
+        const date = new Date(r.created_at).toISOString().split("T")[0];
+        const tags = r.tags ? ` [${JSON.parse(r.tags).join(", ")}]` : "";
+        const preview = r.content.slice(0, 80).replace(/\n/g, " ");
+        console.log(
+          `${date}  ${r.id}  ${r.type}${tags}  ${preview}${r.content.length > 80 ? "..." : ""}`,
+        );
+      }
+      console.log(`\n${rows.length} capture(s).`);
+    }
+    db.close();
+    return;
+  }
   if (arg === "export") {
     const dbPath = defaultDbPath();
     const output = process.argv[3] ?? "-";

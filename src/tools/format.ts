@@ -11,8 +11,9 @@ export function formatResults(results: SearchResult[]): string {
     const { entry, score } = results[i];
     const date = new Date(entry.createdAt).toISOString();
     const tags = entry.tags.length > 0 ? `  tags: [${entry.tags.join(", ")}]` : "";
+    const scoreStr = Number.isNaN(score) ? "N/A" : score.toFixed(4);
     lines.push(
-      `[${i + 1}] id: ${entry.id}  type: ${entry.type}${tags}  ${date}  score: ${score.toFixed(4)}`,
+      `[${i + 1}] id: ${entry.id}  type: ${entry.type}${tags}  ${date}  score: ${scoreStr}`,
     );
     lines.push(`    ${entry.content}`);
     lines.push("");

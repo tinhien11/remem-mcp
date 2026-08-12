@@ -1603,7 +1603,12 @@ async function handleAdr(
   const title = args.title as string;
   const context = args.context as string;
   const decision = args.decision as string;
-  const alternatives = (args.alternatives as string[]) ?? [];
+  const alternativesRaw = args.alternatives as string[] | string | undefined;
+  const alternatives = Array.isArray(alternativesRaw)
+    ? alternativesRaw
+    : typeof alternativesRaw === "string" && alternativesRaw
+      ? [alternativesRaw]
+      : [];
   const consequences = (args.consequences as string) ?? "";
   const tags = (args.tags as string[]) ?? [];
   const sessionKey = (args.session_key as string) ?? defaultSessionKey();
