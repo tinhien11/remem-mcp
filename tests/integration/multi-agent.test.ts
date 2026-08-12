@@ -9,7 +9,15 @@
  * - Global + project hybrid recall (TDAI_GLOBAL_SESSION_KEY)
  */
 import { execSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,7 +35,13 @@ function makeTmpHome(): string {
 
 function makeDb(
   dbPath: string,
-  captures: Array<{ id: string; session_key: string; type: string; content: string; tags?: string }>,
+  captures: Array<{
+    id: string;
+    session_key: string;
+    type: string;
+    content: string;
+    tags?: string;
+  }>,
 ): void {
   // Use SQLiteBackend to properly init schema + sqlite-vec + FTS5
   const backend = new SQLiteBackend(dbPath);
@@ -46,11 +60,15 @@ function makeDb(
   backend.close();
 }
 
-function readCaptures(dbPath: string): Array<{ id: string; type: string; content: string; session_key: string }> {
+function readCaptures(
+  dbPath: string,
+): Array<{ id: string; type: string; content: string; session_key: string }> {
   const Database = require("better-sqlite3");
   const db = new Database(dbPath, { readonly: true });
   const rows = db
-    .prepare("SELECT id, type, content, session_key FROM captures WHERE deleted_at IS NULL ORDER BY created_at DESC")
+    .prepare(
+      "SELECT id, type, content, session_key FROM captures WHERE deleted_at IS NULL ORDER BY created_at DESC",
+    )
     .all() as Array<{ id: string; type: string; content: string; session_key: string }>;
   db.close();
   return rows;
@@ -95,9 +113,7 @@ describe("Regression: Claude Code hooks", () => {
     const settingsPath = join(fakeHome, ".claude", "settings.json");
     const existing = {
       hooks: {
-        PreToolUse: [
-          { matcher: "Grep", hooks: [{ type: "command", command: "echo existing" }] },
-        ],
+        PreToolUse: [{ matcher: "Grep", hooks: [{ type: "command", command: "echo existing" }] }],
       },
     };
     writeFileSync(settingsPath, JSON.stringify(existing, null, 2));
@@ -290,7 +306,7 @@ trust_level = "trusted"
     const content = readFileSync(configPath, "utf-8");
     expect(content).toContain("[mcp_servers.codebase-memory-mcp]");
     expect(content).toContain('command = "/usr/local/bin/codebase-memory-mcp"');
-    expect(content).toContain("[projects.\"/Users/tin/a/myapp\"]");
+    expect(content).toContain('[projects."/Users/tin/a/myapp"]');
     expect(content).toContain("tdai-memory SessionStart");
   });
 });
@@ -305,14 +321,30 @@ describe("Regression: read-only DB fallback", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "tdai-readonly-reg-"));
     dbPath = join(tmpDir, "memory.db");
     makeDb(dbPath, [
-      { id: "1", session_key: "test-session", type: "decision", content: "Use SQLite for local-first storage", tags: '["arch"]' },
-      { id: "2", session_key: "test-session", type: "learning", content: "FTS5 supports BM25 ranking natively", tags: '["search"]' },
+      {
+        id: "1",
+        session_key: "test-session",
+        type: "decision",
+        content: "Use SQLite for local-first storage",
+        tags: '["arch"]',
+      },
+      {
+        id: "2",
+        session_key: "test-session",
+        type: "learning",
+        content: "FTS5 supports BM25 ranking natively",
+        tags: '["search"]',
+      },
     ]);
   });
 
   afterEach(() => {
     // Restore permissions before cleanup
-    try { chmodSync(tmpDir, 0o755); } catch { /* already gone */ }
+    try {
+      chmodSync(tmpDir, 0o755);
+    } catch {
+      /* already gone */
+    }
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -344,7 +376,8 @@ describe("Regression: read-only DB fallback", () => {
     }
 
     // Can read from the DB
-    const rows = backend.getDatabase()
+    const rows = backend
+      .getDatabase()
       .prepare("SELECT COUNT(*) as c FROM captures WHERE deleted_at IS NULL")
       .get() as { c: number };
     expect(rows.c).toBe(2);
@@ -364,10 +397,34 @@ describe("Regression: global + project hybrid recall", () => {
     dbPath = join(tmpDir, "memory.db");
     // Seed both global and project captures
     makeDb(dbPath, [
-      { id: "g1", session_key: "global", type: "decision", content: "Always use recall before grep", tags: '["rule"]' },
-      { id: "g2", session_key: "global", type: "decision", content: "Use codegraph_search for definitions", tags: '["rule"]' },
-      { id: "p1", session_key: "project-abc", type: "learning", content: "Project uses PostgreSQL for production", tags: '["db"]' },
-      { id: "p2", session_key: "project-abc", type: "task", content: "Migrated from MySQL to PostgreSQL", tags: '["migration"]' },
+      {
+        id: "g1",
+        session_key: "global",
+        type: "decision",
+        content: "Always use recall before grep",
+        tags: '["rule"]',
+      },
+      {
+        id: "g2",
+        session_key: "global",
+        type: "decision",
+        content: "Use codegraph_search for definitions",
+        tags: '["rule"]',
+      },
+      {
+        id: "p1",
+        session_key: "project-abc",
+        type: "learning",
+        content: "Project uses PostgreSQL for production",
+        tags: '["db"]',
+      },
+      {
+        id: "p2",
+        session_key: "project-abc",
+        type: "task",
+        content: "Migrated from MySQL to PostgreSQL",
+        tags: '["migration"]',
+      },
     ]);
   });
 

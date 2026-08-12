@@ -1,20 +1,26 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
-import { readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  indexFile,
-  indexDirectory,
-  searchSymbols,
-  findCallers,
-  findCallees,
-  impactAnalysis,
-  listSymbols,
   detectLanguage,
+  findCallees,
+  findCallers,
+  impactAnalysis,
+  indexDirectory,
+  indexFile,
+  listSymbols,
+  searchSymbols,
 } from "../../src/codegraph/engine.js";
 
-const TMP = join(process.env.HOME ?? "/tmp", ".local", "share", "tdai-memory-mcp", "test-codegraph");
+const TMP = join(
+  process.env.HOME ?? "/tmp",
+  ".local",
+  "share",
+  "tdai-memory-mcp",
+  "test-codegraph",
+);
 
 function makeDb(): Database.Database {
   const db = new Database(":memory:");

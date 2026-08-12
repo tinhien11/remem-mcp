@@ -1,14 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
-import { readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  ingestFile,
-  ingestDirectory,
-  searchWiki,
-  getWikiPage,
   findOutdatedPages,
+  getWikiPage,
+  ingestDirectory,
+  ingestFile,
+  searchWiki,
 } from "../../src/wiki/engine.js";
 
 const TMP = join(process.env.HOME ?? "/tmp", ".local", "share", "tdai-memory-mcp", "test-wiki");
