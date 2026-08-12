@@ -30,13 +30,13 @@ Three learning loops, all automatic. No user action needed.
 ```
 Foundation: SQLite + RRF + embedding + capture/recall
     │
-    ├── Moat 1: Error Learning (41 features)
+    ├── Error Learning (41 features)
     │   Command fails → capture (type, anti-pattern, git context)
     │                 → inject past error + proven fix + rollback before similar command
     │                 → succeed → upvote, validate, tag provenance
     │                 → recur → downvote, escalate, auto-annotate, prune at 0
     │
-    ├── Moat 2: Decision Learning (9 features)
+    ├── Decision Learning (9 features)
     │   npm install / git commit / config → auto-capture decision
     │                                    → inject past decisions before similar commands
     │                                    → re-chose → confidence upvote, followed=true
@@ -45,7 +45,7 @@ Foundation: SQLite + RRF + embedding + capture/recall
     │                                    → no local → inherit from other projects
     │                                    → retro: follow rate, drift, repeated decisions
     │
-    └── Moat 3: Pattern Learning (10 features)
+    └── Pattern Learning (10 features)
         Write/Edit code → auto-capture pattern (function, component, class, imports)
                         → inject same-language patterns before editing
                         → seen again → confidence upvote, adopted=true
@@ -56,7 +56,7 @@ Foundation: SQLite + RRF + embedding + capture/recall
                         → retro: adoption rate, most used patterns
 ```
 
-### Moat 1: Error Learning (41 features)
+### Error Learning (41 features)
 
 All automatic. No user action needed.
 
@@ -92,7 +92,7 @@ All automatic. No user action needed.
 | **Action item tracker** | Verified/open/recurring fixes | `errors actions` |
 | **Error dashboard** | Patterns, resolution rate, confidence distribution | `errors` |
 
-#### Moat 2: Decision Learning
+#### Decision Learning (9 features)
 
 | Feature | What it does | CLI |
 |---|---|---|
@@ -106,7 +106,7 @@ All automatic. No user action needed.
 | **Decision retro** | Follow rate, repeated decisions, drifted decisions | `decisions retro` |
 | **Decision dashboard** | Top decisions by confidence, type breakdown | `decisions` |
 
-#### Moat 3: Pattern Learning
+#### Pattern Learning (10 features)
 
 | Feature | What it does | CLI |
 |---|---|---|
@@ -258,13 +258,13 @@ npx tdai-memory-mcp errors inherited   # Cross-project fix inheritance
 npx tdai-memory-mcp errors provenance  # Fix provenance chain
 npx tdai-memory-mcp errors persona     # Error profile per project
 
-# Decision learning (Moat 2)
+# Decision learning
 npx tdai-memory-mcp decisions          # Decision dashboard
 npx tdai-memory-mcp decisions retro    # Decision retrospective (follow rate, drift)
 npx tdai-memory-mcp decisions conflicts  # Contradictory decision report
 npx tdai-memory-mcp decisions inherited  # Cross-project decision inheritance
 
-# Pattern learning (Moat 3)
+# Pattern learning
 npx tdai-memory-mcp patterns           # Pattern dashboard
 npx tdai-memory-mcp patterns retro     # Pattern retrospective (adoption rate)
 npx tdai-memory-mcp patterns conflicts   # Pattern conflict report
