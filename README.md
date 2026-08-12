@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/tdai-memory-mcp.svg)](https://www.npmjs.com/package/tdai-memory-mcp)
 [![GitHub stars](https://img.shields.io/github/stars/tinhien11/tdai-memory-mcp.svg)](https://github.com/tinhien11/tdai-memory-mcp)
 
-> The only memory tool that **learns from your mistakes**. Auto-captures failed commands, injects past errors before you repeat them, and tracks proven fixes across sessions and projects.
+> Local-first memory for coding agents. One SQLite file. Three layers: memory, code graph, wiki. Plus an error learning system that captures failures and injects proven fixes.
 
 ![Bug fix chain](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/handoff-demo.gif)
 
@@ -15,37 +15,108 @@
 
 ---
 
-## Why this exists
+## What this is
 
-Every memory tool stores text. Mem0, Zep, Letta, PMB, Claude Code's MEMORY.md — they all treat code as words. None of them learn from your failures.
+A memory server for coding agents. Runs as an MCP server on SQLite. No API key, no cloud.
 
-**tdai-memory-mcp is different.** It has three layers in one SQLite file, plus an error learning system that no competitor has:
+Three layers in one database:
 
-| Feature | What it does | Example |
+| Layer | Stores | Example |
 |---|---|---|
-| **Error Learning** | Auto-captures failed commands, injects past errors before risky commands, tracks proven fixes | "Last time you ran `npm run build`, it failed on missing import. Here's the fix that worked." |
 | **Memory** | Decisions, bugs, learnings, errors | "We chose SQLite over Postgres for local-first storage" |
 | **CodeGraph** | Symbols, callers, callees, impact | `useEffect()` is called by 47 components, calls `cleanup()` |
 | **Wiki** | Markdown docs, ADRs, outdated detection | "ADR-007 says use SQLite. 3 files still import Postgres." |
 
-### The error learning moat
+Plus an error learning system that no other memory tool has.
 
-Based on Reflexion (NeurIPS 2023), ReasoningBank (ICLR 2026), and ExpeL (AAAI 2024):
+---
 
-1. **Auto-capture** — PostToolUse hook captures failed commands with structured metadata (error type, anti-pattern, suggested fix)
-2. **Proactive injection** — PreToolUse hook injects past errors before lint/build/test commands, so the agent fixes them BEFORE running
-3. **Success correlation** — When a previously-failed command succeeds, the error is upvoted and the proven fix is recorded
-4. **Confidence decay** — Old errors decay via Ebbinghaus forgetting curve (0.95^days), making room for fresh ones
-5. **Cross-project patterns** — Detects when the same error type recurs across multiple projects and alerts you
-6. **Pruning** — Errors that keep recurring get downvoted; at confidence=0 they're pruned (ExpeL removal threshold)
+## The error learning system
+
+Most memory tools store text. None of them learn from failures. This one does.
+
+### How it works
+
+```
+Command fails → PostToolUse hook captures it (error type, anti-pattern, root cause)
+                                    ↓
+Next time you run a similar command → PreToolUse hook injects the past error
+                                    ↓
+Command succeeds → error upvoted, proven fix recorded
+                                    ↓
+Error keeps recurring → downvoted, pruned at confidence=0
+```
+
+### What it captures
+
+Every failed `npm run lint`, `npm run build`, `tsc`, `cargo build`, `pytest` — automatically, with no agent cooperation. The hook fires, extracts the error type, generates an anti-pattern ("don't do X") and a correct approach ("do Y instead"), and stores it.
+
+### What it injects
+
+Before you run a lint/build/test command, the PreToolUse hook injects the top 2 most relevant past errors (by decayed confidence). The agent sees them before it runs the command, so it can fix the issue proactively.
+
+### Safety gates
+
+Two gates prevent bad fixes from being re-injected:
+
+- **Harm gate** — If a proven fix previously caused a regression (`fix_harm_count > 0`), it is blocked.
+- **A/B validation** — If the fix's success output contained error indicators (`fix_validated = false`), it is blocked. Only clean successes are promoted.
+
+### Semantic matching
+
+Errors are normalized before hashing: line numbers, variable names, and file paths are replaced with placeholders. So `TypeError: x is undefined at line 42` and `TypeError: y is undefined at line 87` are recognized as the same error pattern, not two new errors.
+
+### Confidence decay
+
+Errors decay via Ebbinghaus forgetting curve (`0.95^days`). Old errors fade. Fresh ones rank higher. Errors that recur get downvoted. At confidence=0, they are pruned.
+
+### Cross-project patterns
+
+When the same error type occurs in 2+ projects, you get an alert. Set `TDAI_GLOBAL_ERRORS=1` to inject errors from all your projects, not just the current one.
+
+### Pre-action matchers
+
+Before dangerous commands, the PreToolUse hook warns:
+
+- `git push --force` (with/without branch — different severity)
+- `rm -rf` on critical paths (`/`, `~`, `/home`, `/usr`, `/var`, `/etc`)
+- `DROP TABLE` / `DROP DATABASE` / `TRUNCATE`
+- `DELETE FROM` without `WHERE`
+- `npm publish` (caution level)
+- `docker system prune` / `volume rm`
+- `kubectl delete namespace`
+
+### Observability
+
+```bash
+# Use the explain_recall tool to see why a memory was retrieved:
+# - BM25 score, vector score, RRF fused score, rank
+# - Matched vs missed keywords
+# - With capture_id: why a specific capture was or wasn't retrieved
+```
+
+### Session retrospective
+
+```bash
+npx tdai-memory-mcp errors retro
+```
+
+Analyzes your last 7 days (configurable via `TDAI_RETRO_DAYS`):
+
+- **Failure loops** — same error recurred 3+ times (agent stuck)
+- **Wasted effort** — errors captured but never resolved
+- **Recurred resolved** — "resolved" errors that came back (fix is wrong)
+- **Most expensive commands** — ranked by failure count
+- **Harmful fixes** — blocked by harm gate, don't re-apply
+- **Scorecard + recommendations**
+
+### Error dashboard
 
 ```bash
 npx tdai-memory-mcp errors
 ```
 
-Shows your error learning dashboard: top recurring patterns, resolution rate, confidence distribution, and proven fixes.
-
-> Set `TDAI_GLOBAL_ERRORS=1` to inject errors from ALL your projects, not just the current one.
+Shows: top recurring patterns, resolution rate, confidence distribution, proven fixes, recent errors.
 
 ---
 
@@ -55,7 +126,7 @@ Shows your error learning dashboard: top recurring patterns, resolution rate, co
 npx tdai-memory-mcp setup
 ```
 
-That is it. Auto-detects Claude Code, Devin, Cursor, Codex. Registers MCP server + hooks. Restart your agent.
+Auto-detects Claude Code, Devin, Cursor, Codex. Registers MCP server + hooks. Restart your agent.
 
 > **Global install** (faster hooks, no npx delay): `npm install -g tdai-memory-mcp` — postinstall auto-runs setup.
 
@@ -63,12 +134,6 @@ That is it. Auto-detects Claude Code, Devin, Cursor, Codex. Registers MCP server
 
 ```bash
 npx tdai-memory-mcp doctor
-```
-
-### See your error patterns
-
-```bash
-npx tdai-memory-mcp errors
 ```
 
 ---
@@ -105,9 +170,9 @@ Root cause: ReactFiberBeginWork boundary check does not skip
 Fix: check if promise is resolved before showing fallback. 31/31 tests pass.
 ```
 
-**How memory helped:** Session 2 started with the batching fix already loaded. The agent said "I see from memory that batching was fixed" and went straight to the cleanup bug. Session 3 knew both fiber fixes, so it looked at Suspense instead of re-investigating hooks.
+**How memory helped:** Session 2 started with the batching fix already loaded. Session 3 knew both fiber fixes, so it looked at Suspense instead of re-investigating hooks.
 
-Without memory: each session reads 500+ lines of `ReactFiberBeginWork.ts` + `ReactFiberHooks.ts` + `ReactFiberThrow.ts` to re-discover the same context. 30 minutes wasted, every time.
+Without memory: each session reads 500+ lines of `ReactFiberBeginWork.ts` + `ReactFiberHooks.ts` + `ReactFiberThrow.ts` to re-discover the same context.
 
 ### Error pattern across projects
 
@@ -118,7 +183,7 @@ Root cause: readonly DB connection did not load sqlite-vec extension.
 Fix: use openDbWithSchema() instead of new Database(readonly).
 ```
 
-**How memory helped:** When the same `vec0` error appeared in a different project, the agent recalled the fix before debugging. One `recall("vec0")` call. Zero investigation time.
+When the same `vec0` error appeared in a different project, the agent recalled the fix before debugging. One `recall("vec0")` call. Zero investigation time.
 
 ### SessionStart — rules loaded before first message
 
@@ -128,13 +193,13 @@ SessionStart: loaded 2 capture(s)
 - (decision [rule]) Use codegraph_search for definitions
 ```
 
-**How memory helped:** The agent followed project rules from message one. The user did not repeat them. The rules applied to every session, every agent, every project.
+The agent followed project rules from message one. The user did not repeat them.
 
 ---
 
 ## What makes it different
 
-### 1. Code-aware recall
+### Code-aware recall
 
 `recall("useEffect cleanup")` returns:
 
@@ -145,28 +210,22 @@ SessionStart: loaded 2 capture(s)
 
 Other tools return the learning. They do not know which function, which callers, or which tests.
 
-### 2. Error learning
+### Error learning
 
-When a command fails, tdai-memory-mcp captures it. Next time you run a similar command, it injects the past error before you hit it again.
+When a command fails, the PostToolUse hook captures it. Next time you run a similar command, the PreToolUse hook injects the past error before you hit it again.
 
-- `PostToolUse` hook auto-captures failed commands (exit code != 0)
-- `PreToolUse` hook injects past errors before lint/build/test
+- Auto-capture failed commands (exit code != 0)
+- Inject past errors before lint/build/test
 - Confidence upvotes/downvotes prune stale errors
+- Harm gate + A/B validation prevent bad fixes from being re-injected
+- Semantic matching merges similar errors into patterns
 
-### 3. Architecture drift detection (planned)
-
-The Wiki layer indexes your ADRs and design docs. The CodeGraph layer indexes your imports. The goal: when they disagree, you get:
-
-> "ADR-007 says use SQLite. 3 files still import Postgres: `db.ts`, `migrate.ts`, `seed.ts`."
-
-Both layers exist today. The cross-layer check is on the roadmap.
-
-### 4. Lifecycle hooks (zero agent cooperation)
+### Lifecycle hooks (zero agent cooperation)
 
 - **SessionStart** — injects recent memories before the first message
 - **Stop** — auto-captures the session transcript
 - **SessionEnd** — captures session summary (Claude Code)
-- **PreToolUse** — injects past errors before risky commands
+- **PreToolUse** — injects past errors + warns before dangerous commands
 - **PostToolUse** — auto-captures failed commands
 
 The agent does not need to call any tool. Memory just works.
@@ -175,20 +234,21 @@ The agent does not need to call any tool. Memory just works.
 
 ## vs other memory tools
 
-| | tdai-memory-mcp | Mem0 | Claude Code MEMORY.md | PMB | OpenViking |
-|---|---|---|---|---|---|
-| **Code structure** | Tree-sitter, 9 languages | No | No | No | No |
-| **Callers/callees** | Yes | No | No | No | No |
-| **Impact analysis** | Yes | No | No | No | No |
-| **Error learning** | Auto-capture + inject | No | No | No | No |
-| **Wiki/ADR ingest** | Yes (drift detection: planned) | No | No | No | No |
-| **Setup** | `npx setup` | API key + cloud | Built-in | `pip install` | Plugin install |
-| **Data location** | Local SQLite | Cloud | Local markdown | Local SQLite | Local SQLite |
-| **API key needed** | No | Yes | No | No | No |
-| **Cost** | Free | $19–$249/mo | Free | Free | Free |
-| **Cross-agent** | Claude, Cursor, Devin, Codex | Yes | Claude only | Yes | Yes |
-
-**The gap**: every other tool stores code as text. tdai-memory-mcp stores code as structure.
+| | tdai-memory-mcp | Mem0 | Claude Code MEMORY.md | PMB |
+|---|---|---|---|---|
+| **Code structure** | Tree-sitter, 9 languages | No | No | No |
+| **Callers/callees** | Yes | No | No | No |
+| **Impact analysis** | Yes | No | No | No |
+| **Error learning** | Auto-capture + inject + harm gate + A/B validation | No | No | No |
+| **Pre-action matchers** | Yes (git push --force, rm -rf, DROP TABLE, etc.) | No | No | No |
+| **Session retrospective** | Yes (`errors retro`) | No | No | No |
+| **Observability** | Yes (`explain_recall` tool) | No | No | No |
+| **Wiki/ADR ingest** | Yes | No | No | No |
+| **Setup** | `npx setup` | API key + cloud | Built-in | `pip install` |
+| **Data location** | Local SQLite | Cloud | Local markdown | Local SQLite |
+| **API key needed** | No | Yes | No | No |
+| **Cost** | Free | $19–$249/mo | Free | Free |
+| **Cross-agent** | Claude, Cursor, Devin, Codex | Yes | Claude only | Yes |
 
 ---
 
@@ -264,6 +324,10 @@ npx tdai-memory-mcp viewer             # Web viewer at http://localhost:7331
 npx tdai-memory-mcp export [file]      # Export captures to JSON
 npx tdai-memory-mcp import <file>      # Import captures from JSON
 
+# Error learning
+npx tdai-memory-mcp errors             # Error dashboard (patterns, fixes, resolution rate)
+npx tdai-memory-mcp errors retro       # Session retrospective (failure loops, wasted effort)
+
 # CodeGraph (opt-in: set TDAI_ENABLE_ADVANCED=1)
 npx tdai-memory-mcp index --path src --repo .          # Index code (Tree-sitter, 9 languages)
 npx tdai-memory-mcp search-code --query <name>         # Search symbols by name
@@ -280,7 +344,7 @@ npx tdai-memory-mcp wiki outdated [--repo .]           # Find outdated wiki page
 
 ### Core vs advanced tools
 
-By default, 9 core tools are exposed: `recall` `capture` `search` `forget` `resolve` `handoff` `adr` `update` `consolidate`.
+By default, 10 core tools are exposed: `recall` `capture` `search` `explain_recall` `forget` `resolve` `handoff` `adr` `update` `consolidate`.
 
 Set `TDAI_ENABLE_ADVANCED=1` to enable CodeGraph + Wiki + Knowledge tools (17 extra tools).
 
@@ -288,7 +352,7 @@ Set `TDAI_ENABLE_ADVANCED=1` to enable CodeGraph + Wiki + Knowledge tools (17 ex
 
 ## MCP tools
 
-**Core (always on):** `recall` `capture` `search` `forget` `resolve` `handoff` `adr` `update` `consolidate`
+**Core (always on):** `recall` `capture` `search` `explain_recall` `forget` `resolve` `handoff` `adr` `update` `consolidate`
 
 **CodeGraph:** `codegraph_index` `codegraph_search` `codegraph_callers` `codegraph_callees` `codegraph_impact` `codegraph_list`
 
@@ -308,6 +372,8 @@ All settings have defaults. Config file is optional. Path: `~/.config/tdai-memor
 |---|---|---|---|
 | DB path | `TDAI_DB_PATH` | `~/.local/share/tdai-memory-mcp/memory.db` | SQLite file |
 | Global memory | `TDAI_GLOBAL_SESSION_KEY` | _(unset)_ | Cross-project memory session key |
+| Global errors | `TDAI_GLOBAL_ERRORS` | _(unset)_ | Set to `1` to inject errors from all projects |
+| Retro window | `TDAI_RETRO_DAYS` | `7` | Days to analyze in `errors retro` |
 | Advanced tools | `TDAI_ENABLE_ADVANCED` | _(unset)_ | Set to `1` to enable CodeGraph + Wiki |
 | LLM key | `TDAI_LLM_API_KEY` | _(unset)_ | LLM API key for pipeline features |
 | LLM URL | `TDAI_LLM_BASE_URL` | `https://api.openai.com/v1` | LLM endpoint |
