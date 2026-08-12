@@ -621,6 +621,21 @@ export function hookPreToolUse(dbPath: string): void {
       const toolInput = input.tool_input ?? {};
       const command = toolInput.command ?? "";
 
+      // [Pre-action matchers] Warn before dangerous commands
+      // (AgentRecall pattern: check_action before publish/push/deploy/DROP TABLE)
+      const dangerWarning = checkDangerousCommand(command);
+      if (dangerWarning) {
+        const output = {
+          hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            additionalContext: dangerWarning,
+          },
+        };
+        logToFile(`PreToolUse: DANGER warning for: ${command.slice(0, 80)}`);
+        process.stdout.write(JSON.stringify(output));
+        return;
+      }
+
       // Only inject for lint/build/test/typecheck commands
       const isRelevantCommand =
         /^(npm|npx|yarn|pnpm|biome|eslint|tsc|cargo|make|pytest|vitest|jest)\b/.test(command) ||
@@ -801,6 +816,95 @@ function isNoiseCommand(command: string): boolean {
   // Very short commands that are just probes (ls <fake>, cat <fake>)
   if (/^ls\s+\/[a-z_]+$/.test(lower) && lower.length < 30) return true;
   return false;
+}
+
+/**
+ * [Pre-action matchers] Check if a command is dangerous and return a warning.
+ * (AgentRecall pattern: check_action before publish/push/deploy/DROP TABLE)
+ * Returns a warning string if the command is dangerous, or null if safe.
+ */
+function checkDangerousCommand(command: string): string | null {
+  const lower = command.toLowerCase();
+
+  // git push --force / git push -f (without branch = force push ALL branches)
+  if (/git\s+push\s+(--force|-f|--force-with-lease)/.test(lower)) {
+    const hasBranch = /git\s+push\s+\S+\s+\S+/.test(command);
+    return hasBranch
+      ? `[tdai-memory] ⚠ DANGER: git push --force detected.\n` +
+          `This rewrites remote history and can destroy others' commits.\n` +
+          `Only do this on your own branch. Use --force-with-lease for safer force push.`
+      : `[tdai-memory] ⚠ DANGER: git push --force WITHOUT a branch name.\n` +
+          `This force-pushes ALL branches. This is almost certainly a mistake.\n` +
+          `Specify the branch: git push --force origin <branch>`;
+  }
+
+  // rm -rf with broad paths
+  if (/rm\s+(-[a-z]*r[a-z]*f?|-[a-z]*f[a-z]*r?)\s+/.test(lower)) {
+    const target = lower.replace(/.*rm\s+-[a-z]*\s+/, "").trim();
+    // Dangerous targets: /, /*, ~, *, ., .., /home, /usr, /var, /etc
+    const dangerousTargets = /^(\/|~|\*|\.\.?$|\/home|\/usr|\/var|\/etc|\/bin|\/sbin|\/boot)/;
+    if (dangerousTargets.test(target)) {
+      return (
+        `[tdai-memory] ⚠ DANGER: rm -rf on a critical path: ${target.slice(0, 60)}\n` +
+        `This can destroy the filesystem, home directory, or system files.\n` +
+        `Verify the path is correct before proceeding.`
+      );
+    }
+  }
+
+  // DROP TABLE / DROP DATABASE / TRUNCATE (SQL)
+  if (/\b(drop\s+(table|database|schema)|truncate\s+table)\b/i.test(command)) {
+    const match = command.match(
+      /\b(drop\s+(?:table|database|schema)\s+\S+|truncate\s+table\s+\S+)/i,
+    );
+    const target = match ? match[1] : "unknown";
+    return (
+      `[tdai-memory] ⚠ DANGER: SQL destructive operation detected: ${target.slice(0, 60)}\n` +
+      `This permanently deletes data. Ensure you have a backup and are in the right environment.`
+    );
+  }
+
+  // DELETE FROM without WHERE clause
+  if (
+    /\bdelete\s+from\s+\S+\s*;?\s*$/i.test(command) ||
+    /\bdelete\s+from\s+\S+\s*$/i.test(command)
+  ) {
+    return (
+      `[tdai-memory] ⚠ DANGER: DELETE FROM without a WHERE clause.\n` +
+      `This deletes ALL rows in the table. Add a WHERE clause to limit the deletion.`
+    );
+  }
+
+  // npm publish (production publish)
+  if (/^npm\s+publish\b/.test(lower)) {
+    return (
+      `[tdai-memory] ⚠ CAUTION: npm publish detected.\n` +
+      `This publishes a package to the npm registry. Verify:\n` +
+      `  - The version number is correct (check package.json)\n` +
+      `  - You are publishing the right package\n` +
+      `  - The package is not already published at this version`
+    );
+  }
+
+  // docker system prune / docker volume rm
+  if (/docker\s+(system\s+prune|volume\s+rm|container\s+rm\s+-f|image\s+rm\s+-f)/.test(lower)) {
+    return (
+      `[tdai-memory] ⚠ DANGER: Docker destructive command detected.\n` +
+      `This can remove containers, volumes, or images that are in use.\n` +
+      `Verify you are not deleting production resources.`
+    );
+  }
+
+  // kubectl delete namespace / kubectl delete -f (production)
+  if (/kubectl\s+delete\s+(namespace|ns)\b/.test(lower)) {
+    return (
+      `[tdai-memory] ⚠ DANGER: kubectl delete namespace detected.\n` +
+      `This deletes ALL resources in the namespace (pods, services, configs).\n` +
+      `Verify this is not a production namespace.`
+    );
+  }
+
+  return null;
 }
 
 /**

@@ -29,6 +29,7 @@ import type {
   DeleteResult,
   KnowledgeEntry,
   SearchMode,
+  SearchResult,
   StorageBackend,
   TrustState,
 } from "./storage/types.js";
@@ -250,6 +251,47 @@ const TOOLS: Tool[] = [
           },
         },
         limit: { type: "integer", default: 20, maximum: 100 },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "explain_recall",
+    description:
+      "Explain WHY a memory was recalled for a given query. " +
+      "Shows the BM25 score, vector score, RRF fused score, rank, and matching keywords for each result. " +
+      "Use this to debug unexpected recall results or to understand the retrieval pipeline. " +
+      "If you provide a capture_id, the tool explains why that specific capture was or was not retrieved.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "The same query you used with recall or search.",
+        },
+        capture_id: {
+          type: "string",
+          description:
+            "Optional. The ID of a specific capture to explain. " +
+            "If set, the tool shows why this capture was or was not in the results.",
+        },
+        session_key: {
+          type: "string",
+          description: "The session key. The default is hash(cwd).",
+        },
+        mode: {
+          type: "string",
+          enum: ["hybrid", "keyword", "vector"],
+          default: "hybrid",
+          description: "The search mode to explain.",
+        },
+        limit: {
+          type: "integer",
+          default: 10,
+          maximum: 50,
+          description: "The maximum number of results to explain.",
+        },
+        ...TENANT_PARAMS,
       },
       required: ["query"],
     },
@@ -918,6 +960,8 @@ export function createServer(opts: ServerOptions): Server {
         return handleCapture(args, opts);
       case "search":
         return handleSearch(args, opts);
+      case "explain_recall":
+        return handleExplainRecall(args, opts);
       case "forget":
         return handleForget(args, opts);
       case "resolve":
@@ -1362,6 +1406,212 @@ async function handleSearch(
   });
 
   return { content: [{ type: "text", text: finalText }] };
+}
+
+/**
+ * Handle the explain_recall tool.
+ * Shows WHY each result was recalled: BM25 score, vector score, RRF fused score,
+ * rank, and matching keywords. If capture_id is provided, explains why that
+ * specific capture was or was not retrieved.
+ */
+async function handleExplainRecall(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  const query = args.query as string;
+  const captureId = args.capture_id as string | undefined;
+  const sessionKey = (args.session_key as string) ?? defaultSessionKey();
+  const mode = (args.mode as SearchMode) ?? "hybrid";
+  const limit = Math.min((args.limit as number) ?? 10, 50);
+  const { teamId, userId, taskId } = extractTenant(args);
+
+  // Run keyword and vector searches separately to get individual scores
+  let queryEmbedding: number[] | null = null;
+  let vectorDegraded = false;
+  if (mode === "hybrid" || mode === "vector") {
+    try {
+      queryEmbedding = await opts.embedder.embed(query);
+    } catch (err) {
+      console.error(`[tdai-memory] Embedding failed: ${err}`);
+      vectorDegraded = true;
+    }
+  }
+
+  // Get keyword-only results
+  const keywordResults: SearchResult[] =
+    mode === "vector"
+      ? []
+      : await opts.storage.search(query, null, {
+          sessionKey,
+          limit: limit * 3,
+          offset: 0,
+          mode: "keyword",
+          filters: { teamId, userId, taskId },
+        });
+
+  // Get vector-only results
+  const vectorResults: SearchResult[] =
+    mode === "keyword" || !queryEmbedding
+      ? []
+      : await opts.storage.search(query, queryEmbedding, {
+          sessionKey,
+          limit: limit * 3,
+          offset: 0,
+          mode: "vector",
+          filters: { teamId, userId, taskId },
+        });
+
+  // Get hybrid results (what recall actually returns)
+  const hybridResults: SearchResult[] = await opts.storage.search(query, queryEmbedding, {
+    sessionKey,
+    limit,
+    offset: 0,
+    mode,
+    filters: { teamId, userId, taskId },
+  });
+
+  // Build score lookup maps
+  const keywordScores = new Map<string, number>();
+  for (const r of keywordResults) keywordScores.set(r.entry.id, r.score);
+
+  const vectorScores = new Map<string, number>();
+  for (const r of vectorResults) vectorScores.set(r.entry.id, r.score);
+
+  // Extract query keywords (simple tokenization)
+  const queryTokens = query
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length > 2);
+
+  // Build explanation
+  const lines: string[] = [
+    `## explain_recall: "${query}"`,
+    `Mode: ${mode}${vectorDegraded ? " (vector degraded — keyword only)" : ""}`,
+    `Session: ${sessionKey}`,
+    `Query tokens: ${queryTokens.join(", ") || "(none)"}`,
+    "",
+    `### Top ${hybridResults.length} results (ranked by ${mode} score):`,
+    "",
+  ];
+
+  for (let i = 0; i < hybridResults.length; i++) {
+    const { entry, score } = hybridResults[i];
+    const bm25Score = keywordScores.get(entry.id);
+    const vecScore = vectorScores.get(entry.id);
+    const date = new Date(entry.createdAt).toISOString().split("T")[0];
+
+    lines.push(`[${i + 1}] id: ${entry.id}`);
+    lines.push(`    type: ${entry.type}  date: ${date}  tags: [${entry.tags.join(", ")}]`);
+    lines.push(`    fused_score: ${score.toFixed(4)}`);
+    if (mode === "hybrid") {
+      lines.push(
+        `    bm25_score: ${bm25Score !== undefined ? bm25Score.toFixed(4) : "not in top-k (0)"}`,
+      );
+      lines.push(
+        `    vector_score: ${vecScore !== undefined ? vecScore.toFixed(4) : "not in top-k (0)"}`,
+      );
+    } else if (mode === "keyword") {
+      lines.push(`    bm25_score: ${score.toFixed(4)}`);
+    } else {
+      lines.push(`    vector_score: ${score.toFixed(4)}`);
+    }
+
+    // Show which query tokens appear in the content
+    const contentLower = entry.content.toLowerCase();
+    const matchedTokens = queryTokens.filter((t) => contentLower.includes(t));
+    const missedTokens = queryTokens.filter((t) => !contentLower.includes(t));
+    if (matchedTokens.length > 0) {
+      lines.push(`    matched_keywords: ${matchedTokens.join(", ")}`);
+    }
+    if (missedTokens.length > 0) {
+      lines.push(`    missed_keywords: ${missedTokens.join(", ")}`);
+    }
+
+    // Show trust state if not candidate
+    if (entry.trustState && entry.trustState !== "candidate") {
+      lines.push(`    trust_state: ${entry.trustState}`);
+    }
+
+    // Show content preview (first 120 chars)
+    const preview = entry.content.slice(0, 120).replace(/\n/g, " ");
+    lines.push(`    content_preview: ${preview}${entry.content.length > 120 ? "..." : ""}`);
+    lines.push("");
+  }
+
+  // If capture_id was provided, explain why that specific capture was or wasn't retrieved
+  if (captureId) {
+    lines.push(`### Explanation for capture: ${captureId}`);
+    lines.push("");
+
+    const inResults = hybridResults.find((r) => r.entry.id === captureId);
+    if (inResults) {
+      const rank = hybridResults.findIndex((r) => r.entry.id === captureId) + 1;
+      lines.push(`✓ This capture WAS retrieved at rank ${rank}/${hybridResults.length}.`);
+      lines.push(`  fused_score: ${inResults.score.toFixed(4)}`);
+      const bm25 = keywordScores.get(captureId);
+      const vec = vectorScores.get(captureId);
+      if (bm25 !== undefined) lines.push(`  bm25_score: ${bm25.toFixed(4)}`);
+      if (vec !== undefined) lines.push(`  vector_score: ${vec.toFixed(4)}`);
+    } else {
+      lines.push(`✗ This capture was NOT in the top ${limit} results.`);
+
+      // Check if it exists at all
+      const entry = await opts.storage.get(captureId);
+      if (!entry) {
+        lines.push(`  Reason: capture not found in the database.`);
+      } else {
+        lines.push(`  The capture exists in the database but was not retrieved.`);
+        lines.push(`  type: ${entry.type}  session: ${entry.sessionKey}`);
+        const bm25 = keywordScores.get(captureId);
+        const vec = vectorScores.get(captureId);
+        if (bm25 === undefined && vec === undefined) {
+          lines.push(
+            `  Reason: low relevance — neither BM25 nor vector search ranked it in top ${limit * 3}.`,
+          );
+        } else {
+          if (bm25 !== undefined) lines.push(`  bm25_score: ${bm25.toFixed(4)} (below threshold)`);
+          if (vec !== undefined) lines.push(`  vector_score: ${vec.toFixed(4)} (below threshold)`);
+        }
+
+        // Check session mismatch
+        if (entry.sessionKey !== sessionKey) {
+          lines.push(
+            `  Possible reason: session mismatch — capture is in session ${entry.sessionKey}, query was for session ${sessionKey}.`,
+          );
+        }
+
+        // Check trust state
+        if (entry.trustState === "rejected") {
+          lines.push(`  Possible reason: capture is rejected (trust_state=rejected).`);
+        }
+        if (entry.trustState === "stale") {
+          lines.push(`  Possible reason: capture is stale (trust_state=stale).`);
+        }
+      }
+    }
+    lines.push("");
+  }
+
+  // Summary stats
+  lines.push("### Summary");
+  lines.push(`keyword_results: ${keywordResults.length}`);
+  lines.push(`vector_results: ${vectorResults.length}`);
+  lines.push(`hybrid_results: ${hybridResults.length}`);
+  if (vectorDegraded) {
+    lines.push(`note: vector search was unavailable — results are keyword-only.`);
+  }
+
+  const text = lines.join("\n");
+
+  opts.audit.log({
+    tool: "explain_recall",
+    argsHash: AuditLogger.hashArgs({ query, capture_id: captureId, mode, limit }),
+    resultLen: text.length,
+    quotaHit: false,
+    redacted: false,
+  });
+
+  return { content: [{ type: "text", text }] };
 }
 
 /** Handle the forget tool. */

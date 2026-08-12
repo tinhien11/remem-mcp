@@ -1755,4 +1755,182 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     // Should be marked as deleted (pruned)
     expect(errors[0].deleted_at).not.toBeNull();
   });
+
+  // ------------------------------------------------------------------
+  // Test 32: Pre-action matcher — git push --force without branch
+  // ------------------------------------------------------------------
+  it("PRE-ACTION: git push --force without branch triggers DANGER warning", () => {
+    const stdin = JSON.stringify({
+      tool_name: "Bash",
+      tool_input: { command: "git push --force" },
+      cwd: tmpDir,
+    });
+    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const parsed = JSON.parse(output);
+    const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
+
+    expect(ctx).toContain("DANGER");
+    expect(ctx).toContain("git push --force");
+    expect(ctx).toContain("ALL branches");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 33: Pre-action matcher — git push --force with branch
+  // ------------------------------------------------------------------
+  it("PRE-ACTION: git push --force with branch triggers warning (less severe)", () => {
+    const stdin = JSON.stringify({
+      tool_name: "Bash",
+      tool_input: { command: "git push --force origin main" },
+      cwd: tmpDir,
+    });
+    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const parsed = JSON.parse(output);
+    const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
+
+    expect(ctx).toContain("DANGER");
+    expect(ctx).toContain("rewrites remote history");
+    // Should NOT say "ALL branches" (branch is specified)
+    expect(ctx).not.toContain("ALL branches");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 34: Pre-action matcher — rm -rf on critical path
+  // ------------------------------------------------------------------
+  it("PRE-ACTION: rm -rf / triggers DANGER warning", () => {
+    const stdin = JSON.stringify({
+      tool_name: "Bash",
+      tool_input: { command: "rm -rf /" },
+      cwd: tmpDir,
+    });
+    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const parsed = JSON.parse(output);
+    const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
+
+    expect(ctx).toContain("DANGER");
+    expect(ctx).toContain("critical path");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 35: Pre-action matcher — rm -rf on safe path does NOT trigger
+  // ------------------------------------------------------------------
+  it("PRE-ACTION: rm -rf on safe path (./dist) does NOT trigger warning", () => {
+    const stdin = JSON.stringify({
+      tool_name: "Bash",
+      tool_input: { command: "rm -rf ./dist" },
+      cwd: tmpDir,
+    });
+    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const parsed = JSON.parse(output);
+
+    // Should NOT have danger warning (./dist is safe)
+    const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
+    expect(ctx).not.toContain("DANGER");
+    expect(ctx).not.toContain("critical path");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 36: Pre-action matcher — DROP TABLE
+  // ------------------------------------------------------------------
+  it("PRE-ACTION: DROP TABLE triggers DANGER warning", () => {
+    const stdin = JSON.stringify({
+      tool_name: "Bash",
+      tool_input: { command: "psql -c 'DROP TABLE users;'" },
+      cwd: tmpDir,
+    });
+    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const parsed = JSON.parse(output);
+    const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
+
+    expect(ctx).toContain("DANGER");
+    expect(ctx).toContain("SQL destructive");
+    expect(ctx).toContain("users");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 37: Pre-action matcher — DELETE FROM without WHERE
+  // ------------------------------------------------------------------
+  it("PRE-ACTION: DELETE FROM without WHERE triggers DANGER warning", () => {
+    const stdin = JSON.stringify({
+      tool_name: "Bash",
+      tool_input: { command: "psql -c 'DELETE FROM users;'" },
+      cwd: tmpDir,
+    });
+    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const parsed = JSON.parse(output);
+    const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
+
+    expect(ctx).toContain("DANGER");
+    expect(ctx).toContain("DELETE FROM");
+    expect(ctx).toContain("WHERE clause");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 38: Pre-action matcher — npm publish triggers CAUTION
+  // ------------------------------------------------------------------
+  it("PRE-ACTION: npm publish triggers CAUTION warning", () => {
+    const stdin = JSON.stringify({
+      tool_name: "Bash",
+      tool_input: { command: "npm publish" },
+      cwd: tmpDir,
+    });
+    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const parsed = JSON.parse(output);
+    const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
+
+    expect(ctx).toContain("CAUTION");
+    expect(ctx).toContain("npm publish");
+    expect(ctx).toContain("version number");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 39: Pre-action matcher — docker system prune
+  // ------------------------------------------------------------------
+  it("PRE-ACTION: docker system prune triggers DANGER warning", () => {
+    const stdin = JSON.stringify({
+      tool_name: "Bash",
+      tool_input: { command: "docker system prune -a" },
+      cwd: tmpDir,
+    });
+    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const parsed = JSON.parse(output);
+    const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
+
+    expect(ctx).toContain("DANGER");
+    expect(ctx).toContain("Docker");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 40: Pre-action matcher — kubectl delete namespace
+  // ------------------------------------------------------------------
+  it("PRE-ACTION: kubectl delete namespace triggers DANGER warning", () => {
+    const stdin = JSON.stringify({
+      tool_name: "Bash",
+      tool_input: { command: "kubectl delete namespace production" },
+      cwd: tmpDir,
+    });
+    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const parsed = JSON.parse(output);
+    const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
+
+    expect(ctx).toContain("DANGER");
+    expect(ctx).toContain("namespace");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 41: Pre-action matcher — safe command does NOT trigger
+  // ------------------------------------------------------------------
+  it("PRE-ACTION: safe command (npm run build) does NOT trigger danger warning", () => {
+    const stdin = JSON.stringify({
+      tool_name: "Bash",
+      tool_input: { command: "npm run build" },
+      cwd: tmpDir,
+    });
+    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const parsed = JSON.parse(output);
+    const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
+
+    // Should NOT have danger warning
+    expect(ctx).not.toContain("DANGER");
+    expect(ctx).not.toContain("CAUTION");
+  });
 });

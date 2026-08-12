@@ -133,8 +133,9 @@ describeOrSkip("Smoke test: full server over stdio", () => {
     expect(toolNames).toContain("skill_get");
     expect(toolNames).toContain("skill_list");
     expect(toolNames).toContain("skill_search");
-    // Total = 7 core + 2 new + 4 knowledge + 3 skill + 5 codegraph + 5 wiki = 26
-    expect(toolNames.length).toBe(26);
+    // Total = 7 core + 1 explain_recall + 2 new + 4 knowledge + 3 skill + 5 codegraph + 5 wiki = 27
+    expect(toolNames).toContain("explain_recall");
+    expect(toolNames.length).toBe(27);
   });
 
   it("captures a decision", async () => {
@@ -263,5 +264,82 @@ describeOrSkip("Smoke test: full server over stdio", () => {
 
     // The audit log must not contain the raw secret
     expect(logContent).not.toContain("sk-abcdefghijklmnopqrstuvwxyz123456");
+  });
+
+  it("explain_recall shows scores and matched keywords for results", async () => {
+    // First capture something searchable
+    await callTool("capture", {
+      content: "We use RRF fusion with k=60 for hybrid search ranking.",
+      type: "decision",
+      tags: ["search", "rrf"],
+    });
+
+    // Now explain why it would be recalled
+    const response = await callTool("explain_recall", {
+      query: "RRF fusion search",
+      mode: "keyword",
+      limit: 5,
+    });
+
+    expect(response.result).toBeDefined();
+    expect(response.result.isError).toBeFalsy();
+    const text = response.result.content[0].text;
+
+    // Should contain the explanation header
+    expect(text).toContain("explain_recall");
+    expect(text).toContain("Mode: keyword");
+    // Should contain query tokens
+    expect(text).toContain("Query tokens:");
+    // Should contain at least one result with score
+    expect(text).toContain("fused_score:");
+    // Should contain matched keywords
+    expect(text).toContain("matched_keywords:");
+    // Should contain summary
+    expect(text).toContain("### Summary");
+    expect(text).toContain("keyword_results:");
+  });
+
+  it("explain_recall with capture_id explains why specific capture was/was not retrieved", async () => {
+    // Capture a memory
+    const captureResp = await callTool("capture", {
+      content: "PostgreSQL uses MVCC for concurrent transaction isolation.",
+      type: "learning",
+      tags: ["database"],
+    });
+    const captureText = captureResp.result.content[0].text;
+    const captureId = captureText.match(/Captured:\s*(\S+)/)?.[1];
+    expect(captureId).toBeTruthy();
+
+    // Explain why this capture is retrieved for a relevant query
+    const response = await callTool("explain_recall", {
+      query: "PostgreSQL MVCC",
+      capture_id: captureId,
+      mode: "keyword",
+      limit: 5,
+    });
+
+    expect(response.result.isError).toBeFalsy();
+    const text = response.result.content[0].text;
+
+    // Should contain the capture-specific explanation
+    expect(text).toContain("Explanation for capture:");
+    expect(text).toContain(captureId);
+    // Should say it WAS retrieved (relevant query)
+    expect(text).toContain("WAS retrieved");
+  });
+
+  it("explain_recall with non-existent capture_id says not found", async () => {
+    const response = await callTool("explain_recall", {
+      query: "anything",
+      capture_id: "NONEXISTENT_ID_12345",
+      mode: "keyword",
+    });
+
+    expect(response.result.isError).toBeFalsy();
+    const text = response.result.content[0].text;
+
+    // Should say capture not found
+    expect(text).toContain("NOT in the top");
+    expect(text).toContain("capture not found");
   });
 });
