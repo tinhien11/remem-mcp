@@ -26,7 +26,7 @@ import {
 import { loadConfig } from "./config.js";
 import { doctor } from "./doctor.js";
 import { LocalEmbedder } from "./embedding/local.js";
-import { errors as errorsCommand } from "./errors.js";
+import { errors as errorsCommand, errorsRetro } from "./errors.js";
 import { exportData } from "./export.js";
 import {
   hookPostCommit,
@@ -258,6 +258,11 @@ async function main(): Promise<void> {
     return;
   }
   if (arg === "errors") {
+    const sub = process.argv[3];
+    if (sub === "retro") {
+      errorsRetro(defaultDbPath());
+      return;
+    }
     errorsCommand(defaultDbPath());
     return;
   }
@@ -572,6 +577,7 @@ Usage:
   tdai-memory-mcp recent [N]     Show N most recent captures (default: 20)
   tdai-memory-mcp stats          Show memory statistics (by type, trust, size)
   tdai-memory-mcp errors         Error learning dashboard (patterns, fixes, resolution rate)
+  tdai-memory-mcp errors retro   Session retrospective: failure loops, wasted effort, repeated errors
 
 CodeGraph commands:
   tdai-memory-mcp index [--path src] [--repo .]  Index code symbols (Tree-sitter)

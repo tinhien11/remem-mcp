@@ -91,6 +91,10 @@ function insertError(
     correctApproach?: string;
     createdAt?: string;
     content?: string;
+    semanticHash?: string;
+    downvotes?: number;
+    fixValidated?: boolean;
+    fixHarmCount?: number;
   },
 ): void {
   const meta = {
@@ -103,9 +107,12 @@ function insertError(
     correct_approach: opts.correctApproach ?? "Fix the issue",
     confidence: opts.confidence ?? 2,
     upvotes: 0,
-    downvotes: 0,
+    downvotes: opts.downvotes ?? 0,
     resolved: opts.resolved ?? false,
     ...(opts.fixApplied ? { fix_applied: opts.fixApplied } : {}),
+    ...(opts.semanticHash ? { semantic_hash: opts.semanticHash } : {}),
+    ...(opts.fixValidated !== undefined ? { fix_validated: opts.fixValidated } : {}),
+    ...(opts.fixHarmCount !== undefined ? { fix_harm_count: opts.fixHarmCount } : {}),
   };
 
   const content = opts.content ?? `Command failed: ${opts.command}\nError (${opts.errorType}): something went wrong`;
@@ -1932,5 +1939,251 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     // Should NOT have danger warning
     expect(ctx).not.toContain("DANGER");
     expect(ctx).not.toContain("CAUTION");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 42: errors retro — failure loops detected
+  // ------------------------------------------------------------------
+  it("RETRO: failure loops detected when same semantic_hash recurs 3+ times", () => {
+    const db = makeErrorDb(dbPath);
+
+    // Insert 3 errors with the same semantic_hash (failure loop)
+    for (let i = 1; i <= 3; i++) {
+      insertError(db, {
+        id: `loop-${i}`,
+        sessionKey: "proj-a",
+        errorType: "lint",
+        command: "npm run lint",
+        title: "Unused variable error",
+        confidence: 3 - i, // 2, 1, 0 (degrading)
+        downvotes: i - 1, // 0, 1, 2
+        semanticHash: "lint-unused-var-hash",
+      });
+    }
+    db.close();
+
+    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Session Retrospective");
+    expect(output).toContain("Failure loops");
+    expect(output).toContain("Unused variable error");
+    expect(output).toContain("×3");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 43: errors retro — no failure loops on clean DB
+  // ------------------------------------------------------------------
+  it("RETRO: no failure loops detected on clean DB", () => {
+    makeErrorDb(dbPath);
+
+    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Session Retrospective");
+    expect(output).toContain("No failure loops detected");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 44: errors retro — wasted effort (unresolved errors)
+  // ------------------------------------------------------------------
+  it("RETRO: wasted effort shows unresolved errors", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "wasted-1",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Missing dependency",
+      confidence: 3,
+      // No resolved, no fixApplied → wasted effort
+    });
+    db.close();
+
+    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Wasted effort");
+    expect(output).toContain("Missing dependency");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 45: errors retro — resolved errors that recurred
+  // ------------------------------------------------------------------
+  it("RETRO: recurred resolved errors show downvotes > 0", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "recurred-1",
+      sessionKey: "proj-a",
+      errorType: "typecheck",
+      command: "npm run typecheck",
+      title: "Type error in utils",
+      confidence: 1,
+      resolved: true,
+      fixApplied: "Added type annotation",
+      downvotes: 2, // Recurred after being resolved
+      fixValidated: false,
+    });
+    db.close();
+
+    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Resolved errors that recurred");
+    expect(output).toContain("Type error in utils");
+    expect(output).toContain("downvotes=2");
+    expect(output).toContain("✗unvalidated");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 46: errors retro — harmful fixes
+  // ------------------------------------------------------------------
+  it("RETRO: harmful fixes show fix_harm_count > 0", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "harmful-1",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Build failed",
+      confidence: 2,
+      resolved: true,
+      fixApplied: "Removed type check (caused regression)",
+      fixHarmCount: 1,
+    });
+    db.close();
+
+    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Harmful fixes");
+    expect(output).toContain("Build failed");
+    expect(output).toContain("harm=1");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 47: errors retro — most expensive commands
+  // ------------------------------------------------------------------
+  it("RETRO: most expensive commands ranked by failure count", () => {
+    const db = makeErrorDb(dbPath);
+
+    // 3 failures on same command
+    for (let i = 1; i <= 3; i++) {
+      insertError(db, {
+        id: `exp-${i}`,
+        sessionKey: "proj-a",
+        errorType: "lint",
+        command: "npm run lint",
+        title: `Lint error ${i}`,
+        semanticHash: `lint-hash-${i}`,
+      });
+    }
+    db.close();
+
+    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Most expensive commands");
+    expect(output).toContain("npm run lint");
+    expect(output).toContain("3 failures");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 48: errors retro — scorecard summary
+  // ------------------------------------------------------------------
+  it("RETRO: scorecard shows summary counts", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "s1",
+      sessionKey: "proj-a",
+      errorType: "lint",
+      command: "npm run lint",
+      title: "Error 1",
+      confidence: 2,
+    });
+    insertError(db, {
+      id: "s2",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Error 2",
+      confidence: 3,
+      resolved: true,
+      fixApplied: "Fixed it",
+    });
+    db.close();
+
+    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Retrospective scorecard");
+    expect(output).toContain("Total errors:        2");
+    expect(output).toContain("Resolved:            1");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 49: errors retro — recommendations
+  // ------------------------------------------------------------------
+  it("RETRO: recommendations shown when issues detected", () => {
+    const db = makeErrorDb(dbPath);
+
+    // Create a failure loop (3 same semantic_hash)
+    for (let i = 1; i <= 3; i++) {
+      insertError(db, {
+        id: `rec-${i}`,
+        sessionKey: "proj-a",
+        errorType: "lint",
+        command: "npm run lint",
+        title: "Same lint error",
+        confidence: 2,
+        semanticHash: "same-hash",
+      });
+    }
+    db.close();
+
+    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Recommendations:");
+    expect(output).toContain("failure loop(s) detected");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 50: errors retro — clean DB shows no issues
+  // ------------------------------------------------------------------
+  it("RETRO: clean DB shows no issues detected", () => {
+    makeErrorDb(dbPath);
+
+    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("No issues detected");
+    expect(output).toContain("Error learning is working well");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 51: errors retro — TDAI_RETRO_DAYS changes window
+  // ------------------------------------------------------------------
+  it("RETRO: TDAI_RETRO_DAYS changes the analysis window", () => {
+    const db = makeErrorDb(dbPath);
+
+    // Insert an old error (10 days ago)
+    const oldDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+    insertError(db, {
+      id: "old-1",
+      sessionKey: "proj-a",
+      errorType: "lint",
+      command: "npm run lint",
+      title: "Old error",
+      confidence: 2,
+      createdAt: oldDate,
+    });
+    db.close();
+
+    // With default 7-day window, old error should NOT appear
+    const output7 = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+    expect(output7).toContain("Total errors:        0");
+
+    // With 30-day window, old error SHOULD appear
+    const output30 = runCli("errors retro", {
+      TDAI_DB_PATH: dbPath,
+      TDAI_RETRO_DAYS: "30",
+    });
+    expect(output30).toContain("Total errors:        1");
   });
 });
