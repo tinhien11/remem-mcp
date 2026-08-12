@@ -30,26 +30,6 @@ The demo creates a real TypeScript project, runs real `npm run build`, captures 
 
 ---
 
-## What it does
-
-**Without tdai-memory:**
-```
-Day 1: agent errors "Cannot find module './missing'"
-Day 2: agent errors "Cannot find module './missing'"  (again)
-Day 3: agent errors "Cannot find module './missing'"  (again)
-```
-
-**With tdai-memory:**
-```
-Day 1: agent errors "Cannot find module './missing'"  → auto-captured
-Day 2: agent runs same command → tdai-memory injects: "this failed before, fix was X"
-Day 3: agent runs same command → gets it right the first time
-```
-
-The memory builds up automatically as your agent works. No manual saving.
-
----
-
 ## Why it's different
 
 | | tdai-memory-mcp | Mem0 | Claude MEMORY.md |
