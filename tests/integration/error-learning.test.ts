@@ -109,6 +109,10 @@ function insertError(
     recoveryPattern?: { steps: string[]; attempt_count: number; error_type: string; extracted_at: string };
     escalationLevel?: number;
     escalatedAt?: string;
+    fixProvenance?: string;
+    contextEnrichment?: { branch: string; recent_commits: string[]; changed_files: string[] };
+    autoNotes?: string[];
+    rollbackPlan?: string;
   },
 ): void {
   const meta = {
@@ -139,6 +143,10 @@ function insertError(
     ...(opts.recoveryPattern ? { recovery_pattern: opts.recoveryPattern } : {}),
     ...(opts.escalationLevel !== undefined ? { escalation_level: opts.escalationLevel } : {}),
     ...(opts.escalatedAt ? { escalated_at: opts.escalatedAt } : {}),
+    ...(opts.fixProvenance ? { fix_provenance: opts.fixProvenance } : {}),
+    ...(opts.contextEnrichment ? { context_enrichment: opts.contextEnrichment } : {}),
+    ...(opts.autoNotes ? { auto_notes: opts.autoNotes } : {}),
+    ...(opts.rollbackPlan ? { rollback_plan: opts.rollbackPlan } : {}),
   };
 
   const content = opts.content ?? `Command failed: ${opts.command}\nError (${opts.errorType}): something went wrong`;
@@ -3478,5 +3486,298 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     expect(ctx).toContain("Very stubborn error");
     expect(ctx).toContain("[BLOCKER");
     expect(ctx).toContain("fundamentally different approach");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 98: CONTEXT: errors context shows git enrichment
+  // ------------------------------------------------------------------
+  it("CONTEXT: errors context shows git branch and commits", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "ctx-1",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Build error on feature branch",
+      severity: "major",
+      contextEnrichment: {
+        branch: "feature/auth",
+        recent_commits: ["abc1234 Add auth module", "def5678 Fix lint"],
+        changed_files: ["src/auth.ts", "src/config.ts"],
+      },
+    });
+    db.close();
+
+    const output = runCli("errors context", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Error Context Enrichment");
+    expect(output).toContain("Build error on feature branch");
+    expect(output).toContain("branch: feature/auth");
+    expect(output).toContain("abc1234 Add auth module");
+    expect(output).toContain("changed files: src/auth.ts, src/config.ts");
+    expect(output).toContain("Errors with context:  1");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 99: CONTEXT: clean DB shows no context
+  // ------------------------------------------------------------------
+  it("CONTEXT: clean DB shows no context message", () => {
+    makeErrorDb(dbPath);
+
+    const output = runCli("errors context", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("No errors with git context");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 100: CONTEXT: PreToolUse shows branch in injection
+  // ------------------------------------------------------------------
+  it("CONTEXT: PreToolUse shows git branch in error injection", () => {
+    const db = makeErrorDb(dbPath);
+    const hashPath = (p: string) => createHash("sha256").update(p).digest("hex").slice(0, 16);
+    const sk = hashPath(tmpDir);
+
+    insertError(db, {
+      id: "ctx-inject-1",
+      sessionKey: sk,
+      errorType: "build",
+      command: "npm run build",
+      title: "Build error with context",
+      confidence: 3,
+      contextEnrichment: {
+        branch: "feature/test",
+        recent_commits: ["abc123 Test commit"],
+        changed_files: ["src/test.ts"],
+      },
+    });
+    db.close();
+
+    const stdin = JSON.stringify({
+      tool_name: "Bash",
+      tool_input: { command: "npm run build" },
+      cwd: tmpDir,
+    });
+    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const parsed = JSON.parse(output);
+    const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
+
+    expect(ctx).toContain("Build error with context");
+    expect(ctx).toContain("Context: branch=feature/test");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 101: INHERITED: errors inherited shows cross-project fixes
+  // ------------------------------------------------------------------
+  it("INHERITED: errors inherited shows fixes by project", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "inh-1",
+      sessionKey: "proj-a-hash",
+      errorType: "build",
+      command: "npm run build",
+      title: "Build fix in proj A",
+      resolved: true,
+      fixApplied: "Added missing import",
+      fixValidated: true,
+      fixProvenance: "auto_captured",
+    });
+    insertError(db, {
+      id: "inh-2",
+      sessionKey: "proj-b-hash",
+      errorType: "build",
+      command: "npm run build",
+      title: "Build fix in proj B",
+      resolved: true,
+      fixApplied: "Fixed config",
+      fixValidated: true,
+      fixProvenance: "inherited",
+    });
+    db.close();
+
+    const output = runCli("errors inherited", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Cross-Project Fix Inheritance");
+    expect(output).toContain("Build fix in proj A");
+    expect(output).toContain("Build fix in proj B");
+    expect(output).toContain("[inherited]");
+    expect(output).toContain("Projects with fixes:   2");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 102: INHERITED: clean DB shows no fixes
+  // ------------------------------------------------------------------
+  it("INHERITED: clean DB shows no fixes message", () => {
+    makeErrorDb(dbPath);
+
+    const output = runCli("errors inherited", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("No resolved fixes");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 103: INHERITED: PreToolUse injects fix from other project
+  // ------------------------------------------------------------------
+  it("INHERITED: PreToolUse injects fix from other project when current has none", () => {
+    const db = makeErrorDb(dbPath);
+    const hashPath = (p: string) => createHash("sha256").update(p).digest("hex").slice(0, 16);
+    const sk = hashPath(tmpDir);
+
+    // Insert a validated fix in a DIFFERENT project
+    insertError(db, {
+      id: "inh-fix-1",
+      sessionKey: "other-project-hash",
+      errorType: "build",
+      command: "npm run build",
+      title: "Fix from other project",
+      resolved: true,
+      fixApplied: "Added missing import statement",
+      fixValidated: true,
+      fixProvenance: "auto_captured",
+      contentHash: "inhfixhash1",
+    });
+    db.close();
+
+    // Run PreToolUse in current project (no fixes of its own)
+    const stdin = JSON.stringify({
+      tool_name: "Bash",
+      tool_input: { command: "npm run build" },
+      cwd: tmpDir,
+    });
+    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const parsed = JSON.parse(output);
+    const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
+
+    // Should inherit the fix from other project
+    expect(ctx).toContain("Proven fixes");
+    expect(ctx).toContain("Fix from other project");
+    expect(ctx).toContain("[inherited from another project]");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 104: PROVENANCE: errors provenance shows distribution
+  // ------------------------------------------------------------------
+  it("PROVENANCE: errors provenance shows fix provenance distribution", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "prov-1",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Auto-captured fix",
+      resolved: true,
+      fixApplied: "Fixed import",
+      fixValidated: true,
+      fixProvenance: "auto_captured",
+    });
+    insertError(db, {
+      id: "prov-2",
+      sessionKey: "proj-a",
+      errorType: "test",
+      command: "npm test",
+      title: "Inherited fix",
+      resolved: true,
+      fixApplied: "Fixed test config",
+      fixValidated: true,
+      fixProvenance: "inherited",
+    });
+    db.close();
+
+    const output = runCli("errors provenance", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Fix Provenance Chain");
+    expect(output).toContain("auto_captured");
+    expect(output).toContain("inherited");
+    expect(output).toContain("Total fixes:          2");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 105: PROVENANCE: clean DB shows no provenance
+  // ------------------------------------------------------------------
+  it("PROVENANCE: clean DB shows no provenance message", () => {
+    makeErrorDb(dbPath);
+
+    const output = runCli("errors provenance", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("No fixes with provenance data");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 106: ROLLBACK: PreToolUse shows rollback plan for fix
+  // ------------------------------------------------------------------
+  it("ROLLBACK: PreToolUse shows rollback plan when injecting fix", () => {
+    const db = makeErrorDb(dbPath);
+    const hashPath = (p: string) => createHash("sha256").update(p).digest("hex").slice(0, 16);
+    const sk = hashPath(tmpDir);
+
+    insertError(db, {
+      id: "rb-1",
+      sessionKey: sk,
+      errorType: "build",
+      command: "npm run build",
+      title: "Build error with rollback",
+      resolved: true,
+      fixApplied: "Added missing import statement",
+      fixValidated: true,
+      rollbackPlan: "git checkout <file> to revert the edit, then re-run the command",
+      contentHash: "rbfixhash1",
+    });
+    db.close();
+
+    const stdin = JSON.stringify({
+      tool_name: "Bash",
+      tool_input: { command: "npm run build" },
+      cwd: tmpDir,
+    });
+    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const parsed = JSON.parse(output);
+    const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
+
+    expect(ctx).toContain("Build error with rollback");
+    expect(ctx).toContain("Rollback:");
+    expect(ctx).toContain("git checkout");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 107: AUTO-NOTES: PreToolUse shows auto-generated notes
+  // ------------------------------------------------------------------
+  it("AUTO-NOTES: PreToolUse shows auto-generated notes for stubborn error", () => {
+    const db = makeErrorDb(dbPath);
+    const hashPath = (p: string) => createHash("sha256").update(p).digest("hex").slice(0, 16);
+    const sk = hashPath(tmpDir);
+
+    insertError(db, {
+      id: "notes-1",
+      sessionKey: sk,
+      errorType: "build",
+      command: "npm run build",
+      title: "Stubborn error with notes",
+      confidence: 2,
+      attemptCount: 4,
+      severity: "critical",
+      escalationLevel: 1,
+      autoNotes: [
+        "Recurring error: 4 attempts — previous fixes may be insufficient",
+        "Critical severity — config/security/data involved",
+        "Escalated to level 1 — auto-bumped severity due to recurrence",
+      ],
+    });
+    db.close();
+
+    const stdin = JSON.stringify({
+      tool_name: "Bash",
+      tool_input: { command: "npm run build" },
+      cwd: tmpDir,
+    });
+    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const parsed = JSON.parse(output);
+    const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
+
+    expect(ctx).toContain("Stubborn error with notes");
+    expect(ctx).toContain("Note: Recurring error: 4 attempts");
+    expect(ctx).toContain("Note: Critical severity");
+    expect(ctx).toContain("Note: Escalated to level 1");
   });
 });

@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -491,6 +491,29 @@ export function hookPostToolUse(dbPath: string): void {
             };
           }
 
+          // [Fix Rollback Plan] Auto-generate a rollback plan for the fix.
+          // Safety net: if the fix causes issues, agent knows how to undo it.
+          const rollback = generateRollbackPlan(command, meta.fix_applied ?? "");
+          if (rollback) {
+            meta.rollback_plan = rollback;
+          }
+
+          // [Fix Provenance Chain] Mark provenance as auto_captured (system recorded it)
+          if (!meta.fix_provenance) {
+            meta.fix_provenance = "auto_captured";
+          }
+
+          // [Auto-Annotation] Regenerate notes with updated state (resolved, validated)
+          meta.auto_notes = generateAutoNotes({
+            attempt_count: meta.attempt_count,
+            severity: meta.severity,
+            escalation_level: meta.escalation_level,
+            error_type: meta.error_type,
+            resolved: true,
+            fix_validated: meta.fix_validated,
+            drift_count: meta.drift_count,
+          });
+
           // [P0: A/B validation] Validate the fix — check if stdout contains
           // error indicators (agent-learn pattern: only promote if proven)
           // A "clean" success has no error keywords in stdout.
@@ -676,6 +699,17 @@ export function hookPostToolUse(dbPath: string): void {
             );
           }
 
+          // [Auto-Annotation] Regenerate notes with updated recurrence state
+          meta.auto_notes = generateAutoNotes({
+            attempt_count: meta.attempt_count,
+            severity: meta.severity,
+            escalation_level: meta.escalation_level,
+            error_type: meta.error_type,
+            resolved: meta.resolved,
+            fix_validated: meta.fix_validated,
+            drift_count: meta.drift_count,
+          });
+
           db.prepare("UPDATE captures SET metadata = ? WHERE id = ?").run(
             JSON.stringify(meta),
             recent.id,
@@ -800,6 +834,16 @@ export function hookPostToolUse(dbPath: string): void {
           goal_id: process.env.TDAI_GOAL_ID ?? undefined,
           // [Fix Attempt Counter] Track how many attempts to fix (1 = first occurrence)
           attempt_count: 1,
+          // [Fix Provenance Chain] Track where this error record came from
+          fix_provenance: "auto_captured",
+          // [Error Context Enrichment] Git context at error time (branch, commits, changed files)
+          context_enrichment: captureGitContext(cwd),
+          // [Auto-Annotation] System-generated notes based on initial error state
+          auto_notes: generateAutoNotes({
+            attempt_count: 1,
+            severity,
+            error_type: errorType,
+          }),
         }),
       );
 
@@ -1073,12 +1117,21 @@ export function hookPreToolUse(dbPath: string): void {
       // injected even when there are no unresolved errors to warn about.
       // [P0: Harm gate] Skip fixes with fix_harm_count > 0 (caused regression)
       // [P0: A/B validation] Skip unvalidated fixes (stdout had error indicators)
-      let resolvedFixes: { title: string; fix: string; date: string }[] = [];
+      let resolvedFixes: {
+        title: string;
+        fix: string;
+        date: string;
+        resolvedAt: string;
+        provenance: string;
+        inherited: boolean;
+        rollbackPlan: string | null;
+        autoNotes: string[];
+      }[] = [];
       try {
         const rDb = new Database(dbPath, { readonly: true });
         const resolved = rDb
           .prepare(
-            `SELECT content, metadata, created_at FROM captures
+            `SELECT content, metadata, created_at, session_key FROM captures
              WHERE type = 'error' ${sessionFilter}
              AND deleted_at IS NULL
              AND json_extract(metadata, '$.resolved') = 1
@@ -1089,8 +1142,13 @@ export function hookPreToolUse(dbPath: string): void {
                   OR json_extract(metadata, '$.fix_validated') = 1)
              ORDER BY created_at DESC LIMIT 2`,
           )
-          .all(...params) as { content: string; metadata: string; created_at: string }[];
-        rDb.close();
+          .all(...params) as {
+          content: string;
+          metadata: string;
+          created_at: string;
+          session_key: string;
+        }[];
+
         resolvedFixes = resolved.map((r) => {
           const m = JSON.parse(r.metadata);
           return {
@@ -1098,8 +1156,52 @@ export function hookPreToolUse(dbPath: string): void {
             fix: m.fix_applied ?? m.correct_approach ?? "",
             date: new Date(r.created_at).toISOString().split("T")[0],
             resolvedAt: m.resolved_at ?? r.created_at,
+            provenance: m.fix_provenance ?? "auto_captured",
+            inherited: r.session_key !== sessionKey,
+            rollbackPlan: m.rollback_plan ?? null,
+            autoNotes: m.auto_notes ?? [],
           };
         });
+
+        // [Cross-Project Fix Inheritance] If we haven't filled 2 fix slots from
+        // the current project, check OTHER projects for validated fixes matching
+        // the same error type. Auto-inherit without user action.
+        if (resolvedFixes.length < 2) {
+          const inherited = rDb
+            .prepare(
+              `SELECT content, metadata, created_at, session_key FROM captures
+               WHERE type = 'error' AND session_key != ?
+               AND deleted_at IS NULL
+               AND json_extract(metadata, '$.resolved') = 1
+               AND json_extract(metadata, '$.fix_applied') IS NOT NULL
+               AND (json_extract(metadata, '$.fix_harm_count') IS NULL
+                    OR CAST(json_extract(metadata, '$.fix_harm_count') AS INTEGER) = 0)
+               AND (json_extract(metadata, '$.fix_validated') IS NULL
+                    OR json_extract(metadata, '$.fix_validated') = 1)
+               ORDER BY created_at DESC LIMIT ?`,
+            )
+            .all(sessionKey, 2 - resolvedFixes.length) as {
+            content: string;
+            metadata: string;
+            created_at: string;
+            session_key: string;
+          }[];
+
+          for (const r of inherited) {
+            const m = JSON.parse(r.metadata);
+            resolvedFixes.push({
+              title: m.title ?? "Untitled",
+              fix: m.fix_applied ?? m.correct_approach ?? "",
+              date: new Date(r.created_at).toISOString().split("T")[0],
+              resolvedAt: m.resolved_at ?? r.created_at,
+              provenance: "inherited",
+              inherited: true,
+              rollbackPlan: m.rollback_plan ?? null,
+              autoNotes: m.auto_notes ?? [],
+            });
+          }
+        }
+        rDb.close();
       } catch {
         // non-fatal — fixes are bonus context
       }
@@ -1165,10 +1267,25 @@ export function hookPreToolUse(dbPath: string): void {
         if (meta.root_cause) lines.push(`  Root cause: ${meta.root_cause}`);
         if (correctApproach) lines.push(`  Fix: ${correctApproach}`);
         if (meta.resolved) lines.push(`  (Previously resolved — may recur)`);
+        // [Error Context Enrichment] Show git context if available
+        if (meta.context_enrichment) {
+          const ctx = meta.context_enrichment;
+          if (ctx.branch) lines.push(`  Context: branch=${ctx.branch}`);
+          if (ctx.recent_commits?.[0]) lines.push(`  Last commit: ${ctx.recent_commits[0]}`);
+        }
+        // [Auto-Annotation] Show system-generated notes
+        if (meta.auto_notes && Array.isArray(meta.auto_notes)) {
+          for (const note of meta.auto_notes.slice(0, 3)) {
+            lines.push(`  Note: ${note}`);
+          }
+        }
       }
 
       // [Feature 9] Inject proven fixes from resolved errors
       // [Fix Decay / Staleness] Warn when injecting fixes older than threshold
+      // [Cross-Project Fix Inheritance] Show inherited tag for fixes from other projects
+      // [Fix Provenance Chain] Show provenance tag
+      // [Fix Rollback Plan] Show rollback plan if available
       if (resolvedFixes.length > 0) {
         lines.push("");
         lines.push("Proven fixes from past resolved errors:");
@@ -1178,7 +1295,21 @@ export function hookPreToolUse(dbPath: string): void {
           const fixAgeMs = Date.now() - new Date(fix.resolvedAt).getTime();
           const isStale = fixAgeMs > stalenessMs;
           const staleTag = isStale ? " [STALE — verify before applying]" : "";
-          lines.push(`- ${fix.date}: ${fix.title} → ${fix.fix}${staleTag}`);
+          const inheritedTag = fix.inherited ? " [inherited from another project]" : "";
+          const provenanceTag = fix.provenance !== "auto_captured" ? ` [${fix.provenance}]` : "";
+          lines.push(
+            `- ${fix.date}: ${fix.title} → ${fix.fix}${staleTag}${inheritedTag}${provenanceTag}`,
+          );
+          // [Fix Rollback Plan] Show rollback plan
+          if (fix.rollbackPlan) {
+            lines.push(`  Rollback: ${fix.rollbackPlan}`);
+          }
+          // [Auto-Annotation] Show notes for this fix
+          if (fix.autoNotes && fix.autoNotes.length > 0) {
+            for (const note of fix.autoNotes.slice(0, 2)) {
+              lines.push(`  Note: ${note}`);
+            }
+          }
         }
       }
 
@@ -1317,6 +1448,136 @@ function checkDangerousCommand(command: string): string | null {
   }
 
   return null;
+}
+
+/**
+ * [Error Context Enrichment] Capture git context at error time.
+ * Records branch, recent commits, and changed files to help diagnose
+ * WHY an error occurred (regression? branch-specific? recent commit?).
+ * All automatic — no user action needed.
+ */
+function captureGitContext(cwd: string): {
+  branch: string;
+  recent_commits: string[];
+  changed_files: string[];
+} | null {
+  try {
+    const branch = execSync("git branch --show-current", {
+      cwd,
+      timeout: 2000,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+
+    const commits = execSync("git log -3 --oneline", {
+      cwd,
+      timeout: 2000,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+    })
+      .trim()
+      .split("\n")
+      .filter(Boolean);
+
+    const changed = execSync("git diff --name-only HEAD~1", {
+      cwd,
+      timeout: 2000,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+    })
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .slice(0, 10);
+
+    return { branch, recent_commits: commits, changed_files: changed };
+  } catch {
+    return null; // Not a git repo or git not available — non-fatal
+  }
+}
+
+/**
+ * [Fix Rollback Plan] Auto-generate a rollback plan when a fix is recorded.
+ * Uses simple heuristics based on the fix text and command.
+ * All automatic — no user action needed.
+ */
+function generateRollbackPlan(command: string, fixApplied: string): string | null {
+  const lowerFix = (fixApplied || "").toLowerCase();
+  const lowerCmd = (command || "").toLowerCase();
+
+  // If fix involves file edit
+  if (lowerFix.includes("import") || lowerFix.includes("added") || lowerFix.includes("modified")) {
+    return "git checkout <file> to revert the edit, then re-run the command";
+  }
+  // If fix involves config change
+  if (lowerFix.includes("config") || lowerFix.includes(".env") || lowerFix.includes("setting")) {
+    return "git revert <commit> to undo the config change";
+  }
+  // If fix involves dependency
+  if (
+    lowerFix.includes("install") ||
+    lowerFix.includes("package") ||
+    lowerCmd.includes("npm install")
+  ) {
+    return "git checkout package.json package-lock.json && npm install to revert dependency change";
+  }
+  // If fix involves migration
+  if (lowerFix.includes("migration") || lowerFix.includes("migrate")) {
+    return "Run the down migration or git revert <commit> to undo schema change";
+  }
+  // Default
+  return null;
+}
+
+/**
+ * [Auto-Annotation] Generate system notes based on error state.
+ * All automatic — no user action needed. Notes are derived from:
+ * recurrence count, severity, escalation level, correlations, context.
+ */
+function generateAutoNotes(meta: {
+  attempt_count?: number;
+  severity?: string;
+  escalation_level?: number;
+  error_type?: string;
+  resolved?: boolean;
+  fix_validated?: boolean;
+  drift_count?: number;
+}): string[] {
+  const notes: string[] = [];
+
+  if ((meta.attempt_count ?? 0) >= 5) {
+    notes.push(
+      `Stubborn error: ${meta.attempt_count} attempts — needs fundamentally different approach`,
+    );
+  } else if ((meta.attempt_count ?? 0) >= 3) {
+    notes.push(
+      `Recurring error: ${meta.attempt_count} attempts — previous fixes may be insufficient`,
+    );
+  }
+
+  if (meta.severity === "blocker") {
+    notes.push("Blocker severity — this error blocks all work");
+  } else if (meta.severity === "critical") {
+    notes.push("Critical severity — config/security/data involved");
+  }
+
+  if ((meta.escalation_level ?? 0) >= 2) {
+    notes.push(
+      `Escalated to level ${meta.escalation_level} — auto-bumped severity due to recurrence`,
+    );
+  }
+
+  if (meta.resolved && meta.fix_validated) {
+    notes.push("Fix validated — proven to work with clean stdout");
+  } else if (meta.resolved && !meta.fix_validated) {
+    notes.push("Fix applied but NOT validated — stdout contained error indicators");
+  }
+
+  if ((meta.drift_count ?? 0) >= 2) {
+    notes.push(`Drift detected: agent ignored warning ${meta.drift_count} times`);
+  }
+
+  return notes;
 }
 
 /**

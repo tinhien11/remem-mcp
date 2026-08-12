@@ -1901,3 +1901,301 @@ export function errorsEscalations(dbPath: string = defaultDbPath()): void {
 
   db.close();
 }
+
+/**
+ * `tdai-memory-mcp errors context` — Error context enrichment report.
+ * Shows git context (branch, commits, changed files) captured at error time.
+ * (LoopX evidence logs pattern: record context during failure)
+ */
+export function errorsContext(dbPath: string = defaultDbPath()): void {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true });
+  } catch {
+    console.error("Error: Could not open database at", dbPath);
+    process.exit(1);
+  }
+
+  console.log("tdai-memory-mcp errors context — Error Context Enrichment\n");
+  console.log(`${"─".repeat(60)}\n`);
+
+  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const windowClause = `created_at > datetime('now', '-${days} days')`;
+
+  // Find errors with context_enrichment
+  const enriched = db
+    .prepare(
+      `SELECT
+         id,
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.error_type') as etype,
+         json_extract(metadata, '$.context_enrichment') as ctx,
+         json_extract(metadata, '$.severity') as severity,
+         created_at
+       FROM captures
+       WHERE type = 'error' AND deleted_at IS NULL
+       AND ${windowClause}
+       AND json_extract(metadata, '$.context_enrichment') IS NOT NULL
+       ORDER BY created_at DESC LIMIT 20`,
+    )
+    .all() as {
+    id: string;
+    title: string;
+    etype: string;
+    ctx: string;
+    severity: string;
+    created_at: string;
+  }[];
+
+  if (enriched.length === 0) {
+    console.log(`No errors with git context in the last ${days} days.`);
+    console.log("Context is auto-captured when errors occur in a git repository.\n");
+    db.close();
+    return;
+  }
+
+  console.log(`Errors with git context (last ${days} days):`);
+  console.log();
+  for (const e of enriched) {
+    try {
+      const ctx = JSON.parse(e.ctx);
+      const title = (e.title ?? "Untitled").slice(0, 40);
+      const date = new Date(e.created_at).toISOString().split("T")[0];
+      console.log(`  ${date} ${title}  [${e.severity ?? "major"}]`);
+      console.log(`    branch: ${ctx.branch ?? "unknown"}`);
+      if (ctx.recent_commits?.[0]) console.log(`    last commit: ${ctx.recent_commits[0]}`);
+      if (ctx.changed_files?.length > 0) {
+        console.log(
+          `    changed files: ${ctx.changed_files.slice(0, 3).join(", ")}${ctx.changed_files.length > 3 ? "..." : ""}`,
+        );
+      }
+      console.log();
+    } catch {
+      // skip
+    }
+  }
+
+  // Summary
+  console.log(`${"─".repeat(60)}`);
+  console.log("Context scorecard:");
+  console.log(`  Errors with context:  ${enriched.length}`);
+
+  // Branch distribution
+  const branchMap = new Map<string, number>();
+  for (const e of enriched) {
+    try {
+      const ctx = JSON.parse(e.ctx);
+      const b = ctx.branch ?? "unknown";
+      branchMap.set(b, (branchMap.get(b) ?? 0) + 1);
+    } catch {
+      // skip
+    }
+  }
+  console.log(`  Unique branches:      ${branchMap.size}`);
+  const topBranch = [...branchMap.entries()].sort((a, b) => b[1] - a[1])[0];
+  if (topBranch) {
+    console.log(`  Most error-prone:     ${topBranch[0]} (${topBranch[1]} errors)`);
+  }
+  console.log();
+  console.log("Context is auto-captured when errors occur in a git repository.");
+  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+
+  db.close();
+}
+
+/**
+ * `tdai-memory-mcp errors inherited` — Cross-project fix inheritance report.
+ * Shows fixes that were auto-inherited from other projects.
+ * (LoopX capability routes pattern: learn once, apply everywhere)
+ */
+export function errorsInherited(dbPath: string = defaultDbPath()): void {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true });
+  } catch {
+    console.error("Error: Could not open database at", dbPath);
+    process.exit(1);
+  }
+
+  console.log("tdai-memory-mcp errors inherited — Cross-Project Fix Inheritance\n");
+  console.log(`${"─".repeat(60)}\n`);
+
+  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const windowClause = `created_at > datetime('now', '-${days} days')`;
+
+  // Find resolved fixes with provenance = inherited
+  const inherited = db
+    .prepare(
+      `SELECT
+         id,
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.fix_applied') as fix,
+         json_extract(metadata, '$.fix_provenance') as provenance,
+         json_extract(metadata, '$.error_type') as etype,
+         session_key,
+         created_at
+       FROM captures
+       WHERE type = 'error' AND deleted_at IS NULL
+       AND ${windowClause}
+       AND json_extract(metadata, '$.resolved') = true
+       AND json_extract(metadata, '$.fix_applied') IS NOT NULL
+       ORDER BY created_at DESC LIMIT 20`,
+    )
+    .all() as {
+    id: string;
+    title: string;
+    fix: string;
+    provenance: string;
+    etype: string;
+    session_key: string;
+    created_at: string;
+  }[];
+
+  // Group by session_key (project)
+  const byProject = new Map<string, typeof inherited>();
+  for (const f of inherited) {
+    if (!byProject.has(f.session_key)) byProject.set(f.session_key, []);
+    byProject.get(f.session_key)!.push(f);
+  }
+
+  if (inherited.length === 0) {
+    console.log(`No resolved fixes in the last ${days} days.`);
+    console.log(
+      "Fixes are auto-inherited when PreToolUse finds validated fixes from other projects.\n",
+    );
+    db.close();
+    return;
+  }
+
+  console.log(`Resolved fixes by project (last ${days} days):`);
+  console.log();
+  for (const [project, fixes] of byProject) {
+    console.log(`  Project: ${project.slice(0, 20)}...  (${fixes.length} fixes)`);
+    for (const f of fixes.slice(0, 3)) {
+      const title = (f.title ?? "Untitled").slice(0, 35);
+      const prov = f.provenance ?? "auto_captured";
+      console.log(`    [${prov}] ${title}`);
+    }
+    if (fixes.length > 3) console.log(`    ... and ${fixes.length - 3} more`);
+    console.log();
+  }
+
+  // Summary
+  const provenanceCounts = new Map<string, number>();
+  for (const f of inherited) {
+    const p = f.provenance ?? "auto_captured";
+    provenanceCounts.set(p, (provenanceCounts.get(p) ?? 0) + 1);
+  }
+
+  console.log(`${"─".repeat(60)}`);
+  console.log("Inheritance scorecard:");
+  console.log(`  Total resolved fixes:  ${inherited.length}`);
+  console.log(`  Projects with fixes:   ${byProject.size}`);
+  for (const [prov, count] of provenanceCounts) {
+    console.log(`  ${prov}: ${count}`);
+  }
+  console.log();
+  console.log(
+    "Fixes are auto-inherited when PreToolUse finds validated fixes from other projects.",
+  );
+  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+
+  db.close();
+}
+
+/**
+ * `tdai-memory-mcp errors provenance` — Fix provenance chain report.
+ * Shows where fixes came from: auto_captured, inherited, template_extracted.
+ * (Midas source-traceable recall pattern: provenance affects trust)
+ */
+export function errorsProvenance(dbPath: string = defaultDbPath()): void {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true });
+  } catch {
+    console.error("Error: Could not open database at", dbPath);
+    process.exit(1);
+  }
+
+  console.log("tdai-memory-mcp errors provenance — Fix Provenance Chain\n");
+  console.log(`${"─".repeat(60)}\n`);
+
+  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const windowClause = `created_at > datetime('now', '-${days} days')`;
+
+  // Count by provenance
+  const byProvenance = db
+    .prepare(
+      `SELECT
+         COALESCE(json_extract(metadata, '$.fix_provenance'), 'auto_captured') as provenance,
+         COUNT(*) as count,
+         SUM(CASE WHEN json_extract(metadata, '$.fix_validated') = true THEN 1 ELSE 0 END) as validated
+       FROM captures
+       WHERE type = 'error' AND deleted_at IS NULL
+       AND ${windowClause}
+       AND json_extract(metadata, '$.fix_applied') IS NOT NULL
+       GROUP BY provenance
+       ORDER BY count DESC`,
+    )
+    .all() as { provenance: string; count: number; validated: number }[];
+
+  if (byProvenance.length === 0) {
+    console.log(`No fixes with provenance data in the last ${days} days.`);
+    console.log("Provenance is auto-tagged when fixes are recorded.\n");
+    db.close();
+    return;
+  }
+
+  console.log(`Fix provenance distribution (last ${days} days):`);
+  console.log();
+  for (const p of byProvenance) {
+    const validateRate = p.count > 0 ? ((p.validated / p.count) * 100).toFixed(0) : "0";
+    console.log(
+      `  ${p.provenance.padEnd(20)} ${String(p.count).padStart(4)} fixes  (${validateRate}% validated)`,
+    );
+  }
+  console.log();
+
+  // Show examples of each provenance type
+  const examples = db
+    .prepare(
+      `SELECT
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.fix_provenance') as provenance,
+         json_extract(metadata, '$.fix_applied') as fix,
+         json_extract(metadata, '$.rollback_plan') as rollback
+       FROM captures
+       WHERE type = 'error' AND deleted_at IS NULL
+       AND ${windowClause}
+       AND json_extract(metadata, '$.fix_applied') IS NOT NULL
+       ORDER BY created_at DESC LIMIT 10`,
+    )
+    .all() as { title: string; provenance: string; fix: string; rollback: string }[];
+
+  if (examples.length > 0) {
+    console.log("Recent fixes with provenance and rollback plans:");
+    for (const e of examples.slice(0, 10)) {
+      const title = (e.title ?? "Untitled").slice(0, 35);
+      const prov = e.provenance ?? "auto_captured";
+      console.log(`  [${prov}] ${title}`);
+      if (e.rollback) {
+        console.log(`    rollback: ${e.rollback.slice(0, 60)}`);
+      }
+    }
+  }
+  console.log();
+
+  // Summary
+  const total = byProvenance.reduce((sum, p) => sum + p.count, 0);
+  console.log(`${"─".repeat(60)}`);
+  console.log("Provenance scorecard:");
+  console.log(`  Total fixes:          ${total}`);
+  for (const p of byProvenance) {
+    console.log(`  ${p.provenance}: ${p.count}`);
+  }
+  console.log();
+  console.log("Provenance is auto-tagged: auto_captured > inherited > template_extracted.");
+  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+
+  db.close();
+}

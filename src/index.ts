@@ -30,11 +30,14 @@ import {
   errorsActions,
   errorsByGoal,
   errors as errorsCommand,
+  errorsContext,
   errorsCorrelations,
   errorsDrift,
   errorsEscalations,
+  errorsInherited,
   errorsLineage,
   errorsPlaybooks,
+  errorsProvenance,
   errorsRetro,
   errorsSeverity,
   errorsStale,
@@ -314,6 +317,18 @@ async function main(): Promise<void> {
     }
     if (sub === "escalations") {
       errorsEscalations(defaultDbPath());
+      return;
+    }
+    if (sub === "context") {
+      errorsContext(defaultDbPath());
+      return;
+    }
+    if (sub === "inherited") {
+      errorsInherited(defaultDbPath());
+      return;
+    }
+    if (sub === "provenance") {
+      errorsProvenance(defaultDbPath());
       return;
     }
     errorsCommand(defaultDbPath());
@@ -641,6 +656,9 @@ Usage:
   tdai-memory-mcp errors playbooks     Recovery playbooks from resolved errors (step-by-step)
   tdai-memory-mcp errors stale         Fix staleness report (fixes older than TDAI_FIX_STALENESS_DAYS)
   tdai-memory-mcp errors escalations   Auto-escalated errors (recurred 3+ times, severity bumped)
+  tdai-memory-mcp errors context       Error context enrichment (git branch, commits, changed files)
+  tdai-memory-mcp errors inherited     Cross-project fix inheritance report
+  tdai-memory-mcp errors provenance    Fix provenance chain (auto_captured, inherited, etc.)
 
 CodeGraph commands:
   tdai-memory-mcp index [--path src] [--repo .]  Index code symbols (Tree-sitter)
