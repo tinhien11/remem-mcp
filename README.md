@@ -145,6 +145,7 @@ npx tdai-memory-mcp wiki outdated                 # Find outdated wiki pages
 
 ```bash
 npx tdai-memory-mcp status           # Everything at a glance
+npx tdai-memory-mcp viewer           # Web UI at localhost:7331
 npx tdai-memory-mcp errors           # Error dashboard
 npx tdai-memory-mcp decisions        # Decision dashboard
 npx tdai-memory-mcp patterns         # Pattern dashboard
