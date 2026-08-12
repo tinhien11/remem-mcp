@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,6 +57,21 @@ function makeErrorDb(dbPath: string): any {
     INSERT INTO schema_version VALUES (6, ${Date.now()});
   `);
 
+  return db;
+}
+
+/** Create a test DB with the FULL schema (including sqlite-vec, FTS5, etc.). */
+function makeFullErrorDb(dbPath: string): any {
+  const Database = require("better-sqlite3");
+  const sqliteVec = require("sqlite-vec");
+  const db = new Database(dbPath);
+  db.pragma("journal_mode = WAL");
+  sqliteVec.load(db);
+  const schema = require("node:fs").readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "storage", "schema.sql"),
+    "utf-8",
+  );
+  db.exec(schema);
   return db;
 }
 
@@ -572,5 +587,411 @@ describe("Integration: error learning — cross-project pattern detection", () =
     const ctx = parsed.hookSpecificOutput.additionalContext;
     expect(ctx).toContain("CROSS-PROJECT PATTERN");
     expect(ctx).toContain("lint");
+  });
+});
+
+// =====================================================================
+// COMPLICATED TEST CASES — verify the agent gets SMART from mistakes
+// =====================================================================
+
+describe("Integration: error learning — agent gets smart from mistakes", () => {
+  let tmpDir: string;
+  let dbPath: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "tdai-smart-"));
+    dbPath = join(tmpDir, "memory.db");
+    // Create a file that errors can reference (passes stale check)
+    mkdirSync(join(tmpDir, "src"), { recursive: true });
+    writeFileSync(join(tmpDir, "src", "index.ts"), "console.log(1);");
+    writeFileSync(join(tmpDir, "src", "utils.ts"), "export const x = 1;");
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /** Helper: run PostToolUse with a command + stderr + exit code. */
+  function postToolUse(command: string, stderr: string, stdout = "", exitCode = 1): string {
+    const stdin = JSON.stringify({
+      tool_name: "Bash",
+      tool_input: { command },
+      cwd: tmpDir,
+      tool_response: { stdout, stderr, exit_code: exitCode },
+    });
+    return runHook("hook-post-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+  }
+
+  /** Helper: run PreToolUse before a command. */
+  function preToolUse(command: string, env: Record<string, string> = {}): string {
+    const stdin = JSON.stringify({
+      tool_name: "Bash",
+      tool_input: { command },
+      cwd: tmpDir,
+    });
+    return runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath, ...env });
+  }
+
+  /** Helper: get all error captures from DB. */
+  function getErrors(): any[] {
+    const Database = require("better-sqlite3");
+    const db = new Database(dbPath, { readonly: true });
+    const rows = db
+      .prepare("SELECT * FROM captures WHERE type = 'error' AND deleted_at IS NULL ORDER BY created_at")
+      .all();
+    db.close();
+    return rows;
+  }
+
+  /** Helper: get ALL error captures including deleted ones. */
+  function getAllErrors(): any[] {
+    const Database = require("better-sqlite3");
+    const db = new Database(dbPath, { readonly: true });
+    const rows = db
+      .prepare("SELECT * FROM captures WHERE type = 'error' ORDER BY created_at")
+      .all();
+    db.close();
+    return rows;
+  }
+
+  // ------------------------------------------------------------------
+  // Test 1: Error recurrence chain — same error 3x → downvoted → pruned
+  // ------------------------------------------------------------------
+  it("SMART: same error recurring 3x gets downvoted to 0 and pruned", () => {
+    makeFullErrorDb(dbPath);
+
+    // First failure: captures with confidence=2
+    const stderr1 = "src/index.ts: line 1, Error - unused variable eslint";
+    postToolUse("npm run lint", stderr1);
+
+    let errors = getErrors();
+    expect(errors.length).toBe(1);
+    let meta1 = JSON.parse(errors[0].metadata);
+    expect(meta1.confidence).toBe(2);
+
+    // Second failure (same command + same stderr within 1 hour = same content_hash = downvote)
+    postToolUse("npm run lint", stderr1);
+
+    errors = getErrors();
+    // Should still be 1 error (downvoted, not duplicated)
+    expect(errors.length).toBe(1);
+    let meta2 = JSON.parse(errors[0].metadata);
+    expect(meta2.confidence).toBe(1); // 2 - 1 = 1
+    expect(meta2.downvotes).toBe(1);
+
+    // Third failure (same again = downvote again → confidence=0 → pruned)
+    postToolUse("npm run lint", stderr1);
+
+    // Error should be pruned (deleted_at set)
+    const allErrors = getAllErrors();
+    expect(allErrors.length).toBe(1);
+    let meta3 = JSON.parse(allErrors[0].metadata);
+    expect(meta3.confidence).toBe(0);
+    expect(allErrors[0].deleted_at).not.toBeNull(); // Pruned!
+
+    // Active errors should be 0 (pruned)
+    const activeErrors = getErrors();
+    expect(activeErrors.length).toBe(0);
+  });
+
+  // ------------------------------------------------------------------
+  // Test 2: Different errors on same command → both captured separately
+  // ------------------------------------------------------------------
+  it("SMART: different errors on same command are captured separately", () => {
+    makeFullErrorDb(dbPath);
+
+    // First failure: lint error about unused variable
+    postToolUse("npm run lint", "src/index.ts: line 1, Error - unused variable eslint");
+
+    // Second failure: DIFFERENT lint error (different stderr = different content_hash)
+    postToolUse("npm run lint", "src/utils.ts: line 5, Error - missing semicolon eslint");
+
+    // Should have 2 separate errors (different content_hash)
+    const errors = getErrors();
+    expect(errors.length).toBe(2);
+
+    const meta1 = JSON.parse(errors[0].metadata);
+    const meta2 = JSON.parse(errors[1].metadata);
+    // Both should have confidence=2 (no downvoting — they're different errors)
+    expect(meta1.confidence).toBe(2);
+    expect(meta2.confidence).toBe(2);
+  });
+
+  // ------------------------------------------------------------------
+  // Test 3: 30-day window boundary — 31-day-old error NOT injected
+  // ------------------------------------------------------------------
+  it("SMART: errors older than 30 days are NOT injected", () => {
+    const Database = require("better-sqlite3");
+    const sqliteVec = require("sqlite-vec");
+    const db = new Database(dbPath);
+    sqliteVec.load(db);
+    db.exec(
+      require("node:fs").readFileSync(
+        join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "storage", "schema.sql"),
+        "utf-8",
+      ),
+    );
+
+    const { createHash } = require("node:crypto");
+    const hashPath = (p: string) => createHash("sha256").update(p).digest("hex").slice(0, 16);
+    const realSessionKey = hashPath(tmpDir);
+
+    // Insert an error 31 days old
+    const oldDate = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString();
+    const meta = {
+      command: "npm run lint",
+      error_type: "lint",
+      title: "old error beyond 30-day window",
+      confidence: 5,
+      resolved: false,
+      anti_pattern: "old error",
+      correct_approach: "fix it",
+    };
+    const content = "Command failed: npm run lint\nError: src/index.ts old lint error";
+    const hash = createHash("sha256").update(content).digest("hex").slice(0, 16);
+    db.prepare(
+      "INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run("old-err", realSessionKey, "auto", "error", content, hash, "[]", oldDate, JSON.stringify(meta));
+    db.close();
+
+    // PreToolUse should NOT inject (31 days > 30-day window)
+    const output = preToolUse("npm run lint");
+    const parsed = JSON.parse(output);
+
+    // Should be empty — error is beyond 30-day window
+    expect(parsed.hookSpecificOutput).toBeUndefined();
+  });
+
+  // ------------------------------------------------------------------
+  // Test 4: Top-k selection — 5 errors, only top 2 by decayed conf injected
+  // ------------------------------------------------------------------
+  it("SMART: only top 2 errors by decayed confidence are injected (k=2)", () => {
+    const Database = require("better-sqlite3");
+    const sqliteVec = require("sqlite-vec");
+    const db = new Database(dbPath);
+    sqliteVec.load(db);
+    db.exec(
+      require("node:fs").readFileSync(
+        join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "storage", "schema.sql"),
+        "utf-8",
+      ),
+    );
+
+    const { createHash } = require("node:crypto");
+    const hashPath = (p: string) => createHash("sha256").update(p).digest("hex").slice(0, 16);
+    const realSessionKey = hashPath(tmpDir);
+
+    // Insert 5 errors with different confidence and age
+    const insertErr = (id: string, confidence: number, daysAgo: number) => {
+      const date = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000).toISOString();
+      const meta = {
+        command: "npm run lint",
+        error_type: "lint",
+        title: id,
+        confidence,
+        resolved: false,
+        anti_pattern: "error",
+        correct_approach: "fix",
+      };
+      const content = `Command failed: npm run lint\nError: src/index.ts ${id}`;
+      const hash = createHash("sha256").update(content).digest("hex").slice(0, 16);
+      db.prepare(
+        "INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run(id, realSessionKey, "auto", "error", content, hash, "[]", date, JSON.stringify(meta));
+    };
+
+    // 5 errors with varying confidence and age
+    insertErr("err-a", 5, 20); // decayed: 5 * 0.95^20 ≈ 1.79
+    insertErr("err-b", 4, 15); // decayed: 4 * 0.95^15 ≈ 1.84
+    insertErr("err-c", 3, 5); // decayed: 3 * 0.95^5 ≈ 2.31
+    insertErr("err-d", 2, 1); // decayed: 2 * 0.95^1 ≈ 1.90
+    insertErr("err-e", 4, 0); // decayed: 4 * 0.95^0 = 4.00
+    db.close();
+
+    // Expected ranking by decayed confidence:
+    // 1. err-e (4.00)
+    // 2. err-c (2.31)
+    // 3. err-d (1.90)
+    // 4. err-b (1.84)
+    // 5. err-a (1.79)
+    // Only top 2 should be injected
+
+    const output = preToolUse("npm run lint");
+    const parsed = JSON.parse(output);
+    const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
+
+    // err-e and err-c should be present (top 2)
+    expect(ctx).toContain("err-e");
+    expect(ctx).toContain("err-c");
+
+    // err-a, err-b, err-d should NOT be present (ranked 3-5)
+    expect(ctx).not.toContain("err-a");
+    expect(ctx).not.toContain("err-b");
+    expect(ctx).not.toContain("err-d");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 5: Noise command filtering — ls /nonexistent NOT captured
+  // ------------------------------------------------------------------
+  it("SMART: noise commands are NOT captured (ls /nonexistent, echo test)", () => {
+    makeFullErrorDb(dbPath);
+
+    // Noise commands that should NOT be captured
+    postToolUse("ls /nonexistent_file_xyz", "No such file or directory");
+    postToolUse("echo test", "", "", 0); // successful, no error anyway
+    postToolUse("cat /tmp/nonexistent_xyz_123", "No such file or directory");
+
+    // Should have 0 errors captured (all filtered as noise)
+    const errors = getErrors();
+    expect(errors.length).toBe(0);
+  });
+
+  // ------------------------------------------------------------------
+  // Test 6: Multi-step bug fix chain — agent learns from 3 mistakes
+  // ------------------------------------------------------------------
+  it("SMART: multi-step bug fix chain — 3 errors, 3 fixes, agent learns pattern", () => {
+    makeFullErrorDb(dbPath);
+
+    // === Session 1: Agent hits lint error, fixes it ===
+    // Step 1: Lint fails with unused variable
+    postToolUse("npm run lint", "src/index.ts: line 1, Error - unused variable 'foo' eslint");
+    expect(getErrors().length).toBe(1);
+
+    // Step 2: Agent fixes it, lint passes
+    postToolUse("npm run lint", "", "All checks passed.", 0);
+
+    // Verify: error resolved, fix recorded
+    const errorsAfterFix1 = getErrors();
+    const meta1 = JSON.parse(errorsAfterFix1[0].metadata);
+    expect(meta1.resolved).toBe(true);
+    expect(meta1.confidence).toBe(3); // upvoted
+    expect(meta1.fix_applied).toContain("All checks passed");
+
+    // === Session 2: Agent hits build error, fixes it ===
+    // Step 3: Build fails with missing module
+    postToolUse("npm run build", "Error: Cannot find module './missing.js' build failed");
+    expect(getErrors().length).toBe(2); // lint error + build error
+
+    // Step 4: Agent fixes it, build passes
+    postToolUse("npm run build", "", "Build successful.", 0);
+
+    // Verify: build error resolved
+    const errorsAfterFix2 = getErrors();
+    const buildError = errorsAfterFix2.find((e) => {
+      const m = JSON.parse(e.metadata);
+      return m.error_type === "build";
+    });
+    expect(buildError).toBeDefined();
+    const buildMeta = JSON.parse(buildError.metadata);
+    expect(buildMeta.resolved).toBe(true);
+    expect(buildMeta.fix_applied).toContain("Build successful");
+
+    // === Session 3: Agent runs build again — should get BOTH proven fixes ===
+    // Step 5: PreToolUse before build — should inject proven fixes
+    const preBuildOut = preToolUse("npm run build");
+    const preBuildParsed = JSON.parse(preBuildOut);
+    const buildCtx = preBuildParsed.hookSpecificOutput?.additionalContext ?? "";
+
+    // Should contain proven fixes from both resolved errors
+    expect(buildCtx).toContain("Proven fixes");
+    // Both fixes should be mentioned
+    expect(buildCtx).toContain("All checks passed");
+    expect(buildCtx).toContain("Build successful");
+
+    // === Verify the agent has LEARNED ===
+    // The errors dashboard should show 2 resolved errors with 100% resolution rate
+    const dashOut = runCli("errors", { TDAI_DB_PATH: dbPath });
+    expect(dashOut).toContain("Total errors captured: 2");
+    expect(dashOut).toContain("Resolved: 2");
+    expect(dashOut).toContain("100.0% resolution rate");
+    expect(dashOut).toContain("Proven fixes");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 7: Resolved error that recurs — should be re-captured
+  // ------------------------------------------------------------------
+  it("SMART: resolved error that recurs after 1 hour is re-captured (not silently ignored)", () => {
+    makeFullErrorDb(dbPath);
+
+    // Step 1: Lint fails
+    postToolUse("npm run lint", "src/index.ts: line 1, Error - unused variable eslint");
+    expect(getErrors().length).toBe(1);
+
+    // Step 2: Lint passes (error resolved)
+    postToolUse("npm run lint", "", "All checks passed.", 0);
+    const resolved = getErrors();
+    expect(JSON.parse(resolved[0].metadata).resolved).toBe(true);
+
+    // Step 3: Same lint error occurs again after > 1 hour
+    // We need to simulate time passing — update the created_at to be > 1 hour ago
+    const Database2 = require("better-sqlite3");
+    const db2 = new Database2(dbPath);
+    const oneHourAgo = new Date(Date.now() - 2 * 60 * 60 * 1000)
+      .toISOString()
+      .replace("T", " ")
+      .replace("Z", "");
+    db2.prepare("UPDATE captures SET created_at = ? WHERE type = 'error'").run(oneHourAgo);
+    db2.close();
+
+    // Now the same error recurs — content_hash is the same, but it's > 1 hour old
+    // So the dedup check (created_at > datetime('now', '-1 hour')) should NOT find it
+    // and a NEW error should be captured
+    postToolUse("npm run lint", "src/index.ts: line 1, Error - unused variable eslint");
+
+    // Should now have 2 errors: the old resolved one + the new one
+    const errors = getErrors();
+    expect(errors.length).toBe(2);
+
+    // The new error should be unresolved
+    const newError = errors.find((e) => {
+      const m = JSON.parse(e.metadata);
+      return !m.resolved;
+    });
+    expect(newError).toBeDefined();
+    expect(JSON.parse(newError.metadata).confidence).toBe(2);
+  });
+
+  // ------------------------------------------------------------------
+  // Test 8: Stale error pruning — error references deleted file
+  // ------------------------------------------------------------------
+  it("SMART: errors referencing deleted files are filtered out in PreToolUse", () => {
+    const Database = require("better-sqlite3");
+    const sqliteVec = require("sqlite-vec");
+    const db = new Database(dbPath);
+    sqliteVec.load(db);
+    db.exec(
+      require("node:fs").readFileSync(
+        join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "storage", "schema.sql"),
+        "utf-8",
+      ),
+    );
+
+    const { createHash } = require("node:crypto");
+    const hashPath = (p: string) => createHash("sha256").update(p).digest("hex").slice(0, 16);
+    const realSessionKey = hashPath(tmpDir);
+
+    // Insert an error that references a file that DOES NOT exist
+    const meta = {
+      command: "npm run lint",
+      error_type: "lint",
+      title: "stale error referencing deleted file",
+      confidence: 5,
+      resolved: false,
+      anti_pattern: "error in deleted file",
+      correct_approach: "fix it",
+    };
+    const content = "Command failed: npm run lint\nError: src/deleted_file.ts: line 1, Error - something";
+    const hash = createHash("sha256").update(content).digest("hex").slice(0, 16);
+    db.prepare(
+      "INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run("stale-err", realSessionKey, "auto", "error", content, hash, "[]", new Date().toISOString(), JSON.stringify(meta));
+    db.close();
+
+    // src/deleted_file.ts does NOT exist in tmpDir → stale → should be filtered
+    const output = preToolUse("npm run lint");
+    const parsed = JSON.parse(output);
+
+    // Should be empty — the only error is stale (file doesn't exist)
+    expect(parsed.hookSpecificOutput).toBeUndefined();
   });
 });

@@ -421,7 +421,7 @@ export function hookPostToolUse(dbPath: string): void {
       // Check for duplicate (same command + error in last hour)
       const contentHash = createHash("sha256").update(content).digest("hex").slice(0, 16);
       const id = generateId();
-      const now = new Date().toISOString();
+      const now = new Date().toISOString().replace("T", " ").replace("Z", "");
 
       const recent = db
         .prepare(
@@ -450,7 +450,7 @@ export function hookPostToolUse(dbPath: string): void {
           // [Feature 5] Prune if confidence reaches 0 (ExpeL removal threshold)
           if (meta.confidence <= 0) {
             db.prepare("UPDATE captures SET deleted_at = ? WHERE id = ?").run(
-              new Date().toISOString(),
+              new Date().toISOString().replace("T", " ").replace("Z", ""),
               recent.id,
             );
             logToFile(`PostToolUse: pruned error ${recent.id} (confidence reached 0)`);
