@@ -26,7 +26,14 @@ import {
 import { loadConfig } from "./config.js";
 import { doctor } from "./doctor.js";
 import { LocalEmbedder } from "./embedding/local.js";
-import { errors as errorsCommand, errorsDrift, errorsRetro } from "./errors.js";
+import {
+  errorsActions,
+  errorsByGoal,
+  errors as errorsCommand,
+  errorsDrift,
+  errorsLineage,
+  errorsRetro,
+} from "./errors.js";
 import { exportData } from "./export.js";
 import {
   hookPostCommit,
@@ -265,6 +272,18 @@ async function main(): Promise<void> {
     }
     if (sub === "drift") {
       errorsDrift(defaultDbPath());
+      return;
+    }
+    if (sub === "lineage") {
+      errorsLineage(defaultDbPath());
+      return;
+    }
+    if (sub === "by-goal") {
+      errorsByGoal(defaultDbPath());
+      return;
+    }
+    if (sub === "actions") {
+      errorsActions(defaultDbPath());
       return;
     }
     errorsCommand(defaultDbPath());
@@ -583,6 +602,9 @@ Usage:
   tdai-memory-mcp errors         Error learning dashboard (patterns, fixes, resolution rate)
   tdai-memory-mcp errors retro   Session retrospective: failure loops, wasted effort, repeated errors
   tdai-memory-mcp errors drift   Drift report: errors injected but still occurred (agent ignored warnings)
+  tdai-memory-mcp errors lineage Fix lineage chains: E1→F1→E2→F2 (fixes that caused new errors)
+  tdai-memory-mcp errors by-goal  Error distribution by goal (set TDAI_GOAL_ID to tag)
+  tdai-memory-mcp errors actions  Action items from resolved errors (verified, open, recurring)
 
 CodeGraph commands:
   tdai-memory-mcp index [--path src] [--repo .]  Index code symbols (Tree-sitter)

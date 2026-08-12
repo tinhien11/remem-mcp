@@ -1,4 +1,5 @@
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -98,6 +99,9 @@ function insertError(
     driftCount?: number;
     lastDriftAt?: string;
     contentHash?: string;
+    causedByErrorId?: string;
+    goalId?: string;
+    resolvedAt?: string;
   },
 ): void {
   const meta = {
@@ -118,6 +122,9 @@ function insertError(
     ...(opts.fixHarmCount !== undefined ? { fix_harm_count: opts.fixHarmCount } : {}),
     ...(opts.driftCount !== undefined ? { drift_count: opts.driftCount } : {}),
     ...(opts.lastDriftAt ? { last_drift_at: opts.lastDriftAt } : {}),
+    ...(opts.causedByErrorId ? { caused_by_error_id: opts.causedByErrorId } : {}),
+    ...(opts.goalId ? { goal_id: opts.goalId } : {}),
+    ...(opts.resolvedAt ? { resolved_at: opts.resolvedAt } : {}),
   };
 
   const content = opts.content ?? `Command failed: ${opts.command}\nError (${opts.errorType}): something went wrong`;
@@ -2465,5 +2472,460 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     expect(output30).toContain("Old drift");
     expect(output30).toContain("[drift=1]");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 62: FIX-EFF: retro shows durable fixes (long fix duration)
+  // ------------------------------------------------------------------
+  it("FIX-EFF: retro shows durable fixes with fix duration in days", () => {
+    const db = makeErrorDb(dbPath);
+
+    const resolvedDate = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
+    const recurredDate = new Date().toISOString();
+
+    insertError(db, {
+      id: "durable-1",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Missing import",
+      confidence: 3,
+      resolved: true,
+      fixApplied: "Added missing import statement",
+      resolvedAt: resolvedDate,
+      // last_recurred set via downvote path — simulate by adding to metadata
+      content: `Command failed: npm run build\nError (build): something went wrong`,
+    });
+
+    // Manually add last_recurred to metadata
+    const row = db.prepare("SELECT metadata FROM captures WHERE id = ?").get("durable-1") as {
+      metadata: string;
+    };
+    const meta = JSON.parse(row.metadata);
+    meta.last_recurred = recurredDate;
+    db.prepare("UPDATE captures SET metadata = ? WHERE id = ?").run(
+      JSON.stringify(meta),
+      "durable-1",
+    );
+    db.close();
+
+    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Fix effectiveness");
+    expect(output).toContain("Most durable fixes");
+    expect(output).toContain("Missing import");
+    expect(output).toContain("5.0d"); // 5 days duration
+  });
+
+  // ------------------------------------------------------------------
+  // Test 63: FIX-EFF: retro shows fragile fixes (recurred within 1 hour)
+  // ------------------------------------------------------------------
+  it("FIX-EFF: retro shows fragile fixes that recurred within 1 hour", () => {
+    const db = makeErrorDb(dbPath);
+
+    const resolvedDate = new Date(Date.now() - 30 * 60 * 1000).toISOString(); // 30 min ago
+    const recurredDate = new Date().toISOString();
+
+    insertError(db, {
+      id: "fragile-1",
+      sessionKey: "proj-a",
+      errorType: "lint",
+      command: "npm run lint",
+      title: "Lint error",
+      confidence: 1,
+      resolved: true,
+      fixApplied: "Quick fix that didn't last",
+      resolvedAt: resolvedDate,
+    });
+
+    // Add last_recurred
+    const row = db.prepare("SELECT metadata FROM captures WHERE id = ?").get("fragile-1") as {
+      metadata: string;
+    };
+    const meta = JSON.parse(row.metadata);
+    meta.last_recurred = recurredDate;
+    db.prepare("UPDATE captures SET metadata = ? WHERE id = ?").run(
+      JSON.stringify(meta),
+      "fragile-1",
+    );
+    db.close();
+
+    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Fragile fixes");
+    expect(output).toContain("Lint error");
+    expect(output).toContain("0.5h"); // 30 minutes = 0.5 hours
+  });
+
+  // ------------------------------------------------------------------
+  // Test 64: FIX-EFF: scorecard shows durable and fragile counts
+  // ------------------------------------------------------------------
+  it("FIX-EFF: scorecard shows durable and fragile fix counts", () => {
+    makeErrorDb(dbPath);
+
+    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Durable fixes:       0");
+    expect(output).toContain("Fragile fixes:       0");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 65: LINEAGE: errors lineage shows chains
+  // ------------------------------------------------------------------
+  it("LINEAGE: errors lineage shows fix cascade chains", () => {
+    const db = makeErrorDb(dbPath);
+
+    // E1: original error, resolved with fix
+    insertError(db, {
+      id: "e1",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Original error",
+      confidence: 3,
+      resolved: true,
+      fixApplied: "Fix that caused E2",
+    });
+
+    // E2: new error caused by E1's fix
+    insertError(db, {
+      id: "e2",
+      sessionKey: "proj-a",
+      errorType: "test",
+      command: "npm run build",
+      title: "Caused by fix",
+      confidence: 2,
+      causedByErrorId: "e1",
+    });
+    db.close();
+
+    const output = runCli("errors lineage", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Fix Lineage Chains");
+    expect(output).toContain("Original error");
+    expect(output).toContain("Caused by fix");
+    expect(output).toContain("Total chained errors:  1");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 66: LINEAGE: clean DB shows no chains
+  // ------------------------------------------------------------------
+  it("LINEAGE: clean DB shows no fix lineage chains", () => {
+    makeErrorDb(dbPath);
+
+    const output = runCli("errors lineage", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("No fix lineage chains");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 67: LINEAGE: scorecard shows max chain depth
+  // ------------------------------------------------------------------
+  it("LINEAGE: scorecard shows max chain depth for deep chains", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "e1",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Root error",
+      resolved: true,
+      fixApplied: "Fix 1",
+    });
+    insertError(db, {
+      id: "e2",
+      sessionKey: "proj-a",
+      errorType: "test",
+      command: "npm run build",
+      title: "Caused by F1",
+      causedByErrorId: "e1",
+    });
+    insertError(db, {
+      id: "e3",
+      sessionKey: "proj-a",
+      errorType: "lint",
+      command: "npm run build",
+      title: "Caused by F2",
+      causedByErrorId: "e2",
+    });
+    db.close();
+
+    const output = runCli("errors lineage", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Max chain depth:       3");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 68: GOAL: errors by-goal shows goal distribution
+  // ------------------------------------------------------------------
+  it("GOAL: errors by-goal shows error distribution by goal_id", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "g1-1",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Build error in goal A",
+      goalId: "goal-auth",
+    });
+    insertError(db, {
+      id: "g1-2",
+      sessionKey: "proj-a",
+      errorType: "lint",
+      command: "npm run lint",
+      title: "Lint error in goal A",
+      goalId: "goal-auth",
+    });
+    insertError(db, {
+      id: "g2-1",
+      sessionKey: "proj-a",
+      errorType: "test",
+      command: "npm test",
+      title: "Test error in goal B",
+      goalId: "goal-deploy",
+    });
+    db.close();
+
+    const output = runCli("errors by-goal", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Goal-Linked Error Report");
+    expect(output).toContain("goal-auth");
+    expect(output).toContain("goal-deploy");
+    expect(output).toContain("Errors: 2");
+    expect(output).toContain("Errors: 1");
+    expect(output).toContain("Most error-prone goal: goal-auth");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 69: GOAL: no goal-linked errors shows message
+  // ------------------------------------------------------------------
+  it("GOAL: no goal-linked errors shows helpful message", () => {
+    makeErrorDb(dbPath);
+
+    const output = runCli("errors by-goal", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("No goal-linked errors");
+    expect(output).toContain("TDAI_GOAL_ID");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 70: GOAL: scorecard shows goal counts
+  // ------------------------------------------------------------------
+  it("GOAL: scorecard shows total goal errors and resolved count", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "g1",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Error 1",
+      goalId: "goal-x",
+      resolved: true,
+      fixApplied: "Fixed it",
+    });
+    insertError(db, {
+      id: "g2",
+      sessionKey: "proj-a",
+      errorType: "lint",
+      command: "npm run lint",
+      title: "Error 2",
+      goalId: "goal-x",
+    });
+    db.close();
+
+    const output = runCli("errors by-goal", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Goals with errors:     1");
+    expect(output).toContain("Total goal errors:     2");
+    expect(output).toContain("Total resolved:        1");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 71: ACTIONS: errors actions shows verified fixes
+  // ------------------------------------------------------------------
+  it("ACTIONS: errors actions shows verified fixes", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "verified-1",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Build error",
+      confidence: 3,
+      resolved: true,
+      fixApplied: "Added missing import",
+      fixValidated: true,
+      resolvedAt: new Date().toISOString(),
+    });
+    db.close();
+
+    const output = runCli("errors actions", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Action Item Tracker");
+    expect(output).toContain("Verified fixes");
+    expect(output).toContain("Build error");
+    expect(output).toContain("Verified fixes:       1");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 72: ACTIONS: errors actions shows open (unvalidated) fixes
+  // ------------------------------------------------------------------
+  it("ACTIONS: errors actions shows open unvalidated fixes", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "open-1",
+      sessionKey: "proj-a",
+      errorType: "lint",
+      command: "npm run lint",
+      title: "Lint error",
+      confidence: 2,
+      resolved: true,
+      fixApplied: "Quick fix",
+      fixValidated: false,
+      resolvedAt: new Date().toISOString(),
+    });
+    db.close();
+
+    const output = runCli("errors actions", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Open action items");
+    expect(output).toContain("Lint error");
+    expect(output).toContain("Open (unvalidated):   1");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 73: ACTIONS: errors actions shows recurring fixes
+  // ------------------------------------------------------------------
+  it("ACTIONS: errors actions shows recurring fixes with flags", () => {
+    const db = makeErrorDb(dbPath);
+
+    insertError(db, {
+      id: "recurring-1",
+      sessionKey: "proj-a",
+      errorType: "build",
+      command: "npm run build",
+      title: "Recurring build error",
+      confidence: 1,
+      resolved: true,
+      fixApplied: "Bad fix that recurred",
+      fixValidated: true,
+      fixHarmCount: 1,
+      downvotes: 2,
+      resolvedAt: new Date().toISOString(),
+    });
+    db.close();
+
+    const output = runCli("errors actions", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("Recurring action items");
+    expect(output).toContain("Recurring build error");
+    expect(output).toContain("harm=1");
+    expect(output).toContain("downvotes=2");
+    expect(output).toContain("Recurring (failed):   1");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 74: ACTIONS: clean DB shows no action items
+  // ------------------------------------------------------------------
+  it("ACTIONS: clean DB shows no resolved errors message", () => {
+    makeErrorDb(dbPath);
+
+    const output = runCli("errors actions", { TDAI_DB_PATH: dbPath });
+
+    expect(output).toContain("No resolved errors with fixes");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 75: PREDICT: PreToolUse injects warning for file with error history
+  // ------------------------------------------------------------------
+  it("PREDICT: PreToolUse injects warning when editing file with error history", () => {
+    const db = makeErrorDb(dbPath);
+    const hashPath = (p: string) => createHash("sha256").update(p).digest("hex").slice(0, 16);
+
+    // Insert an error that references a specific file
+    insertError(db, {
+      id: "file-err-1",
+      sessionKey: hashPath(tmpDir),
+      errorType: "build",
+      command: "npm run build",
+      title: "Error in src/index.ts",
+      confidence: 2,
+      content: "Command failed: npm run build\nError (build): TypeError in src/index.ts:42",
+    });
+    db.close();
+
+    const stdin = JSON.stringify({
+      tool_name: "Edit",
+      tool_input: { file_path: "src/index.ts" },
+      cwd: tmpDir,
+    });
+    const output = runHook("hook-pre-tool-use", stdin, {
+      TDAI_DB_PATH: dbPath,
+      TDAI_PREDICTIVE_ERRORS: "1",
+    });
+    const parsed = JSON.parse(output);
+    const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
+
+    expect(ctx).toContain("File has error history");
+    expect(ctx).toContain("Error in src/index.ts");
+    expect(ctx).toContain("Avoid repeating these errors");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 76: PREDICT: PreToolUse does NOT inject when TDAI_PREDICTIVE_ERRORS not set
+  // ------------------------------------------------------------------
+  it("PREDICT: PreToolUse does NOT inject when TDAI_PREDICTIVE_ERRORS not set", () => {
+    const db = makeErrorDb(dbPath);
+    const hashPath = (p: string) => createHash("sha256").update(p).digest("hex").slice(0, 16);
+
+    insertError(db, {
+      id: "file-err-2",
+      sessionKey: hashPath(tmpDir),
+      errorType: "build",
+      command: "npm run build",
+      title: "Error in src/utils.ts",
+      confidence: 2,
+      content: "Command failed: npm run build\nError: error in src/utils.ts",
+    });
+    db.close();
+
+    const stdin = JSON.stringify({
+      tool_name: "Edit",
+      tool_input: { file_path: "src/utils.ts" },
+      cwd: tmpDir,
+    });
+    const output = runHook("hook-pre-tool-use", stdin, {
+      TDAI_DB_PATH: dbPath,
+      // TDAI_PREDICTIVE_ERRORS not set
+    });
+    const parsed = JSON.parse(output);
+
+    // Should be empty — no prediction without the flag
+    expect(parsed.hookSpecificOutput?.additionalContext ?? "").toBe("");
+  });
+
+  // ------------------------------------------------------------------
+  // Test 77: PREDICT: PreToolUse does NOT inject for file without error history
+  // ------------------------------------------------------------------
+  it("PREDICT: PreToolUse does NOT inject for file without error history", () => {
+    makeErrorDb(dbPath);
+
+    const stdin = JSON.stringify({
+      tool_name: "Edit",
+      tool_input: { file_path: "src/clean-file.ts" },
+      cwd: tmpDir,
+    });
+    const output = runHook("hook-pre-tool-use", stdin, {
+      TDAI_DB_PATH: dbPath,
+      TDAI_PREDICTIVE_ERRORS: "1",
+    });
+    const parsed = JSON.parse(output);
+
+    expect(parsed.hookSpecificOutput?.additionalContext ?? "").toBe("");
   });
 });

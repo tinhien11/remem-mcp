@@ -109,6 +109,7 @@ Analyzes your last 7 days (configurable via `TDAI_RETRO_DAYS`):
 - **Most expensive commands** — ranked by failure count
 - **Harmful fixes** — blocked by harm gate, don't re-apply
 - **Drift violations** — errors injected as warnings but agent still failed
+- **Fix effectiveness (MTBF)** — most durable fixes (lasted days) vs fragile fixes (recurred within 1 hour)
 - **Scorecard + recommendations**
 
 ### Drift detection
@@ -125,6 +126,67 @@ Detects when stored error learnings are NOT being applied. When PreToolUse injec
 - **Scorecard**: total errors, errors with drift, total drift events
 
 This closes the feedback loop: capture → inject → measure if the agent heeded the warning.
+
+### Fix lineage chains
+
+```bash
+npx tdai-memory-mcp errors lineage
+```
+
+Tracks regression chains: when a fix for error E1 causes a new error E2, and the fix for E2 causes E3. Shows the full chain `E1 → F1 → E2 → F2 → E3` with chain depth and cascade assessment.
+
+- **Chain visualization**: E1 → ↓ fix → E2 → ↓ fix → E3
+- **Max chain depth**: deepest regression chain
+- **Cascade assessment**: low (1) / moderate (2-4) / high (5+)
+
+Different from harm gate: harm gate *blocks* harmful fixes from re-injection. Lineage *tracks the history* of what happened.
+
+### Goal-linked errors
+
+```bash
+# Tag errors with a goal ID
+export TDAI_GOAL_ID="auth-feature"
+
+# View error distribution by goal
+npx tdai-memory-mcp errors by-goal
+```
+
+Links errors to the goals they block (LoopX-inspired). When `TDAI_GOAL_ID` is set, all new errors are tagged. The `by-goal` report shows:
+
+- Error count and resolve rate per goal
+- Error types per goal
+- Most error-prone goal
+
+### Action item tracker
+
+```bash
+npx tdai-memory-mcp errors actions
+```
+
+Postmortem action items from resolved errors (SRE pattern):
+
+- **Verified fixes** — clean success, no recurrence (✓)
+- **Open action items** — fix applied but not yet validated (⚠)
+- **Recurring fixes** — fix recurred, needs a stronger approach (✗)
+- **Recommendations** — verify open fixes, replace recurring fixes
+
+### Error prediction (proactive)
+
+```bash
+# Enable predictive warnings before file edits
+export TDAI_PREDICTIVE_ERRORS=1
+```
+
+When enabled, PreToolUse checks if a file being edited (Write/Edit/MultiEdit) has error history. If so, it injects a proactive warning *before* the edit, not after the build fails:
+
+```
+[tdai-memory] File has error history — 2 past error(s) on this file:
+- 2026-08-12 [build] ✓resolved: Missing import
+  Anti-pattern: forgot to import after refactor
+  Correct approach: add import at top of file
+
+Avoid repeating these errors when editing this file.
+```
 
 ### Error dashboard
 
@@ -255,10 +317,15 @@ The agent does not need to call any tool. Memory just works.
 | **Code structure** | Tree-sitter, 9 languages | No | No | No |
 | **Callers/callees** | Yes | No | No | No |
 | **Impact analysis** | Yes | No | No | No |
-| **Error learning** | Auto-capture + inject + harm gate + A/B validation + drift detection | No | No | No |
+| **Error learning** | Auto-capture + inject + harm gate + A/B validation + drift + lineage + MTBF | No | No | No |
 | **Pre-action matchers** | Yes (git push --force, rm -rf, DROP TABLE, etc.) | No | No | No |
 | **Session retrospective** | Yes (`errors retro`) | No | No | No |
 | **Drift detection** | Yes (`errors drift`) | Partial (`sheal drift`) | No | No |
+| **Fix lineage chains** | Yes (`errors lineage`) | No | No | No |
+| **Fix effectiveness (MTBF)** | Yes (durable vs fragile fixes) | No | No | No |
+| **Goal-linked errors** | Yes (`errors by-goal`) | No | No | No |
+| **Action item tracker** | Yes (`errors actions`) | No | No | No |
+| **Error prediction** | Yes (proactive before file edits) | No | No | No |
 | **Observability** | Yes (`explain_recall` tool) | No | No | No |
 | **Wiki/ADR ingest** | Yes | No | No | No |
 | **Setup** | `npx setup` | API key + cloud | Built-in | `pip install` |
@@ -345,6 +412,9 @@ npx tdai-memory-mcp import <file>      # Import captures from JSON
 npx tdai-memory-mcp errors             # Error dashboard (patterns, fixes, resolution rate)
 npx tdai-memory-mcp errors retro       # Session retrospective (failure loops, wasted effort, drift)
 npx tdai-memory-mcp errors drift       # Drift report (injected errors that still occurred)
+npx tdai-memory-mcp errors lineage     # Fix lineage chains (E1→F1→E2→F2 regression graph)
+npx tdai-memory-mcp errors by-goal     # Error distribution by goal (set TDAI_GOAL_ID)
+npx tdai-memory-mcp errors actions     # Action items from resolved errors (verified, open, recurring)
 
 # CodeGraph (opt-in: set TDAI_ENABLE_ADVANCED=1)
 npx tdai-memory-mcp index --path src --repo .          # Index code (Tree-sitter, 9 languages)
@@ -392,6 +462,8 @@ All settings have defaults. Config file is optional. Path: `~/.config/tdai-memor
 | Global memory | `TDAI_GLOBAL_SESSION_KEY` | _(unset)_ | Cross-project memory session key |
 | Global errors | `TDAI_GLOBAL_ERRORS` | _(unset)_ | Set to `1` to inject errors from all projects |
 | Retro window | `TDAI_RETRO_DAYS` | `7` | Days to analyze in `errors retro` |
+| Goal ID | `TDAI_GOAL_ID` | _(unset)_ | Tag new errors with a goal ID |
+| Predictive errors | `TDAI_PREDICTIVE_ERRORS` | _(unset)_ | Set to `1` to inject warnings before editing files with error history |
 | Advanced tools | `TDAI_ENABLE_ADVANCED` | _(unset)_ | Set to `1` to enable CodeGraph + Wiki |
 | LLM key | `TDAI_LLM_API_KEY` | _(unset)_ | LLM API key for pipeline features |
 | LLM URL | `TDAI_LLM_BASE_URL` | `https://api.openai.com/v1` | LLM endpoint |

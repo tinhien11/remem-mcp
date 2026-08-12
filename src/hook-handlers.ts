@@ -630,6 +630,31 @@ export function hookPostToolUse(dbPath: string): void {
         );
       }
 
+      // [Fix Lineage] Check if a recently resolved error on the same command
+      // exists — if so, this new error might be a regression caused by the fix.
+      // Link the new error to the old one via caused_by_error_id.
+      // (Different from harm gate: harm gate blocks re-injection. Lineage tracks the chain.)
+      let causedByErrorId: string | null = null;
+      try {
+        const lineagePrev = db
+          .prepare(
+            `SELECT id FROM captures
+             WHERE type = 'error' AND session_key = ?
+             AND created_at > datetime('now', '-30 days')
+             AND json_extract(metadata, '$.resolved') = 1
+             AND json_extract(metadata, '$.fix_applied') IS NOT NULL
+             AND json_extract(metadata, '$.command') = ?
+             ORDER BY created_at DESC LIMIT 1`,
+          )
+          .get(sessionKey, command.slice(0, 200)) as { id: string } | undefined;
+        if (lineagePrev) {
+          causedByErrorId = lineagePrev.id;
+          logToFile(`PostToolUse: LINEAGE — new error may be caused by fix on ${lineagePrev.id}`);
+        }
+      } catch {
+        // Non-fatal
+      }
+
       // [Feature 1] Capture with structured metadata
       db.prepare(`
         INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata)
@@ -663,6 +688,10 @@ export function hookPostToolUse(dbPath: string): void {
           // [Drift Detection] Track if this error was injected but still occurred
           drift_count: driftHit ? 1 : 0,
           last_drift_at: driftHit ? new Date().toISOString() : undefined,
+          // [Fix Lineage] Link to the resolved error whose fix may have caused this
+          caused_by_error_id: causedByErrorId ?? undefined,
+          // [Goal-Linked Errors] Tag with current goal ID if set via env
+          goal_id: process.env.TDAI_GOAL_ID ?? undefined,
         }),
       );
 
@@ -743,6 +772,80 @@ export function hookPreToolUse(dbPath: string): void {
         };
         logToFile(`PreToolUse: DANGER warning for: ${command.slice(0, 80)}`);
         process.stdout.write(JSON.stringify(output));
+        return;
+      }
+
+      // [Error Prediction] When editing a file, check if that file has error history.
+      // Inject proactive warnings BEFORE the edit, not after the build fails.
+      // (TDAD pattern: predict errors from file change history)
+      if (toolName === "Write" || toolName === "Edit" || toolName === "MultiEdit") {
+        const filePath = toolInput.file_path ?? toolInput.path ?? "";
+        if (filePath && process.env.TDAI_PREDICTIVE_ERRORS === "1") {
+          const cwd = input.cwd ?? process.cwd();
+          const sessionKey = hashPath(cwd);
+          try {
+            const predDb = new Database(dbPath, { readonly: true });
+            const basename = filePath.split("/").pop() ?? filePath;
+            // Find errors that reference this file path or basename
+            const fileErrors = predDb
+              .prepare(
+                `SELECT
+                   json_extract(metadata, '$.title') as title,
+                   json_extract(metadata, '$.error_type') as etype,
+                   json_extract(metadata, '$.anti_pattern') as anti,
+                   json_extract(metadata, '$.correct_approach') as fix,
+                   json_extract(metadata, '$.resolved') as resolved,
+                   created_at
+                 FROM captures
+                 WHERE type = 'error' AND deleted_at IS NULL
+                 AND session_key = ?
+                 AND created_at > datetime('now', '-30 days')
+                 AND (content LIKE ? OR content LIKE ?)
+                 ORDER BY created_at DESC LIMIT 3`,
+              )
+              .all(sessionKey, `%${basename}%`, `%${filePath}%`) as {
+              title: string;
+              etype: string;
+              anti: string;
+              fix: string;
+              resolved: string;
+              created_at: string;
+            }[];
+            predDb.close();
+
+            if (fileErrors.length > 0) {
+              const lines: string[] = [
+                `[tdai-memory] File has error history — ${fileErrors.length} past error(s) on this file:`,
+              ];
+              for (const e of fileErrors) {
+                const date = new Date(e.created_at).toISOString().split("T")[0];
+                const title = (e.title ?? "Untitled").slice(0, 50);
+                const resolved = e.resolved === "true" ? " ✓resolved" : "";
+                lines.push(`- ${date} [${e.etype ?? "unknown"}]${resolved}: ${title}`);
+                if (e.anti) lines.push(`  Anti-pattern: ${e.anti.slice(0, 80)}`);
+                if (e.fix) lines.push(`  Correct approach: ${e.fix.slice(0, 80)}`);
+              }
+              lines.push("");
+              lines.push("Avoid repeating these errors when editing this file.");
+
+              const output = {
+                hookSpecificOutput: {
+                  hookEventName: "PreToolUse",
+                  additionalContext: lines.join("\n"),
+                },
+              };
+              logToFile(
+                `PreToolUse: PREDICTIVE — ${fileErrors.length} error(s) on file ${basename}, injected warning before edit`,
+              );
+              process.stdout.write(JSON.stringify(output));
+              return;
+            }
+          } catch {
+            // Non-fatal — prediction is supplementary
+          }
+        }
+        // For Write/Edit without predictive errors, just return
+        process.stdout.write(JSON.stringify({}));
         return;
       }
 

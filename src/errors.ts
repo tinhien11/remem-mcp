@@ -445,7 +445,93 @@ export function errorsRetro(dbPath: string = defaultDbPath()): void {
     );
   }
 
-  // 7. Summary scorecard
+  // 7. Fix Effectiveness Scoring — measure how long fixes last before recurrence
+  // (MTBF pattern from SRE: Mean Time Between Failures applied to agent fixes)
+  const durableFixes = db
+    .prepare(
+      `SELECT
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.fix_applied') as fix,
+         json_extract(metadata, '$.resolved_at') as resolved_at,
+         json_extract(metadata, '$.last_recurred') as last_recurred,
+         CAST(
+           julianday(json_extract(metadata, '$.last_recurred')) -
+           julianday(json_extract(metadata, '$.resolved_at'))
+         AS REAL) as fix_duration_days
+       FROM captures
+       WHERE type = 'error' AND deleted_at IS NULL
+       AND ${windowClause}
+       AND json_extract(metadata, '$.resolved') = true
+       AND json_extract(metadata, '$.resolved_at') IS NOT NULL
+       AND json_extract(metadata, '$.last_recurred') IS NOT NULL
+       ORDER BY fix_duration_days DESC LIMIT 5`,
+    )
+    .all() as {
+    title: string;
+    fix: string;
+    resolved_at: string;
+    last_recurred: string;
+    fix_duration_days: number;
+  }[];
+
+  const fragileFixes = db
+    .prepare(
+      `SELECT
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.fix_applied') as fix,
+         json_extract(metadata, '$.resolved_at') as resolved_at,
+         json_extract(metadata, '$.last_recurred') as last_recurred,
+         CAST(
+           julianday(json_extract(metadata, '$.last_recurred')) -
+           julianday(json_extract(metadata, '$.resolved_at'))
+         AS REAL) as fix_duration_days
+       FROM captures
+       WHERE type = 'error' AND deleted_at IS NULL
+       AND ${windowClause}
+       AND json_extract(metadata, '$.resolved') = true
+       AND json_extract(metadata, '$.resolved_at') IS NOT NULL
+       AND json_extract(metadata, '$.last_recurred') IS NOT NULL
+       AND (
+         julianday(json_extract(metadata, '$.last_recurred')) -
+         julianday(json_extract(metadata, '$.resolved_at'))
+       ) < 0.042  -- less than 1 hour = 1/24 day
+       ORDER BY fix_duration_days ASC LIMIT 5`,
+    )
+    .all() as {
+    title: string;
+    fix: string;
+    resolved_at: string;
+    last_recurred: string;
+    fix_duration_days: number;
+  }[];
+
+  if (durableFixes.length > 0 || fragileFixes.length > 0) {
+    console.log("Fix effectiveness (MTBF — Mean Time Between Failures):");
+    if (durableFixes.length > 0) {
+      console.log("  Most durable fixes (lasted longest before recurrence):");
+      for (const f of durableFixes) {
+        const title = (f.title ?? "Untitled").slice(0, 45);
+        const days = f.fix_duration_days.toFixed(1);
+        const fix = (f.fix ?? "unknown fix").slice(0, 50);
+        console.log(`    ✓ ${days}d  ${title}`);
+        console.log(`           fix: ${fix}`);
+      }
+    }
+    if (fragileFixes.length > 0) {
+      console.log("  Fragile fixes (recurred within 1 hour):");
+      for (const f of fragileFixes) {
+        const title = (f.title ?? "Untitled").slice(0, 45);
+        const hours = (f.fix_duration_days * 24).toFixed(1);
+        const fix = (f.fix ?? "unknown fix").slice(0, 50);
+        console.log(`    ⚠ ${hours}h  ${title}`);
+        console.log(`           fix: ${fix}`);
+      }
+      console.log(`\n  💡 Fragile fixes recurred quickly. The fix may be incomplete or wrong.\n`);
+    }
+    console.log();
+  }
+
+  // 8. Summary scorecard
   const totalErrors = db
     .prepare(
       `SELECT COUNT(*) as c FROM captures WHERE type = 'error' AND deleted_at IS NULL AND ${windowClause}`,
@@ -476,6 +562,8 @@ export function errorsRetro(dbPath: string = defaultDbPath()): void {
   console.log(`  Recurred resolved:   ${recurred.length}`);
   console.log(`  Harmful fixes:       ${harmful.length}`);
   console.log(`  Drift violations:    ${driftViolations.length}`);
+  console.log(`  Durable fixes:       ${durableFixes.length}`);
+  console.log(`  Fragile fixes:       ${fragileFixes.length}`);
   console.log();
 
   // Recommendations
@@ -501,12 +589,18 @@ export function errorsRetro(dbPath: string = defaultDbPath()): void {
       `  5. ${driftViolations.length} drift violation(s) — injected warnings were ignored. Review injection format.`,
     );
   }
+  if (fragileFixes.length > 0) {
+    console.log(
+      `  6. ${fragileFixes.length} fragile fix(es) — recurred within 1 hour. Fix may be incomplete.`,
+    );
+  }
   if (
     loops.length === 0 &&
     wasted.length === 0 &&
     recurred.length === 0 &&
     harmful.length === 0 &&
-    driftViolations.length === 0
+    driftViolations.length === 0 &&
+    fragileFixes.length === 0
   ) {
     console.log("  ✓ No issues detected. Error learning is working well.");
   }
@@ -665,6 +759,436 @@ export function errorsDrift(dbPath: string = defaultDbPath()): void {
 
   console.log("Legend: ● = 1 drift, ●● = 2 drifts, ●●● = 3+ drifts");
   console.log("Drift = error was injected by PreToolUse but agent still failed.");
+  console.log();
+  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+
+  db.close();
+}
+
+/**
+ * `tdai-memory-mcp errors lineage` — Fix lineage chain report.
+ * Shows chains of errors linked by caused_by_error_id:
+ *   E1 → F1 → E2 → F2 → E3
+ * where each fix caused the next error (regression chain).
+ */
+export function errorsLineage(dbPath: string = defaultDbPath()): void {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true });
+  } catch {
+    console.error("Error: Could not open database at", dbPath);
+    process.exit(1);
+  }
+
+  console.log("tdai-memory-mcp errors lineage — Fix Lineage Chains\n");
+  console.log(`${"─".repeat(60)}\n`);
+
+  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const windowClause = `created_at > datetime('now', '-${days} days')`;
+
+  // Find all errors that have a caused_by_error_id (they're the "child" in a chain)
+  const children = db
+    .prepare(
+      `SELECT
+         id,
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.command') as cmd,
+         json_extract(metadata, '$.error_type') as etype,
+         json_extract(metadata, '$.caused_by_error_id') as parent_id,
+         json_extract(metadata, '$.fix_applied') as fix,
+         json_extract(metadata, '$.resolved') as resolved,
+         created_at
+       FROM captures
+       WHERE type = 'error' AND deleted_at IS NULL
+       AND ${windowClause}
+       AND json_extract(metadata, '$.caused_by_error_id') IS NOT NULL
+       ORDER BY created_at DESC LIMIT 20`,
+    )
+    .all() as {
+    id: string;
+    title: string;
+    cmd: string;
+    etype: string;
+    parent_id: string;
+    fix: string;
+    resolved: string;
+    created_at: string;
+  }[];
+
+  if (children.length === 0) {
+    console.log(`No fix lineage chains in the last ${days} days. ✓`);
+    console.log("No errors were caused by previous fixes.\n");
+    db.close();
+    return;
+  }
+
+  // Build chains by looking up parents
+  const allErrors = new Map<
+    string,
+    { id: string; title: string; cmd: string; fix: string; resolved: string }
+  >();
+  for (const c of children) {
+    allErrors.set(c.id, {
+      id: c.id,
+      title: c.title ?? "Untitled",
+      cmd: c.cmd ?? "unknown",
+      fix: c.fix ?? "",
+      resolved: c.resolved ?? "false",
+    });
+  }
+
+  // Also fetch parent errors
+  const parentIds = [...new Set(children.map((c) => c.parent_id))];
+  for (const pid of parentIds) {
+    if (allErrors.has(pid)) continue;
+    const parent = db
+      .prepare(
+        `SELECT
+           id,
+           json_extract(metadata, '$.title') as title,
+           json_extract(metadata, '$.command') as cmd,
+           json_extract(metadata, '$.fix_applied') as fix,
+           json_extract(metadata, '$.resolved') as resolved
+         FROM captures WHERE id = ?`,
+      )
+      .get(pid) as
+      | {
+          id: string;
+          title: string;
+          cmd: string;
+          fix: string;
+          resolved: string;
+        }
+      | undefined;
+    if (parent) {
+      allErrors.set(parent.id, {
+        id: parent.id,
+        title: parent.title ?? "Untitled",
+        cmd: parent.cmd ?? "unknown",
+        fix: parent.fix ?? "",
+        resolved: parent.resolved ?? "false",
+      });
+    }
+  }
+
+  // Build and display chains
+  console.log(`Fix lineage chains (last ${days} days):`);
+  console.log();
+
+  const displayed = new Set<string>();
+  for (const child of children) {
+    if (displayed.has(child.id)) continue;
+    displayed.add(child.id);
+
+    // Walk up the chain to find the root
+    const chain: string[] = [];
+    let currentId: string | null = child.id;
+    while (currentId && allErrors.has(currentId)) {
+      if (chain.includes(currentId)) break; // prevent cycles
+      chain.unshift(currentId);
+      // Find this error's parent
+      const c = children.find((x) => x.id === currentId);
+      currentId = c?.parent_id ?? null;
+    }
+
+    // Display the chain
+    for (let i = 0; i < chain.length; i++) {
+      const err = allErrors.get(chain[i])!;
+      const indent = "  ".repeat(i);
+      const resolved = err.resolved === "true" ? " ✓" : "";
+      const shortId = err.id.slice(0, 8);
+
+      if (i === 0) {
+        console.log(`${indent}E${i + 1}: [${shortId}] ${err.title.slice(0, 45)}${resolved}`);
+        console.log(`${indent}     cmd: ${err.cmd.slice(0, 35)}`);
+      } else {
+        const parentErr = allErrors.get(chain[i - 1])!;
+        const fixText = parentErr.fix ? parentErr.fix.slice(0, 50) : "unknown fix";
+        console.log(`${indent}    ↓ fix: ${fixText}`);
+        console.log(`${indent}E${i + 1}: [${shortId}] ${err.title.slice(0, 45)}${resolved}`);
+        console.log(`${indent}     cmd: ${err.cmd.slice(0, 35)}`);
+      }
+    }
+    console.log();
+  }
+
+  // Summary
+  console.log(`${"─".repeat(60)}`);
+  console.log("Lineage scorecard:");
+  console.log(`  Total chained errors:  ${children.length}`);
+  let maxDepth = 1;
+  for (const c of children) {
+    let depth = 1;
+    let currentId: string | null = c.id;
+    const visited = new Set<string>();
+    while (currentId && !visited.has(currentId)) {
+      visited.add(currentId);
+      const ch = children.find((x) => x.id === currentId);
+      if (ch) {
+        depth++;
+        currentId = ch.parent_id;
+      } else {
+        break;
+      }
+    }
+    if (depth > maxDepth) maxDepth = depth;
+  }
+  console.log(`  Max chain depth:       ${maxDepth}`);
+  console.log();
+
+  // Assessment
+  console.log("Assessment:");
+  if (children.length >= 5) {
+    console.log("  ⚠ High fix cascade — many fixes are causing new errors.");
+    console.log("    Review the root causes, not just the symptoms.");
+  } else if (children.length >= 2) {
+    console.log("  ⚠ Some fix cascades detected — check if fixes address root causes.");
+  } else {
+    console.log("  ✓ Low fix cascade — most fixes don't cause new errors.");
+  }
+  console.log();
+
+  console.log("Legend: E1 = original error, ↓ fix = fix applied, E2 = new error caused by fix");
+  console.log();
+  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+
+  db.close();
+}
+
+/**
+ * `tdai-memory-mcp errors by-goal` — Goal-linked error report.
+ * Shows error distribution by goal_id (set via TDAI_GOAL_ID env var).
+ * (LoopX-inspired: link errors to the goals they block)
+ */
+export function errorsByGoal(dbPath: string = defaultDbPath()): void {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true });
+  } catch {
+    console.error("Error: Could not open database at", dbPath);
+    process.exit(1);
+  }
+
+  console.log("tdai-memory-mcp errors by-goal — Goal-Linked Error Report\n");
+  console.log(`${"─".repeat(60)}\n`);
+
+  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const windowClause = `created_at > datetime('now', '-${days} days')`;
+
+  // Group errors by goal_id
+  const byGoal = db
+    .prepare(
+      `SELECT
+         json_extract(metadata, '$.goal_id') as goal_id,
+         COUNT(*) as error_count,
+         SUM(CASE WHEN json_extract(metadata, '$.resolved') = true THEN 1 ELSE 0 END) as resolved_count,
+         GROUP_CONCAT(DISTINCT json_extract(metadata, '$.error_type')) as error_types
+       FROM captures
+       WHERE type = 'error' AND deleted_at IS NULL
+       AND ${windowClause}
+       AND json_extract(metadata, '$.goal_id') IS NOT NULL
+       GROUP BY goal_id
+       ORDER BY error_count DESC`,
+    )
+    .all() as {
+    goal_id: string;
+    error_count: number;
+    resolved_count: number;
+    error_types: string;
+  }[];
+
+  if (byGoal.length === 0) {
+    console.log(`No goal-linked errors in the last ${days} days.`);
+    console.log("Set TDAI_GOAL_ID=<goal-id> to tag errors with a goal.\n");
+    db.close();
+    return;
+  }
+
+  console.log(`Error distribution by goal (last ${days} days):`);
+  console.log();
+  for (const g of byGoal) {
+    const resolveRate =
+      g.error_count > 0 ? ((g.resolved_count / g.error_count) * 100).toFixed(0) : "0";
+    const types = (g.error_types ?? "").split(",").filter(Boolean).slice(0, 5).join(", ");
+    console.log(`  Goal: ${g.goal_id}`);
+    console.log(`    Errors: ${g.error_count}  Resolved: ${g.resolved_count} (${resolveRate}%)`);
+    console.log(`    Types: ${types}`);
+    console.log();
+  }
+
+  // Summary
+  const totalGoalErrors = byGoal.reduce((sum, g) => sum + g.error_count, 0);
+  const totalResolved = byGoal.reduce((sum, g) => sum + g.resolved_count, 0);
+  console.log(`${"─".repeat(60)}`);
+  console.log("Goal scorecard:");
+  console.log(`  Goals with errors:     ${byGoal.length}`);
+  console.log(`  Total goal errors:     ${totalGoalErrors}`);
+  console.log(`  Total resolved:        ${totalResolved}`);
+  console.log();
+
+  // Most error-prone goal
+  const worst = byGoal[0];
+  console.log(`Most error-prone goal: ${worst.goal_id} (${worst.error_count} errors)`);
+  console.log();
+  console.log("Set TDAI_GOAL_ID=<goal-id> to tag new errors with a goal.");
+  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+
+  db.close();
+}
+
+/**
+ * `tdai-memory-mcp errors actions` — Error action item tracker.
+ * Shows postmortem action items generated from resolved errors.
+ * (SRE pattern: track preventive actions from incident postmortems)
+ */
+export function errorsActions(dbPath: string = defaultDbPath()): void {
+  let db: Database.Database;
+  try {
+    db = new Database(dbPath, { readonly: true });
+  } catch {
+    console.error("Error: Could not open database at", dbPath);
+    process.exit(1);
+  }
+
+  console.log("tdai-memory-mcp errors actions — Action Item Tracker\n");
+  console.log(`${"─".repeat(60)}\n`);
+
+  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const windowClause = `created_at > datetime('now', '-${days} days')`;
+
+  // Resolved errors with fixes = potential action items
+  // (The fix was applied, but was a systemic prevention action taken?)
+  const resolved = db
+    .prepare(
+      `SELECT
+         id,
+         json_extract(metadata, '$.title') as title,
+         json_extract(metadata, '$.fix_applied') as fix,
+         json_extract(metadata, '$.error_type') as etype,
+         json_extract(metadata, '$.fix_validated') as validated,
+         json_extract(metadata, '$.fix_harm_count') as harm,
+         json_extract(metadata, '$.drift_count') as drift,
+         json_extract(metadata, '$.downvotes') as downvotes,
+         json_extract(metadata, '$.resolved_at') as resolved_at,
+         json_extract(metadata, '$.last_recurred') as last_recurred
+       FROM captures
+       WHERE type = 'error' AND deleted_at IS NULL
+       AND ${windowClause}
+       AND json_extract(metadata, '$.resolved') = true
+       AND json_extract(metadata, '$.fix_applied') IS NOT NULL
+       ORDER BY resolved_at DESC LIMIT 20`,
+    )
+    .all() as {
+    id: string;
+    title: string;
+    fix: string;
+    etype: string;
+    validated: string;
+    harm: string;
+    drift: string;
+    downvotes: string;
+    resolved_at: string;
+    last_recurred: string;
+  }[];
+
+  if (resolved.length === 0) {
+    console.log(`No resolved errors with fixes in the last ${days} days.`);
+    console.log("Action items are generated from resolved errors.\n");
+    db.close();
+    return;
+  }
+
+  // Categorize action items
+  const open: typeof resolved = [];
+  const verified: typeof resolved = [];
+  const recurring: typeof resolved = [];
+
+  for (const r of resolved) {
+    const driftCount = Number(r.drift ?? 0);
+    const downvotes = Number(r.downvotes ?? 0);
+    const harmCount = Number(r.harm ?? 0);
+    const validated =
+      r.validated === "true" || r.validated === "1" || r.validated === 1 || r.validated === true;
+
+    if (harmCount > 0 || downvotes > 0 || driftCount > 0) {
+      recurring.push(r);
+    } else if (validated) {
+      verified.push(r);
+    } else {
+      open.push(r);
+    }
+  }
+
+  console.log(`Action items from resolved errors (last ${days} days):`);
+  console.log();
+
+  if (verified.length > 0) {
+    console.log("Verified fixes (clean success, no recurrence):");
+    for (const r of verified.slice(0, 5)) {
+      const title = (r.title ?? "Untitled").slice(0, 45);
+      const fix = (r.fix ?? "").slice(0, 50);
+      const date = r.resolved_at ? new Date(r.resolved_at).toISOString().split("T")[0] : "?";
+      console.log(`  ✓ ${date}  ${title}`);
+      console.log(`         fix: ${fix}`);
+    }
+    console.log();
+  }
+
+  if (open.length > 0) {
+    console.log("Open action items (fix not yet validated):");
+    for (const r of open.slice(0, 5)) {
+      const title = (r.title ?? "Untitled").slice(0, 45);
+      const fix = (r.fix ?? "").slice(0, 50);
+      const date = r.resolved_at ? new Date(r.resolved_at).toISOString().split("T")[0] : "?";
+      console.log(`  ⚠ ${date}  ${title}`);
+      console.log(`         fix: ${fix}`);
+      console.log(`         → Verify the fix with a clean test run`);
+    }
+    console.log();
+  }
+
+  if (recurring.length > 0) {
+    console.log("Recurring action items (fix recurred — needs stronger fix):");
+    for (const r of recurring.slice(0, 5)) {
+      const title = (r.title ?? "Untitled").slice(0, 45);
+      const fix = (r.fix ?? "").slice(0, 50);
+      const date = r.resolved_at ? new Date(r.resolved_at).toISOString().split("T")[0] : "?";
+      const harmCount = Number(r.harm ?? 0);
+      const driftCount = Number(r.drift ?? 0);
+      const downvotes = Number(r.downvotes ?? 0);
+      const flags: string[] = [];
+      if (harmCount > 0) flags.push(`harm=${harmCount}`);
+      if (driftCount > 0) flags.push(`drift=${driftCount}`);
+      if (downvotes > 0) flags.push(`downvotes=${downvotes}`);
+      console.log(`  ✗ ${date}  ${title}  [${flags.join(", ")}]`);
+      console.log(`         fix: ${fix}`);
+      console.log(`         → Find a different, stronger fix`);
+    }
+    console.log();
+  }
+
+  // Summary
+  console.log(`${"─".repeat(60)}`);
+  console.log("Action item scorecard:");
+  console.log(`  Total resolved:       ${resolved.length}`);
+  console.log(`  Verified fixes:       ${verified.length}`);
+  console.log(`  Open (unvalidated):   ${open.length}`);
+  console.log(`  Recurring (failed):   ${recurring.length}`);
+  console.log();
+
+  // Recommendations
+  console.log("Recommendations:");
+  if (open.length > 0) {
+    console.log(`  1. ${open.length} unvalidated fix(es) — run a clean test to verify.`);
+  }
+  if (recurring.length > 0) {
+    console.log(
+      `  2. ${recurring.length} recurring fix(es) — the fix is wrong. Find a different approach.`,
+    );
+  }
+  if (open.length === 0 && recurring.length === 0) {
+    console.log("  ✓ All fixes are verified and stable.");
+  }
   console.log();
   console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
 
