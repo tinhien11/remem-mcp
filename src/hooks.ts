@@ -31,7 +31,8 @@ function hookCommand(subcommand: string): string {
   return `npx --prefer-offline -y tdai-memory-mcp ${subcommand}`;
 }
 
-/** Hooks configuration that gets injected into agent config files. */
+/** Hooks configuration for Devin CLI and Codex CLI.
+ *  Note: Devin CLI does NOT support PreCompact — only PostCompaction. */
 const HOOKS_CONFIG = {
   SessionStart: [
     {
@@ -68,22 +69,10 @@ const HOOKS_CONFIG = {
       ],
     },
   ],
-  // PreCompact: save a session checkpoint before context compaction
-  // destroys conversation details. Memory survives the compact.
-  // Supported by Claude Code and Devin CLI.
-  PreCompact: [
-    {
-      hooks: [
-        {
-          type: "command",
-          command: hookCommand("hook-pre-compact"),
-          timeout: 10,
-        },
-      ],
-    },
-  ],
   // PostCompaction: re-inject memory after context compaction.
-  // Supported by Devin CLI and Codex CLI. Claude Code uses PreCompact only.
+  // Supported by all 3 agents (Claude Code, Devin CLI, Codex CLI).
+  // Note: Devin CLI and Codex CLI do NOT support PreCompact — only PostCompaction.
+  // Claude Code supports both, but PostCompaction alone is sufficient.
   PostCompaction: [
     {
       hooks: [
@@ -183,7 +172,8 @@ function installDevinHooks(): boolean {
   return true;
 }
 
-/** Install hooks for Claude Code. */
+/** Install hooks for Claude Code.
+ *  Claude Code supports PreCompact (before compaction) in addition to PostCompaction. */
 function installClaudeCodeHooks(): boolean {
   const settingsPath = join(homedir(), ".claude", "settings.json");
 
@@ -193,8 +183,24 @@ function installClaudeCodeHooks(): boolean {
     return false;
   }
 
+  // Claude Code supports PreCompact — add it on top of the base config
+  const claudeHooksConfig = {
+    ...HOOKS_CONFIG,
+    PreCompact: [
+      {
+        hooks: [
+          {
+            type: "command",
+            command: hookCommand("hook-pre-compact"),
+            timeout: 10,
+          },
+        ],
+      },
+    ],
+  };
+
   const config = readJsonConfig(settingsPath);
-  const updated = mergeHooks(config, HOOKS_CONFIG);
+  const updated = mergeHooks(config, claudeHooksConfig);
   writeJsonConfig(settingsPath, updated);
 
   console.log(`  Claude Code: Hooks wired into ${settingsPath}`);
@@ -306,8 +312,8 @@ export async function installHooks(): Promise<void> {
   console.log("  SessionStart → auto-recall recent memory into agent context");
   console.log("  PreToolUse   → inject past errors before lint/build/test commands");
   console.log("  PostToolUse  → auto-capture failed commands as error memories");
-  console.log("  PreCompact     → save checkpoint before context compaction (Claude Code, Devin)");
-  console.log("  PostCompaction → re-inject memory after context compaction (Devin, Codex)");
+  console.log("  PreCompact     → save checkpoint before compaction (Claude Code only)");
+  console.log("  PostCompaction → re-inject memory after compaction (all agents)");
   console.log("  Stop         → auto-capture session transcript + remind to save");
   console.log("  SessionEnd   → silently capture session summary to memory DB");
   console.log("\nRestart your agent for hooks to take effect.");
