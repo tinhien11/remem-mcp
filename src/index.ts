@@ -494,12 +494,13 @@ async function main(): Promise<void> {
     const query = flags.query ?? flags.q ?? process.argv[3];
     const teamId = flags.team ?? flags.t ?? undefined;
     const limit = Number(flags.limit ?? 20);
+    const repoPath = flags.repo ?? flags.r ?? process.cwd();
     if (!query) {
-      console.error("Usage: search-code --query <name> [--limit N]");
+      console.error("Usage: search-code --query <name> [--limit N] [--repo .]");
       return;
     }
     const db = openDbWithSchema(defaultDbPath());
-    const syms = searchSymbols(db, query, { teamId, limit });
+    const syms = searchSymbols(db, query, { teamId, limit, repoPath });
     if (syms.length === 0) {
       console.log("No symbols found.");
       db.close();
@@ -578,13 +579,15 @@ async function main(): Promise<void> {
     return;
   }
   if (arg === "list-code") {
-    const filePath = process.argv[3];
+    const flags = parseFlags(process.argv.slice(3));
+    const filePath = flags.file ?? flags.f ?? process.argv[3];
+    const repoPath = flags.repo ?? flags.r ?? process.cwd();
     if (!filePath) {
-      console.error("Usage: list-code <file_path>");
+      console.error("Usage: list-code <file_path> [--repo .]");
       return;
     }
     const db = openDbWithSchema(defaultDbPath());
-    const syms = listSymbols(db, filePath);
+    const syms = listSymbols(db, filePath, { repoPath });
     if (syms.length === 0) {
       console.log("No symbols found.");
       db.close();

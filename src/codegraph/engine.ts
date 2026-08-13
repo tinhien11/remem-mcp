@@ -416,7 +416,13 @@ export async function indexDirectory(
 export function searchSymbols(
   db: Database,
   query: string,
-  opts: { teamId?: string; kind?: string; language?: string; limit?: number } = {},
+  opts: {
+    teamId?: string;
+    kind?: string;
+    language?: string;
+    limit?: number;
+    repoPath?: string;
+  } = {},
 ): SymbolInfo[] {
   const limit = opts.limit ?? 20;
   const pattern = `%${query}%`;
@@ -425,6 +431,10 @@ export function searchSymbols(
   if (opts.teamId !== undefined) {
     sql += " AND team_id IS ?";
     params.push(opts.teamId);
+  }
+  if (opts.repoPath !== undefined) {
+    sql += " AND repo_path = ?";
+    params.push(opts.repoPath);
   }
   if (opts.kind) {
     sql += " AND kind = ?";
@@ -644,14 +654,29 @@ export function impactAnalysis(
 export function listSymbols(
   db: Database,
   filePath: string,
-  opts: { teamId?: string; kind?: string; limit?: number } = {},
+  opts: { teamId?: string; kind?: string; limit?: number; repoPath?: string } = {},
 ): SymbolInfo[] {
   const limit = opts.limit ?? 100;
+
+  // Convert absolute path to relative if repoPath is provided
+  let relPath = filePath;
+  if (opts.repoPath) {
+    try {
+      relPath = relative(opts.repoPath, filePath).split(sep).join("/");
+    } catch {
+      // If relative() fails, use the original path
+    }
+  }
+
   let sql = "SELECT * FROM symbols WHERE file_path LIKE ?";
-  const params: unknown[] = [`${filePath}%`];
+  const params: unknown[] = [`${relPath}%`];
   if (opts.teamId !== undefined) {
     sql += " AND team_id IS ?";
     params.push(opts.teamId);
+  }
+  if (opts.repoPath !== undefined) {
+    sql += " AND repo_path = ?";
+    params.push(opts.repoPath);
   }
   if (opts.kind) {
     sql += " AND kind = ?";
