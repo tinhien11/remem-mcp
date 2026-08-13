@@ -297,6 +297,27 @@ const TOOLS: Tool[] = [
     },
   },
   {
+    name: "related",
+    description:
+      "Find memories connected to a given memory by shared tags, project, or co-occurrence. " +
+      "Use this after recall or search to discover related context you might have missed. " +
+      "Inspired by graph spreading-activation (Mnema pattern).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: {
+          type: "string",
+          description: "The ID of the capture to find related memories for.",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of related memories to return (default: 10).",
+        },
+      },
+      required: ["id"],
+    },
+  },
+  {
     name: "forget",
     description:
       "Delete specific memory entries. Use this tool only when the user requests a deletion. " +
@@ -958,6 +979,8 @@ export function createServer(opts: ServerOptions): Server {
         return handleCapture(args, opts);
       case "search":
         return handleSearch(args, opts);
+      case "related":
+        return handleRelated(args, opts);
       case "explain_recall":
         return handleExplainRecall(args, opts);
       case "forget":
@@ -1404,6 +1427,137 @@ async function handleSearch(
   });
 
   return { content: [{ type: "text", text: finalText }] };
+}
+
+/**
+ * Handle the related tool.
+ * Finds memories connected to a given capture by shared tags, project (session_key),
+ * or type. Inspired by Mnema's graph spreading-activation.
+ *
+ * Scoring: +3 for each shared tag, +2 for same session_key, +1 for same type.
+ * Excludes the source capture itself.
+ */
+async function handleRelated(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  const id = args.id as string;
+  const limit = Math.min((args.limit as number) ?? 10, 50);
+
+  // Get the source capture
+  const source = await opts.storage.get(id);
+  if (!source) {
+    return {
+      content: [{ type: "text", text: `Capture ${id} not found.` }],
+      isError: true,
+    };
+  }
+
+  const sourceTags = source.tags ? JSON.parse(source.tags) : [];
+  const sourceSessionKey = source.sessionKey;
+  const sourceType = source.type;
+
+  // Get all captures (limited to a reasonable window) and score by relatedness
+  // We use recent captures as the candidate pool — this is efficient and
+  // covers the common case where related memories are recent.
+  const recentResults = await opts.storage.search(source.content.slice(0, 200), null, {
+    sessionKey: defaultSessionKey(),
+    limit: 100,
+    offset: 0,
+    mode: "keyword",
+  });
+
+  const scored: Array<{ entry: any; score: number; reasons: string[] }> = [];
+  for (const r of recentResults) {
+    if (r.entry.id === id) continue; // skip source
+
+    const entry = r.entry;
+    let score = 0;
+    const reasons: string[] = [];
+
+    // Shared tags
+    const entryTags = entry.tags ? JSON.parse(entry.tags) : [];
+    const sharedTags = sourceTags.filter((t: string) => entryTags.includes(t));
+    if (sharedTags.length > 0) {
+      score += sharedTags.length * 3;
+      reasons.push(`tags: ${sharedTags.join(", ")}`);
+    }
+
+    // Same project (session_key)
+    if (sourceSessionKey && entry.sessionKey === sourceSessionKey) {
+      score += 2;
+      reasons.push("same project");
+    }
+
+    // Same type
+    if (sourceType && entry.type === sourceType) {
+      score += 1;
+      reasons.push(`same type: ${entry.type}`);
+    }
+
+    // Keyword overlap bonus (from the search results)
+    if (r.score > 0) {
+      score += Math.min(r.score, 5);
+      reasons.push("content overlap");
+    }
+
+    if (score > 0) {
+      scored.push({ entry, score, reasons });
+    }
+  }
+
+  // Sort by score, take top N
+  scored.sort((a, b) => b.score - a.score);
+  const top = scored.slice(0, limit);
+
+  if (top.length === 0) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `No related memories found for capture ${id}.\n\nSource: ${source.content.slice(0, 100)}...`,
+        },
+      ],
+    };
+  }
+
+  // Format output
+  const lines: string[] = [
+    `Related memories for capture ${id}:`,
+    `Source: [${source.type}] ${source.content.slice(0, 100)}...`,
+    "",
+  ];
+
+  for (const { entry, score, reasons } of top) {
+    const date = new Date(entry.createdAt).toISOString().split("T")[0];
+    const preview = entry.content.slice(0, 120).replace(/\n/g, " ");
+    lines.push(`- [${entry.type}] ${date} (score=${score}, ${reasons.join("; ")})`);
+    lines.push(`  ${preview}...`);
+    if (entry.tags) {
+      try {
+        const tags = JSON.parse(entry.tags);
+        if (Array.isArray(tags) && tags.length > 0) {
+          lines.push(`  tags: ${tags.join(", ")}`);
+        }
+      } catch {
+        // skip
+      }
+    }
+    lines.push(`  id: ${entry.id}`);
+    lines.push("");
+  }
+
+  lines.push(`Found ${top.length} related memor${top.length === 1 ? "y" : "ies"}.`);
+
+  opts.audit.log({
+    tool: "related",
+    argsHash: AuditLogger.hashArgs({ id, limit }),
+    resultLen: lines.join("\n").length,
+    quotaHit: false,
+    redacted: false,
+  });
+
+  return { content: [{ type: "text", text: lines.join("\n") }] };
 }
 
 /**

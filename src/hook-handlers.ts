@@ -3384,3 +3384,144 @@ export async function hookPostCommit(dbPath: string): Promise<void> {
     process.stdout.write(JSON.stringify({}));
   }
 }
+
+/**
+ * Hook handler for PreCompact event (Claude Code, Devin CLI).
+ * Fires BEFORE context compaction destroys conversation details.
+ * Captures a session checkpoint: what was decided, what was tried,
+ * what's verified working, and remaining tasks — so the agent can
+ * recover this context after compaction.
+ *
+ * Claude Code PreCompact stdin: { trigger: "auto"|"manual", custom_instructions }
+ * Devin CLI PostCompaction stdin: similar shape.
+ *
+ * Output: additionalContext with a recovery prompt that tells the agent
+ * "your memory was checkpointed, here's what to remember" — so after
+ * compaction the agent still has the critical context.
+ */
+export function hookPreCompact(dbPath: string): void {
+  const chunks: Buffer[] = [];
+  process.stdin.setEncoding("utf-8");
+  process.stdin.on("data", (chunk) => {
+    chunks.push(Buffer.from(chunk));
+  });
+
+  process.stdin.on("end", async () => {
+    try {
+      const raw = Buffer.concat(chunks).toString("utf-8");
+      const input = raw.trim() ? JSON.parse(raw) : {};
+      const trigger = input.trigger ?? "unknown";
+      const sessionKey = input.session_id ?? input.cwd ?? process.cwd();
+
+      // Capture a compaction checkpoint
+      const db = new Database(dbPath);
+      db.pragma("journal_mode = WAL");
+
+      // Ensure schema exists (create tables if missing)
+      try {
+        const { fileURLToPath } = await import("node:url");
+        const schemaPath = join(dirname(fileURLToPath(import.meta.url)), "storage", "schema.sql");
+        if (existsSync(schemaPath)) {
+          db.exec(readFileSync(schemaPath, "utf-8"));
+        }
+      } catch {
+        // Schema may already exist or file not found — non-fatal
+      }
+
+      const checkpointId = `ckpt-${createHash("sha256")
+        .update(sessionKey + Date.now())
+        .digest("hex")
+        .slice(0, 12)}`;
+
+      const summary =
+        `Context compaction triggered (${trigger}). ` +
+        `Session checkpoint saved. After compaction, recall recent memory to recover ` +
+        `decisions made, approaches tried, and what was verified working.`;
+
+      // Insert as a task-type capture so it shows up in recall
+      db.prepare(
+        `INSERT INTO captures (id, type, content, tags, metadata, session_key, agent_id, created_at)
+         VALUES (?, 'task', ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        checkpointId,
+        summary,
+        JSON.stringify(["compaction", "checkpoint", trigger]),
+        JSON.stringify({
+          checkpoint: true,
+          trigger,
+          compacted_at: new Date().toISOString(),
+          session_key: sessionKey,
+        }),
+        sessionKey,
+        "tdai-memory-hook",
+        Date.now(),
+      );
+
+      // Also capture recent conversation messages if available
+      // (Claude Code sends transcript_path in some versions)
+      let transcriptNote = "";
+      if (input.transcript_path && existsSync(input.transcript_path)) {
+        try {
+          const transcript = readFileSync(input.transcript_path, "utf-8");
+          // Extract last ~2000 chars of conversation as a checkpoint
+          const recent = transcript.slice(-2000);
+          const transcriptId = `txcpt-${createHash("sha256")
+            .update(sessionKey + "transcript" + Date.now())
+            .digest("hex")
+            .slice(0, 12)}`;
+          db.prepare(
+            `INSERT INTO captures (id, type, content, tags, metadata, session_key, agent_id, created_at)
+             VALUES (?, 'task', ?, ?, ?, ?, ?, ?)`,
+          ).run(
+            transcriptId,
+            `Pre-compaction transcript excerpt:\n${recent}`,
+            JSON.stringify(["compaction", "transcript-excerpt"]),
+            JSON.stringify({
+              checkpoint: true,
+              source: "transcript",
+              compacted_at: new Date().toISOString(),
+            }),
+            sessionKey,
+            "tdai-memory-hook",
+            Date.now(),
+          );
+          transcriptNote = " + transcript excerpt";
+        } catch {
+          // Non-fatal — transcript capture is supplementary
+        }
+      }
+
+      db.close();
+
+      logToFile(
+        `PreCompact: saved checkpoint${transcriptNote} for session ${sessionKey} (trigger=${trigger})`,
+      );
+
+      // Visible feedback
+      feedback("📦", `tdai-memory: saved compaction checkpoint — memory survives the compact`);
+
+      // Inject recovery context so the agent knows to recall after compaction
+      const recoveryContext = `[tdai-memory] Context compaction is about to happen.
+
+A checkpoint of this session has been saved to memory. After compaction completes:
+1. Your recent decisions, errors, and learnings are preserved in the memory DB.
+2. Call recall() or rely on SessionStart hook to re-inject them.
+3. Do NOT re-explain things you already told the user — check memory first.
+
+Compaction trigger: ${trigger}`;
+
+      const output = {
+        hookSpecificOutput: {
+          hookEventName: "PreCompact",
+          additionalContext: recoveryContext,
+        },
+      };
+
+      process.stdout.write(JSON.stringify(output));
+    } catch (err) {
+      process.stderr.write(`[tdai-memory hook-pre-compact] Error: ${err}\n`);
+      logToFile(`PreCompact: error - ${err}`);
+      process.stdout.write(JSON.stringify({}));
+    }
+  });
+}

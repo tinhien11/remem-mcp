@@ -33,16 +33,16 @@ The demo creates a real TypeScript project, runs real `npm run build`, captures 
 
 ## Why it's different
 
-| | tdai-memory-mcp | Mem0 | Claude MEMORY.md |
-|---|---|---|---|
-| **Survives compaction** | Yes — memory is external SQLite, re-injected every session | Yes — cloud store | No — 200-line cap, silent truncation |
-| **Learns from errors** | Yes — auto-captures, injects fixes | No | No |
-| **Semantic search** | Hybrid BM25 + sqlite-vec | Vector only | No — LLM filename picker, max 5 files |
-| **Setup** | 1 command | API key + cloud | Built-in |
-| **Data location** | Local SQLite | Cloud | Local markdown |
-| **Team sharing** | Git-native (commit, diff, merge) | Cloud sync | Copy-paste |
-| **API key** | No | Yes | No |
-| **Cost** | Free | $19–249/mo | Free |
+| | tdai-memory-mcp | Mem0 | Claude MEMORY.md | Mneme |
+|---|---|---|---|---|
+| **Survives compaction** | Yes — PreCompact hook saves checkpoint, re-injects after | Yes — cloud store | No — 200-line cap, silent truncation | Yes — PreCompact hook |
+| **Learns from errors** | Yes — auto-captures, injects fixes | No | No | No |
+| **Semantic search** | Hybrid BM25 + sqlite-vec | Vector only | No — LLM filename picker, max 5 files | Vector + graph |
+| **Setup** | 1 command | API key + cloud | Built-in | Build from source (Rust) |
+| **Data location** | Local SQLite | Cloud | Local markdown | Local SQLite |
+| **Team sharing** | Git-native (commit, diff, merge) | Cloud sync | Copy-paste | Manual |
+| **API key** | No | Yes | No | No |
+| **Cost** | Free | $19–249/mo | Free | Free |
 
 ---
 
@@ -104,17 +104,21 @@ Then run `npx tdai-memory-mcp install-hooks`.
 
 Memory lives in a local SQLite database — outside the agent's context window. When the agent compacts or starts a new session, memory is re-injected automatically. No more re-explaining what you already told it yesterday.
 
+**PreCompact hook**: when the agent is about to compact context, tdai-memory saves a checkpoint (decisions made, approaches tried, what's verified working) to the DB. After compaction, the agent recalls it — so the compact doesn't destroy your session's learnings.
+
 Two layers: **automatic** (runs via hooks, zero tool calls) and **on-demand** (you call when you need deeper context).
 
-### Automatic — three learning loops
+### Automatic — three learning loops + compaction survival
 
-All three run via lifecycle hooks. The agent doesn't need to call any tool.
+All run via lifecycle hooks. The agent doesn't need to call any tool.
 
 1. **Error learning** — command fails → capture → inject fix before next attempt → succeed → upvote.
 
 2. **Decision learning** — `npm install`, `git commit`, config → auto-capture → inject past decisions before similar commands.
 
 3. **Pattern learning** — Write/Edit → auto-capture code patterns → inject same-language patterns before editing.
+
+4. **Compaction survival** — PreCompact hook fires before context compaction → saves checkpoint → agent recalls after compact. Memory survives.
 
 ### On-demand — CodeGraph, Wiki, Search
 

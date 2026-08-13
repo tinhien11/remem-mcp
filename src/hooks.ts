@@ -68,6 +68,19 @@ const HOOKS_CONFIG = {
       ],
     },
   ],
+  // PreCompact: save a session checkpoint before context compaction
+  // destroys conversation details. Memory survives the compact.
+  PreCompact: [
+    {
+      hooks: [
+        {
+          type: "command",
+          command: hookCommand("hook-pre-compact"),
+          timeout: 10,
+        },
+      ],
+    },
+  ],
   // Note: PostToolUseFailure is not supported by Devin CLI.
   // Devin supports: PreToolUse, PostToolUse, UserPromptSubmit, Stop,
   // PostCompaction, SessionStart, SessionEnd, PermissionRequest.
@@ -241,6 +254,7 @@ export async function installHooks(): Promise<void> {
   console.log("  SessionStart → auto-recall recent memory into agent context");
   console.log("  PreToolUse   → inject past errors before lint/build/test commands");
   console.log("  PostToolUse  → auto-capture failed commands as error memories");
+  console.log("  PreCompact   → save checkpoint before context compaction (memory survives)");
   console.log("  Stop         → auto-capture session transcript + remind to save");
   console.log("  SessionEnd   → silently capture session summary to memory DB");
   console.log("\nRestart your agent for hooks to take effect.");
@@ -252,7 +266,14 @@ export async function uninstallHooks(): Promise<void> {
   console.log("Removing lifecycle hooks...\n");
 
   let removed = 0;
-  const tdaiEvents = ["SessionStart", "SessionEnd", "Stop", "PreToolUse", "PostToolUse"];
+  const tdaiEvents = [
+    "SessionStart",
+    "SessionEnd",
+    "Stop",
+    "PreToolUse",
+    "PostToolUse",
+    "PreCompact",
+  ];
 
   // Remove from Devin CLI
   const devinPath = join(homedir(), ".config", "devin", "config.json");
