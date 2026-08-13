@@ -3140,6 +3140,7 @@ async function captureSessionTranscript(
 
   // Generate embedding for vector search (best-effort, non-blocking)
   try {
+    const sqliteVec = await import("sqlite-vec");
     sqliteVec.load(db);
     const { LocalEmbedder } =
       require("./embedding/local.js") as typeof import("./embedding/local.js");

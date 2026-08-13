@@ -1,0 +1,35 @@
+diff --git a/src/context.ts b/src/context.ts
+index 3553dd1..b992883 100644
+--- a/src/context.ts
++++ b/src/context.ts
+@@ -415,17 +415,21 @@ export class Context<
+     if (this.#res && _res) {
+       _res = createResponseInstance(_res.body, _res)
+       for (const [k, v] of this.#res.headers.entries()) {
+-        if (k === 'content-type') {
++        if (k === 'content-type' || k === 'set-cookie') {
+           continue
+         }
+-        if (k === 'set-cookie') {
+-          const cookies = this.#res.headers.getSetCookie()
+-          _res.headers.delete('set-cookie')
+-          for (const cookie of cookies) {
+-            _res.headers.append('set-cookie', cookie)
+-          }
+-        } else {
+-          _res.headers.set(k, v)
++        _res.headers.set(k, v)
++      }
++      // Preserve cookies from BOTH context and handler (issue #4992 Scenario B)
++      const contextCookies = this.#res.headers.getSetCookie()
++      if (contextCookies.length > 0) {
++        const handlerCookies = _res.headers.getSetCookie()
++        _res.headers.delete('set-cookie')
++        for (const cookie of handlerCookies) {
++          _res.headers.append('set-cookie', cookie)
++        }
++        for (const cookie of contextCookies) {
++          _res.headers.append('set-cookie', cookie)
+         }
+       }
+     }

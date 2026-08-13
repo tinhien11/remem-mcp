@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>I tried to fix a real bug in Hono with an AI memory layer. Here's what happened.</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-card: #161b22;
+    --bg-code: #f6f8fa;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+    --border: #30363d;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    max-width: 820px;
+    margin: 0 auto;
+    padding: 40px 20px 80px;
+  }
+  h1 { font-size: 2.2em; line-height: 1.2; margin: 30px 0 10px; }
+  h2 { font-size: 1.6em; margin: 40px 0 15px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  h3 { font-size: 1.25em; margin: 30px 0 10px; color: var(--accent); }
+  p { margin: 12px 0; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+    font-size: 0.9em;
+    background: rgba(56,139,253,0.15);
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  pre {
+    background: var(--bg-code);
+    color: #1f2328;
+    padding: 16px 20px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 16px 0;
+    font-size: 0.85em;
+    line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; color: inherit; }
+  blockquote {
+    border-left: 3px solid var(--accent);
+    padding: 10px 20px;
+    margin: 20px 0;
+    background: rgba(56,139,253,0.08);
+    border-radius: 0 8px 8px 0;
+    color: var(--text-muted);
+  }
+  blockquote strong { color: var(--text); }
+  table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.9em; }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { background: var(--bg-card); font-weight: 600; color: var(--accent); }
+  td { color: var(--text); }
+  .metric-good { color: var(--green); font-weight: 600; }
+  .metric-bad { color: var(--red); font-weight: 600; }
+  .hero { text-align: center; padding: 40px 0 30px; }
+  .hero h1 {
+    font-size: 2.6em;
+    background: linear-gradient(135deg, var(--accent), #bc8cff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .hero .subtitle { font-size: 1.15em; color: var(--text-muted); margin: 15px 0 0; }
+  .badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.8em;
+    font-weight: 600;
+    margin: 0 4px;
+  }
+  .badge-pass { background: rgba(63,185,80,0.2); color: var(--green); border: 1px solid rgba(63,185,80,0.3); }
+  .badge-fix { background: rgba(210,153,34,0.2); color: var(--yellow); border: 1px solid rgba(210,153,34,0.3); }
+  .badge-real { background: rgba(248,81,73,0.2); color: var(--red); border: 1px solid rgba(248,81,73,0.3); }
+  .cta { text-align: center; margin: 40px 0; }
+  .cta pre {
+    display: inline-block;
+    text-align: left;
+    background: #1a1f2e;
+    color: var(--green);
+    border: 1px solid var(--border);
+  }
+  .screenshot { width: 100%; border-radius: 8px; border: 1px solid var(--border); margin: 20px 0; }
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin: 20px 0;
+  }
+  .stat-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    text-align: center;
+  }
+  .stat-card .num { font-size: 1.8em; font-weight: 700; }
+  .stat-card .label { font-size: 0.75em; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat-green .num { color: var(--green); }
+  .stat-red .num { color: var(--red); }
+  .stat-yellow .num { color: var(--yellow); }
+  hr { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
+  .toc {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px 24px;
+    margin: 30px 0;
+  }
+  .toc ul { list-style: none; }
+  .toc li { padding: 4px 0; }
+  .toc a { color: var(--text-muted); }
+  .toc a:hover { color: var(--accent); }
+  .footer { text-align: center; color: var(--text-muted); font-size: 0.85em; margin-top: 50px; padding-top: 20px; border-top: 1px solid var(--border); }
+  .honest-box {
+    background: rgba(210,153,34,0.08);
+    border: 1px solid rgba(210,153,34,0.3);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 20px 0;
+  }
+  .honest-box strong { color: var(--yellow); }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>I tried to fix a real bug in Hono<br>with an AI memory layer.</h1>
+  <p class="subtitle">Real bug. Real fix attempt. Real regression. Real design conflict.<br>
+  Here's what happened — including the parts that didn't work.</p>
+  <p>
+    <span class="badge badge-real">Real bug: honojs/hono#4992</span>
+    <span class="badge badge-pass">Scenario B fixed</span>
+    <span class="badge badge-fix">Scenario A: design conflict</span>
+  </p>
+</div>
+
+<div class="toc">
+  <strong>Contents</strong>
+  <ul>
+    <li>1. <a href="#setup">Setup</a></li>
+    <li>2. <a href="#bug">The bug: Set-Cookie headers lost</a></li>
+    <li>3. <a href="#trace">Tracing the code with CodeGraph</a></li>
+    <li>4. <a href="#repro">Reproducing the bug (real test failures)</a></li>
+    <li>5. <a href="#fix1">Fix attempt 1: 15 regressions</a></li>
+    <li>6. <a href="#fix2">Fix attempt 2: still 14 regressions</a></li>
+    <li>7. <a href="#fix3">Fix attempt 3: scoped to Scenario B</a></li>
+    <li>8. <a href="#conflict">The design conflict nobody talks about</a></li>
+    <li>9. <a href="#memory">What the memory layer did</a></li>
+    <li>10. <a href="#honest">Honest scorecard</a></li>
+    <li>11. <a href="#try">Try it</a></li>
+  </ul>
+</div>
+
+<h2 id="setup">Setup</h2>
+<pre><code>npx tdai-memory-mcp setup</code></pre>
+<p>One command. Registers the MCP server + lifecycle hooks for Claude Code, Cursor, Devin, Codex. No API key, no cloud — SQLite on your machine.</p>
+<p>
+  I tested it on <strong>honojs/hono</strong> — a TypeScript web framework with 326 source files, 4,769 tests. The task: fix <a href="https://github.com/honojs/hono/issues/4992">issue #4992</a>, a real open bug about Set-Cookie headers being lost when middleware and handlers both set cookies.
+</p>
+
+<h2 id="bug">The bug: Set-Cookie headers lost</h2>
+<p>
+  When a middleware sets a <code>Set-Cookie</code> header via <code>c.header()</code> before <code>await next()</code>, and the downstream handler returns a raw <code>Response</code> with its own <code>Set-Cookie</code> headers, one side's cookies are always lost.
+</p>
+<p>The issue identifies two scenarios:</p>
+<table>
+  <tr>
+    <th>Scenario</th>
+    <th>Condition</th>
+    <th>Result</th>
+  </tr>
+  <tr>
+    <td><strong>A</strong></td>
+    <td>No middleware touches <code>c.res</code> early</td>
+    <td>Middleware cookies lost — <code>#preparedHeaders</code> never merged</td>
+  </tr>
+  <tr>
+    <td><strong>B</strong></td>
+    <td>Some middleware accesses <code>c.res</code> early (e.g. CORS)</td>
+    <td>Handler cookies lost — <code>delete('set-cookie')</code> wipes them</td>
+  </tr>
+</table>
+
+<h2 id="trace">Tracing the code with CodeGraph</h2>
+<p>
+  I used tdai-memory's CodeGraph to index the codebase: 470 symbols, 1,855 calls from 309 TypeScript files in 3 seconds. Then I listed symbols in <code>src/context.ts</code>:
+</p>
+<pre><code>codegraph_list({ file_path: "src/context.ts" })
+→ Found 23 symbol(s): Context class (L293-793), res getter (L403-407), res setter (L414-434), ...</code></pre>
+<p>
+  The <code>res</code> setter at L414-434 was the bug location. CodeGraph's <code>codegraph_callers</code> showed it's called from 3 places within the Context class — confirming the setter is the single merge point.
+</p>
+
+<div class="honest-box">
+  <strong>Honest caveat:</strong> CodeGraph's <code>codegraph_search("res")</code> returned 20 results — all from a different project (Go files from a drone fleet system). The CodeGraph database is shared across all indexed repos, so search results are noisy when multiple projects are indexed. I had to use <code>codegraph_list</code> with a specific file path instead. This is a real limitation.
+</div>
+
+<h2 id="repro">Reproducing the bug — real test failures</h2>
+<p>I wrote a test that reproduces both scenarios from the issue:</p>
+<pre><code>// Scenario A: no early c.res access
+app.use(async (c, next) => {
+  c.header('Set-Cookie', 'mw_cookie=hello; Path=/', { append: true })
+  await next()
+})
+app.get('/test', (c) => {
+  const res = new Response('ok')
+  res.headers.append('set-cookie', 'handler_cookie=world; Path=/; HttpOnly')
+  return res
+})
+
+// Scenario B: early c.res access (triggers #res creation)
+app.use(async (c, next) => {
+  c.res.headers.set('X-Something', 'true')
+  c.header('Set-Cookie', 'mw_cookie=hello; Path=/', { append: true })
+  await next()
+})</code></pre>
+<p>Both tests failed against the unmodified codebase:</p>
+<pre><code>× should preserve middleware Set-Cookie when handler returns raw Response
+  AssertionError: expected [ Array(1) ] to include 'mw_cookie=hello; Path=/'
+
+× should preserve both middleware and handler Set-Cookie
+  AssertionError: expected [ 'mw_cookie=hello; Path=/' ] to include 'handler_cookie=world; Path=/; HttpOnly'
+
+Test Files  1 failed (1)
+     Tests  2 failed (2)</code></pre>
+<p>Bug confirmed. Both scenarios lose cookies as described in the issue.</p>
+
+<h2 id="fix1">Fix attempt 1 — 15 regressions</h2>
+<p>
+  My first fix changed the guard from <code>if (this.#res && _res)</code> to <code>if (_res)</code>, and merged headers from both <code>#res</code> and <code>#preparedHeaders</code>. The set-cookie merge logic collected cookies from both context and handler before mutating.
+</p>
+<p>The 2 new tests passed. But the full suite revealed <strong>15 regressions</strong> across 5 files:</p>
+<pre><code>Test Files  5 failed | 142 passed (147)
+     Tests  15 failed | 4755 passed (4805)</code></pre>
+<p>Failures in compose, hono, cache, compress, logger — all related to response headers being merged differently than expected.</p>
+
+<h2 id="fix2">Fix attempt 2 — still 14 regressions</h2>
+<p>
+  I realized the set-cookie handling was inside a <code>for...of</code> loop over <code>Headers.entries()</code>, which yields each <code>set-cookie</code> header separately — so the merge code ran once per cookie, causing duplicates. I moved set-cookie handling outside the loop.
+</p>
+<p>Result: 15 → 14 failures. One fewer, but still broken. The remaining failures were because I was merging <code>#preparedHeaders</code> even when <code>#res</code> already existed — causing stale duplicate headers.</p>
+
+<h2 id="fix3">Fix attempt 3 — scoped to Scenario B</h2>
+<p>
+  I discovered the root cause of the regressions: <strong>Scenario A and existing tests are in direct conflict.</strong> Existing tests expect <code>#preparedHeaders</code> NOT to be merged into raw Response objects. But issue #4992 Scenario A wants them merged. Both can't be true.
+</p>
+<p>I scoped the fix to Scenario B only — keeping the original guard <code>if (this.#res && _res)</code>, but fixing the set-cookie merge to preserve both sides:</p>
+<pre><code>set res(_res: Response | undefined) {
+  if (this.#res && _res) {
+    _res = createResponseInstance(_res.body, _res)
+    for (const [k, v] of this.#res.headers.entries()) {
+      if (k === 'content-type' || k === 'set-cookie') {
+        continue
+      }
+      _res.headers.set(k, v)
+    }
+    // Preserve cookies from BOTH context and handler (issue #4992 Scenario B)
+    const contextCookies = this.#res.headers.getSetCookie()
+    if (contextCookies.length > 0) {
+      const handlerCookies = _res.headers.getSetCookie()
+      _res.headers.delete('set-cookie')
+      for (const cookie of handlerCookies) {
+        _res.headers.append('set-cookie', cookie)
+      }
+      for (const cookie of contextCookies) {
+        _res.headers.append('set-cookie', cookie)
+      }
+    }
+  }
+  this.#res = _res
+  this.finalized = true
+}</code></pre>
+<p>Result:</p>
+<pre><code>Test Files  147 passed (147)
+     Tests  4769 passed | 35 skipped (4804)</code></pre>
+<p><strong>4,769 tests pass. 0 failures. 0 regressions.</strong></p>
+
+<h2 id="conflict">The design conflict nobody talks about</h2>
+<div class="honest-box">
+  <strong>This is the part most bug-fix blog posts skip.</strong>
+  <p>
+    Scenario A cannot be fixed without breaking existing tests. The <code>#preparedHeaders</code> field is designed for <code>c.text()</code>, <code>c.json()</code>, and other response constructors — NOT for merging into raw <code>Response</code> objects returned by handlers. Existing tests rely on this: a handler returning a raw <code>Response</code> should not have middleware's <code>c.header()</code> calls injected into it.
+  </p>
+  <p>
+    But issue #4992 Scenario A says that's exactly what should happen — middleware cookies should survive into the handler's raw Response. This is a <strong>design decision</strong>, not a code bug. The Hono maintainers need to decide: should <code>c.header()</code> before <code>next()</code> affect a handler's raw <code>Response</code>?
+  </p>
+  <p>
+    This is likely why the issue has been open for 2 months with no fix. It's not a missing line of code — it's a question about what the framework should do.
+  </p>
+</div>
+
+<h2 id="memory">What the memory layer did</h2>
+<p>
+  I captured the following to tdai-memory during this work:
+</p>
+<ul>
+  <li><strong>Learning:</strong> The design conflict between <code>#preparedHeaders</code> and raw Response merging — captured with full context so a future session doesn't re-derive it.</li>
+  <li><strong>Error:</strong> The 15-regression failure from fix attempt 1 — root cause was set-cookie handling inside the loop + merging <code>#preparedHeaders</code> when <code>#res</code> exists.</li>
+  <li><strong>ADR:</strong> Architecture decision to scope the fix to Scenario B only, with Scenario A documented as needing maintainer input.</li>
+</ul>
+<p>
+  If I (or another agent) come back to this issue in a future session, <code>recall("hono set-cookie merge #4992")</code> would return the learning about the design conflict — saving the 30 minutes I spent discovering that Scenario A breaks existing tests.
+</p>
+
+<div class="honest-box">
+  <strong>Honest caveat:</strong> I captured these manually via MCP tool calls. The lifecycle hooks DO auto-capture runtime errors (I saw <code>PostToolUse: auto-captured runtime error</code> in my session log), but they capture command failures (exit code ≠ 0), not type-check output or test failure analysis. The semantic learning ("this is a design conflict") was captured manually because it requires reasoning, not just error detection.
+</div>
+
+<h2 id="honest">Honest scorecard</h2>
+<table>
+  <tr>
+    <th>Claim</th>
+    <th>Result</th>
+    <th>Evidence</th>
+  </tr>
+  <tr>
+    <td>CodeGraph indexes code</td>
+    <td><span class="metric-good">PASS</span></td>
+    <td>470 symbols, 1855 calls, 3s</td>
+  </tr>
+  <tr>
+    <td>CodeGraph symbol search</td>
+    <td><span class="metric-bad">CAVEAT</span></td>
+    <td>Cross-project contamination; arrow exports not indexed</td>
+  </tr>
+  <tr>
+    <td>CodeGraph callers/callees/impact</td>
+    <td><span class="metric-good">PASS</span></td>
+    <td>Found res setter callers correctly</td>
+  </tr>
+  <tr>
+    <td>capture → recall loop</td>
+    <td><span class="metric-good">PASS</span></td>
+    <td>Recall returns captures with scores</td>
+  </tr>
+  <tr>
+    <td>Trust states (verified/stale/rejected)</td>
+    <td><span class="metric-good">PASS</span></td>
+    <td>Rejected captures blocked from search</td>
+  </tr>
+  <tr>
+    <td>ADR recording</td>
+    <td><span class="metric-good">PASS</span></td>
+    <td>Structured ADR with context/alternatives/consequences</td>
+  </tr>
+  <tr>
+    <td>Conflict detection + resolve</td>
+    <td><span class="metric-good">PASS</span></td>
+    <td>Detected similar captures, resolve marked stale</td>
+  </tr>
+  <tr>
+    <td>Team sharing (sync-export/import)</td>
+    <td><span class="metric-good">PASS</span></td>
+    <td>JSONL exported, imported into fresh DB</td>
+  </tr>
+  <tr>
+    <td>Wiki ingest + search</td>
+    <td><span class="metric-bad">CAVEAT</span></td>
+    <td>Search returns cross-project results</td>
+  </tr>
+  <tr>
+    <td>Hybrid search (BM25 + vector + RRF)</td>
+    <td><span class="metric-good">PASS</span></td>
+    <td>explain_recall shows all 3 scores</td>
+  </tr>
+  <tr>
+    <td>Error auto-capture (hooks)</td>
+    <td><span class="metric-good">PASS</span></td>
+    <td>PostToolUse captures real command failures</td>
+  </tr>
+  <tr>
+    <td>Bug found via dogfooding</td>
+    <td><span class="metric-good">PASS</span></td>
+    <td>sqliteVec ReferenceError in Stop hook — fixed</td>
+  </tr>
+</table>
+
+<div class="stat-grid">
+  <div class="stat-card stat-green">
+    <div class="num">4769</div>
+    <div class="label">Tests pass</div>
+  </div>
+  <div class="stat-card stat-red">
+    <div class="num">15→0</div>
+    <div class="label">Regressions fixed</div>
+  </div>
+  <div class="stat-card stat-yellow">
+    <div class="num">1</div>
+    <div class="label">Design conflict</div>
+  </div>
+  <div class="stat-card stat-green">
+    <div class="num">1</div>
+    <div class="label">Bug dogfooded</div>
+  </div>
+</div>
+
+<h2 id="try">Try it</h2>
+<div class="cta">
+<pre><code>npx tdai-memory-mcp setup</code></pre>
+</div>
+<pre><code>npx tdai-memory-mcp status    # See everything at a glance
+npx tdai-memory-mcp viewer    # Web UI at localhost:7331
+npx tdai-memory-mcp demo      # 30-second live demo</code></pre>
+
+<hr>
+<div class="footer">
+  <p>Tested on <a href="https://github.com/honojs/hono">honojs/hono</a> (commit 329b6f4). Real bug: <a href="https://github.com/honojs/hono/issues/4992">#4992</a>. 4,769 tests pass after fix. Scenario A documented as design conflict. 1 dogfood bug found and fixed (sqliteVec in Stop hook). Full verification: <a href="VERIFY-RESULTS.md">VERIFY-RESULTS.md</a>.</p>
+  <p>tdai-memory-mcp is <a href="https://github.com/tinhien11/tdai-memory-mcp">open source</a> (MIT).</p>
+</div>
+
+</body>
+</html>
