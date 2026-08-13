@@ -133,13 +133,29 @@ All three run via lifecycle hooks. The agent doesn't need to call any tool.
 ![CodeGraph viewer](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/viewer-demo.gif)
 
 ```bash
-npx tdai-memory-mcp index --path src --repo .    # Index code (Tree-sitter, 9 languages)
+# 1. Index your codebase (one-time, rerun after major changes)
+npx tdai-memory-mcp index --path src --repo .
+
+# 2. Search symbols (auto-scoped to current directory)
+npx tdai-memory-mcp search-code --query "parseTar"
+# → parseTar  at  src/parse.ts:22
+
+# 3. List symbols in a file
+npx tdai-memory-mcp list-code src/reporters/fancy.ts
+# → Class    L49-135  FancyReporter
+# → Method   L86-134  formatLogObj
+
+# 4. Trace callers / callees / impact (use symbol ID from step 2)
+npx tdai-memory-mcp callers 01KZXPPHF93TS4HV8FWCSSK36A
+npx tdai-memory-mcp impact  01KZXPPHF93TS4HV8FWCSSK36A
+
+# Wiki + viewer
 npx tdai-memory-mcp wiki ingest --path docs      # Index markdown docs + ADRs
 npx tdai-memory-mcp wiki outdated                 # Find outdated wiki pages
 npx tdai-memory-mcp viewer                        # Web UI at localhost:7331
 ```
 
-- **CodeGraph** — symbol search, callers/callees, impact analysis. `codegraph_search`, `codegraph_callers`, `codegraph_impact`, etc.
+- **CodeGraph** — symbol search, callers/callees, impact analysis. `codegraph_search`, `codegraph_callers`, `codegraph_impact`, etc. Auto-scoped to your project — no cross-project contamination.
 - **Wiki** — markdown docs, ADRs, outdated detection. `wiki_search`, `wiki_outdated`, etc.
 - **Search** — hybrid BM25 + sqlite-vec vector search with RRF fusion. `explain_recall` shows scores.
 
