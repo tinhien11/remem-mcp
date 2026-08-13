@@ -58,6 +58,7 @@ import {
 import { exportData } from "./export.js";
 import {
   hookPostCommit,
+  hookPostCompaction,
   hookPostToolUse,
   hookPreCompact,
   hookPreToolUse,
@@ -685,6 +686,10 @@ async function main(): Promise<void> {
     hookPreCompact(defaultDbPath());
     return;
   }
+  if (arg === "hook-post-compaction") {
+    hookPostCompaction(defaultDbPath());
+    return;
+  }
 
   // ─── CodeGraph CLI commands ──────────────────────────────────
   if (arg === "index") {
@@ -1170,16 +1175,69 @@ async function verifyMemory(dbPath: string, query: string): Promise<void> {
     return;
   }
 
+  // Measure real re-read cost: scan cwd for source files, estimate tokens
+  const { statSync, readdirSync } = await import("node:fs");
+  const { join, extname } = await import("node:path");
+  const codeExts = [
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".py",
+    ".rb",
+    ".go",
+    ".rs",
+    ".java",
+    ".c",
+    ".cpp",
+    ".h",
+  ];
+  let totalFileBytes = 0;
+  let fileCount = 0;
+  try {
+    const scanDir = (dir: string, depth: number) => {
+      if (depth > 2 || fileCount > 50) return;
+      let entries: string[];
+      try {
+        entries = readdirSync(dir);
+      } catch {
+        return;
+      }
+      for (const name of entries) {
+        if (name.startsWith(".") || name === "node_modules" || name === "dist" || name === "build")
+          continue;
+        const full = join(dir, name);
+        try {
+          const stat = statSync(full);
+          if (stat.isDirectory()) {
+            scanDir(full, depth + 1);
+          } else if (codeExts.includes(extname(name))) {
+            totalFileBytes += stat.size;
+            fileCount++;
+          }
+        } catch {
+          // skip
+        }
+      }
+    };
+    scanDir(process.cwd(), 0);
+  } catch {
+    // fallback to estimate
+  }
+
+  // Estimate: agent would read ~5 most relevant files (not all files)
+  const avgFileTokens = fileCount > 0 ? Math.ceil(totalFileBytes / fileCount / 4) : 2000;
+  const estimatedReReadTokens = Math.min(avgFileTokens * 5, 15000);
+
   console.log("─ WITHOUT memory ──────────────────────────────────");
   console.log("  Agent would need to:");
   console.log("    1. Search the codebase for relevant context");
-  console.log("    2. Read 3-7 files to understand conventions");
+  console.log(
+    `    2. Read ~5 files (${fileCount} source files found, avg ${avgFileTokens} tok each)`,
+  );
   console.log("    3. Re-derive decisions from code structure");
   console.log("    4. Potentially repeat past errors");
   console.log("");
-
-  // Estimate re-read cost: assume agent reads ~5 files averaging 2000 tokens
-  const estimatedReReadTokens = 5 * 2000;
   console.log(`  Estimated re-read cost: ~${estimatedReReadTokens} tokens`);
   console.log("");
 
@@ -1190,7 +1248,7 @@ async function verifyMemory(dbPath: string, query: string): Promise<void> {
     const tokens = estimateTokens(entry.content);
     totalMemoryTokens += tokens;
     const type = entry.type ?? "memory";
-    const tags = entry.tags ? `[${entry.tags}]` : "";
+    const tags = entry.tags && entry.tags.length > 0 ? `[${entry.tags.join(",")}]` : "";
     const preview = entry.content.slice(0, 80).replace(/\n/g, " ");
     console.log(`  [${type}] ${tokens} tok ${tags} ${preview}...`);
   }
@@ -1199,7 +1257,7 @@ async function verifyMemory(dbPath: string, query: string): Promise<void> {
 
   const saved = estimatedReReadTokens - totalMemoryTokens;
   const roi = estimatedReReadTokens / Math.max(totalMemoryTokens, 1);
-  const costSaved = ((saved / 1000) * 0.003).toFixed(2);
+  const costSaved = ((Math.max(saved, 0) / 1000) * 0.003).toFixed(2);
 
   console.log("─ Verdict ──────────────────────────────────────────");
   console.log(`  Re-reads avoided:  ~${estimatedReReadTokens} tokens`);
@@ -1208,6 +1266,10 @@ async function verifyMemory(dbPath: string, query: string): Promise<void> {
   console.log(`  ROI:               ${roi.toFixed(1)}x`);
   console.log(`  Cost saved:        $${costSaved} (at $0.003/1K tokens)`);
   console.log("");
-  console.log("  Memory is working. The agent gets this context without re-reading files.");
+  if (saved > 0) {
+    console.log("  Memory is working. The agent gets this context without re-reading files.");
+  } else {
+    console.log("  Memory cost exceeds re-read estimate. Consider forgetting stale memories.");
+  }
   storage.close();
 }

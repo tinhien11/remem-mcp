@@ -6,5 +6,8 @@ export default defineConfig({
     env: {
       TDAI_ENABLE_ADVANCED: "1",
     },
+    // Run integration tests sequentially — they share resources
+    // (dist/index.js binary, ~/.claude/settings.json, real DB)
+    fileParallelism: false,
   },
 });

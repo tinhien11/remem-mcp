@@ -196,6 +196,9 @@ export interface StorageBackend {
     opts: QueryOptions,
   ): Promise<SearchResult[]>;
 
+  /** Find captures by tag (bypasses FTS5, direct SQL on tags column). */
+  listByTags(tags: string[], limit?: number): Promise<CaptureEntry[]>;
+
   /** Find captures with content hash matching the given content. Used for dedup. */
   findByContentHash(contentHash: string, sessionKey?: string): Promise<CaptureEntry[]>;
 

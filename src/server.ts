@@ -1453,56 +1453,80 @@ async function handleRelated(
     };
   }
 
-  const sourceTags = source.tags ? JSON.parse(source.tags) : [];
+  const sourceTags = source.tags ?? [];
   const sourceSessionKey = source.sessionKey;
   const sourceType = source.type;
 
-  // Get all captures (limited to a reasonable window) and score by relatedness
-  // We use recent captures as the candidate pool — this is efficient and
-  // covers the common case where related memories are recent.
-  const recentResults = await opts.storage.search(source.content.slice(0, 200), null, {
-    sessionKey: defaultSessionKey(),
+  // Build candidate pool: search by tags + by content keywords.
+  // listByTags bypasses FTS5 — direct SQL on tags column.
+  const candidateMap = new Map<
+    string,
+    { entry: CaptureEntry; score: number; reasons: Set<string> }
+  >();
+
+  // Search by tags (if any) — direct SQL, no FTS5
+  if (sourceTags.length > 0) {
+    const tagMatches = await opts.storage.listByTags(sourceTags.slice(0, 10), 100);
+    for (const entry of tagMatches) {
+      if (entry.id === id) continue;
+      const entryTags = entry.tags ?? [];
+      const sharedTags = sourceTags.filter((t: string) => entryTags.includes(t));
+      const tagScore = sharedTags.length * 3;
+      const existing = candidateMap.get(entry.id);
+      if (existing) {
+        existing.score += tagScore;
+        for (const t of sharedTags) existing.reasons.add(`tag: ${t}`);
+      } else {
+        candidateMap.set(entry.id, {
+          entry,
+          score: tagScore,
+          reasons: new Set(sharedTags.map((t: string) => `tag: ${t}`)),
+        });
+      }
+    }
+  }
+
+  // Also search by content keywords (broader net)
+  const contentResults = await opts.storage.search(source.content.slice(0, 200), null, {
     limit: 100,
     offset: 0,
     mode: "keyword",
   });
-
-  const scored: Array<{ entry: any; score: number; reasons: string[] }> = [];
-  for (const r of recentResults) {
-    if (r.entry.id === id) continue; // skip source
-
-    const entry = r.entry;
-    let score = 0;
-    const reasons: string[] = [];
-
-    // Shared tags
-    const entryTags = entry.tags ? JSON.parse(entry.tags) : [];
-    const sharedTags = sourceTags.filter((t: string) => entryTags.includes(t));
-    if (sharedTags.length > 0) {
-      score += sharedTags.length * 3;
-      reasons.push(`tags: ${sharedTags.join(", ")}`);
+  for (const r of contentResults) {
+    if (r.entry.id === id) continue;
+    const existing = candidateMap.get(r.entry.id);
+    if (existing) {
+      existing.score += Math.min(r.score, 5);
+      existing.reasons.add("content overlap");
+    } else {
+      candidateMap.set(r.entry.id, {
+        entry: r.entry,
+        score: Math.min(r.score, 5),
+        reasons: new Set(["content overlap"]),
+      });
     }
+  }
+
+  // Score: add same project and same type bonuses
+  const scored: Array<{ entry: CaptureEntry; score: number; reasons: string[] }> = [];
+  for (const { entry, score, reasons } of candidateMap.values()) {
+    let finalScore = score;
+    const reasonList = [...reasons];
 
     // Same project (session_key)
     if (sourceSessionKey && entry.sessionKey === sourceSessionKey) {
-      score += 2;
-      reasons.push("same project");
+      finalScore += 2;
+      reasonList.push("same project");
     }
 
     // Same type
     if (sourceType && entry.type === sourceType) {
-      score += 1;
-      reasons.push(`same type: ${entry.type}`);
+      finalScore += 1;
+      reasonList.push(`same type: ${entry.type}`);
     }
 
-    // Keyword overlap bonus (from the search results)
-    if (r.score > 0) {
-      score += Math.min(r.score, 5);
-      reasons.push("content overlap");
-    }
-
-    if (score > 0) {
-      scored.push({ entry, score, reasons });
+    if (finalScore > 0) {
+      scored.push({ entry, score: finalScore, reasons: reasonList });
     }
   }
 
@@ -1533,15 +1557,8 @@ async function handleRelated(
     const preview = entry.content.slice(0, 120).replace(/\n/g, " ");
     lines.push(`- [${entry.type}] ${date} (score=${score}, ${reasons.join("; ")})`);
     lines.push(`  ${preview}...`);
-    if (entry.tags) {
-      try {
-        const tags = JSON.parse(entry.tags);
-        if (Array.isArray(tags) && tags.length > 0) {
-          lines.push(`  tags: ${tags.join(", ")}`);
-        }
-      } catch {
-        // skip
-      }
+    if (entry.tags && entry.tags.length > 0) {
+      lines.push(`  tags: ${entry.tags.join(", ")}`);
     }
     lines.push(`  id: ${entry.id}`);
     lines.push("");

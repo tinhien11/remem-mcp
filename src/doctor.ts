@@ -34,7 +34,7 @@ function checkHooksConfig(name: string, path: string): { ok: boolean; detail: st
         h.hooks?.some((hook: { command: string }) => hook.command?.includes("tdai-memory")),
       );
     const required = ["SessionStart", "Stop"];
-    const optional = ["PreToolUse", "PostToolUse", "SessionEnd"];
+    const optional = ["PreToolUse", "PostToolUse", "SessionEnd", "PreCompact", "PostCompaction"];
     const missing = required.filter((ev) => !hasTdai(ev));
     const presentOptional = optional.filter((ev) => hasTdai(ev));
     if (missing.length > 0) {
@@ -105,7 +105,11 @@ export async function doctor(): Promise<void> {
   if (existsSync(codexConfig)) {
     const content = readFileSync(codexConfig, "utf-8");
     if (content.includes("tdai-memory") && content.includes("hook-recall")) {
-      checks.push({ ok: true, detail: "Codex CLI: hooks wired" });
+      const hasPostCompaction = content.includes("PostCompaction");
+      const detail = hasPostCompaction
+        ? "Codex CLI: hooks wired (SessionStart + Stop + PreToolUse, PostToolUse, PostCompaction, SessionEnd)"
+        : "Codex CLI: hooks wired (SessionStart + Stop)";
+      checks.push({ ok: true, detail });
     } else {
       checks.push({ ok: false, detail: "Codex CLI: hooks NOT wired" });
     }

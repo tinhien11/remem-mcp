@@ -343,4 +343,46 @@ describeOrSkip("Smoke test: full server over stdio", () => {
     expect(text).toContain("NOT in the top");
     expect(text).toContain("capture not found");
   });
+
+  it("related tool finds memories with shared tags", async () => {
+    // Capture two memories with shared tags
+    const cap1 = await callTool("capture", {
+      content: "We chose Vite as the build tool for the frontend.",
+      type: "decision",
+      tags: ["frontend", "build", "vite"],
+    });
+    const id1 = cap1.result.content[0].text.match(/Captured:\s*(\S+)/)?.[1];
+    expect(id1).toBeTruthy();
+
+    const cap2 = await callTool("capture", {
+      content: "Vite config uses esbuild for TS transpilation, not tsc.",
+      type: "learning",
+      tags: ["frontend", "vite", "config"],
+    });
+    const id2 = cap2.result.content[0].text.match(/Captured:\s*(\S+)/)?.[1];
+    expect(id2).toBeTruthy();
+
+    // Call related with id1 — should find id2 (shared tags: frontend, vite)
+    const response = await callTool("related", { id: id1, limit: 5 });
+
+    expect(response.result.isError).toBeFalsy();
+    const text = response.result.content[0].text;
+
+    // Should mention the source capture
+    expect(text).toContain("Related memories");
+    expect(text).toContain(id1);
+    // Should find at least one related memory
+    expect(text).toContain("Found");
+    expect(text).toContain("related memory");
+    // Should mention the shared tag reason
+    expect(text).toContain("tag:");
+  });
+
+  it("related tool returns error for non-existent capture", async () => {
+    const response = await callTool("related", { id: "NONEXISTENT_ID_99999" });
+
+    expect(response.result.isError).toBe(true);
+    const text = response.result.content[0].text;
+    expect(text).toContain("not found");
+  });
 });

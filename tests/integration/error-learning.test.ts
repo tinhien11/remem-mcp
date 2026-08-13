@@ -104,9 +104,25 @@ function insertError(
     resolvedAt?: string;
     severity?: string;
     attemptCount?: number;
-    fixTemplate?: { pattern: string; similar_fix_count: number; error_type: string; extracted_at: string };
-    errorCorrelations?: { next_error_type: string; next_error_title: string; count: number; first_seen: string; last_seen: string }[];
-    recoveryPattern?: { steps: string[]; attempt_count: number; error_type: string; extracted_at: string };
+    fixTemplate?: {
+      pattern: string;
+      similar_fix_count: number;
+      error_type: string;
+      extracted_at: string;
+    };
+    errorCorrelations?: {
+      next_error_type: string;
+      next_error_title: string;
+      count: number;
+      first_seen: string;
+      last_seen: string;
+    }[];
+    recoveryPattern?: {
+      steps: string[];
+      attempt_count: number;
+      error_type: string;
+      extracted_at: string;
+    };
     escalationLevel?: number;
     escalatedAt?: string;
     fixProvenance?: string;
@@ -149,8 +165,12 @@ function insertError(
     ...(opts.rollbackPlan ? { rollback_plan: opts.rollbackPlan } : {}),
   };
 
-  const content = opts.content ?? `Command failed: ${opts.command}\nError (${opts.errorType}): something went wrong`;
-  const hash = opts.contentHash ?? require("node:crypto").createHash("sha256").update(content).digest("hex").slice(0, 16);
+  const content =
+    opts.content ??
+    `Command failed: ${opts.command}\nError (${opts.errorType}): something went wrong`;
+  const hash =
+    opts.contentHash ??
+    require("node:crypto").createHash("sha256").update(content).digest("hex").slice(0, 16);
 
   db.prepare(
     "INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -678,7 +698,9 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     const Database = require("better-sqlite3");
     const db = new Database(dbPath, { readonly: true });
     const rows = db
-      .prepare("SELECT * FROM captures WHERE type = 'error' AND deleted_at IS NULL ORDER BY created_at")
+      .prepare(
+        "SELECT * FROM captures WHERE type = 'error' AND deleted_at IS NULL ORDER BY created_at",
+      )
       .all();
     db.close();
     return rows;
@@ -707,7 +729,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
 
     let errors = getErrors();
     expect(errors.length).toBe(1);
-    let meta1 = JSON.parse(errors[0].metadata);
+    const meta1 = JSON.parse(errors[0].metadata);
     expect(meta1.confidence).toBe(2);
 
     // Second failure (same command + same stderr within 1 hour = same content_hash = downvote)
@@ -716,7 +738,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     errors = getErrors();
     // Should still be 1 error (downvoted, not duplicated)
     expect(errors.length).toBe(1);
-    let meta2 = JSON.parse(errors[0].metadata);
+    const meta2 = JSON.parse(errors[0].metadata);
     expect(meta2.confidence).toBe(1); // 2 - 1 = 1
     expect(meta2.downvotes).toBe(1);
 
@@ -726,7 +748,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     // Error should be pruned (deleted_at set)
     const allErrors = getAllErrors();
     expect(allErrors.length).toBe(1);
-    let meta3 = JSON.parse(allErrors[0].metadata);
+    const meta3 = JSON.parse(allErrors[0].metadata);
     expect(meta3.confidence).toBe(0);
     expect(allErrors[0].deleted_at).not.toBeNull(); // Pruned!
 
@@ -792,7 +814,17 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     const hash = createHash("sha256").update(content).digest("hex").slice(0, 16);
     db.prepare(
       "INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    ).run("old-err", realSessionKey, "auto", "error", content, hash, "[]", oldDate, JSON.stringify(meta));
+    ).run(
+      "old-err",
+      realSessionKey,
+      "auto",
+      "error",
+      content,
+      hash,
+      "[]",
+      oldDate,
+      JSON.stringify(meta),
+    );
     db.close();
 
     // PreToolUse should NOT inject (31 days > 30-day window)
@@ -1021,11 +1053,22 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       anti_pattern: "error in deleted file",
       correct_approach: "fix it",
     };
-    const content = "Command failed: npm run lint\nError: src/deleted_file.ts: line 1, Error - something";
+    const content =
+      "Command failed: npm run lint\nError: src/deleted_file.ts: line 1, Error - something";
     const hash = createHash("sha256").update(content).digest("hex").slice(0, 16);
     db.prepare(
       "INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    ).run("stale-err", realSessionKey, "auto", "error", content, hash, "[]", new Date().toISOString(), JSON.stringify(meta));
+    ).run(
+      "stale-err",
+      realSessionKey,
+      "auto",
+      "error",
+      content,
+      hash,
+      "[]",
+      new Date().toISOString(),
+      JSON.stringify(meta),
+    );
     db.close();
 
     // src/deleted_file.ts does NOT exist in tmpDir → stale → should be filtered
@@ -1163,7 +1206,17 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     const hash = createHash("sha256").update(content).digest("hex").slice(0, 16);
     db.prepare(
       "INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    ).run("resolved-1", realSessionKey, "auto", "error", content, hash, "[]", new Date().toISOString().replace("T", " ").replace("Z", ""), JSON.stringify(meta));
+    ).run(
+      "resolved-1",
+      realSessionKey,
+      "auto",
+      "error",
+      content,
+      hash,
+      "[]",
+      new Date().toISOString().replace("T", " ").replace("Z", ""),
+      JSON.stringify(meta),
+    );
     db.close();
 
     const output = preToolUse("npm run lint");
@@ -1224,7 +1277,17 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     const hash = createHash("sha256").update(content).digest("hex").slice(0, 16);
     db.prepare(
       "INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    ).run("recurrent-1", otherSession, "auto", "error", content, hash, "[]", new Date().toISOString().replace("T", " ").replace("Z", ""), JSON.stringify(meta));
+    ).run(
+      "recurrent-1",
+      otherSession,
+      "auto",
+      "error",
+      content,
+      hash,
+      "[]",
+      new Date().toISOString().replace("T", " ").replace("Z", ""),
+      JSON.stringify(meta),
+    );
     db.close();
 
     // With global errors, the resolved error from another project should appear
@@ -1290,7 +1353,17 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       const hash = createHash("sha256").update(content).digest("hex").slice(0, 16);
       db.prepare(
         "INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      ).run(`xproj-${i}`, sk, "auto", "error", content, hash, "[]", new Date().toISOString().replace("T", " ").replace("Z", ""), JSON.stringify(meta));
+      ).run(
+        `xproj-${i}`,
+        sk,
+        "auto",
+        "error",
+        content,
+        hash,
+        "[]",
+        new Date().toISOString().replace("T", " ").replace("Z", ""),
+        JSON.stringify(meta),
+      );
     }
     db.close();
 
@@ -1412,9 +1485,10 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     // Insert an error created 20 days ago, but recurred 1 day ago
     // Decay should use last_recurred (1 day ago), not created_at (20 days ago)
     const createdDate = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000)
-      .toISOString().replace("T", " ").replace("Z", "");
-    const recurredDate = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000)
-      .toISOString();
+      .toISOString()
+      .replace("T", " ")
+      .replace("Z", "");
+    const recurredDate = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString();
     const meta = {
       command: "npm run lint",
       error_type: "lint",
@@ -1429,7 +1503,17 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     const hash = createHash("sha256").update(content).digest("hex").slice(0, 16);
     db.prepare(
       "INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    ).run("decay-1", realSessionKey, "auto", "error", content, hash, "[]", createdDate, JSON.stringify(meta));
+    ).run(
+      "decay-1",
+      realSessionKey,
+      "auto",
+      "error",
+      content,
+      hash,
+      "[]",
+      createdDate,
+      JSON.stringify(meta),
+    );
     db.close();
 
     // PreToolUse should inject this error
@@ -1483,7 +1567,17 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     const hash = createHash("sha256").update(content).digest("hex").slice(0, 16);
     db.prepare(
       "INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    ).run("single-1", otherSk, "auto", "error", content, hash, "[]", new Date().toISOString().replace("T", " ").replace("Z", ""), JSON.stringify(meta));
+    ).run(
+      "single-1",
+      otherSk,
+      "auto",
+      "error",
+      content,
+      hash,
+      "[]",
+      new Date().toISOString().replace("T", " ").replace("Z", ""),
+      JSON.stringify(meta),
+    );
     db.close();
 
     // Trigger a build error in the current project
@@ -1541,7 +1635,17 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     const hash = createHash("sha256").update(content).digest("hex").slice(0, 16);
     db.prepare(
       "INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    ).run("harmful-1", realSessionKey, "auto", "error", content, hash, "[]", new Date().toISOString().replace("T", " ").replace("Z", ""), JSON.stringify(meta));
+    ).run(
+      "harmful-1",
+      realSessionKey,
+      "auto",
+      "error",
+      content,
+      hash,
+      "[]",
+      new Date().toISOString().replace("T", " ").replace("Z", ""),
+      JSON.stringify(meta),
+    );
     db.close();
 
     // PreToolUse should NOT inject this harmful fix
@@ -1589,7 +1693,17 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     const hash = createHash("sha256").update(content).digest("hex").slice(0, 16);
     db.prepare(
       "INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    ).run("unvalidated-1", realSessionKey, "auto", "error", content, hash, "[]", new Date().toISOString().replace("T", " ").replace("Z", ""), JSON.stringify(meta));
+    ).run(
+      "unvalidated-1",
+      realSessionKey,
+      "auto",
+      "error",
+      content,
+      hash,
+      "[]",
+      new Date().toISOString().replace("T", " ").replace("Z", ""),
+      JSON.stringify(meta),
+    );
     db.close();
 
     // PreToolUse should NOT inject this unvalidated fix
@@ -1645,7 +1759,10 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     makeFullErrorDb(dbPath);
 
     // First failure: lint error on line 42
-    postToolUse("npm run lint", "src/index.ts: line 42, col 5, Error - unused variable 'foo' eslint");
+    postToolUse(
+      "npm run lint",
+      "src/index.ts: line 42, col 5, Error - unused variable 'foo' eslint",
+    );
 
     let errors = getErrors();
     expect(errors.length).toBe(1);
@@ -1653,7 +1770,10 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     // Second failure: SAME error but on line 87, different variable name
     // With semantic matching, this should be detected as a recurrence (downvoted)
     // not a new error
-    postToolUse("npm run lint", "src/index.ts: line 87, col 12, Error - unused variable 'bar' eslint");
+    postToolUse(
+      "npm run lint",
+      "src/index.ts: line 87, col 12, Error - unused variable 'bar' eslint",
+    );
 
     errors = getErrors();
     // Should still be 1 error (semantically the same — downvoted, not duplicated)

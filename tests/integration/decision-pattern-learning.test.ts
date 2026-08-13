@@ -233,9 +233,7 @@ describe("Moat 2: Decision Learning", () => {
     runHook("hook-post-tool-use", stdin, { TDAI_DB_PATH: dbPath });
 
     const db = require("better-sqlite3")(dbPath, { readonly: true });
-    const decisions = db
-      .prepare("SELECT type FROM captures WHERE type = 'decision'")
-      .all();
+    const decisions = db.prepare("SELECT type FROM captures WHERE type = 'decision'").all();
     db.close();
 
     expect(decisions.length).toBe(0);
@@ -359,14 +357,13 @@ describe("Moat 3: Pattern Learning", () => {
     expect(output).toContain("Adoption rate:");
   });
 
-  it(
-    "PATTERNS: PostToolUse auto-captures function pattern from Write",
-    () => {
+  it("PATTERNS: PostToolUse auto-captures function pattern from Write", () => {
     const stdin = JSON.stringify({
       tool_name: "Write",
       tool_input: {
         file_path: "src/utils.ts",
-        content: "export function formatDate(date: Date): string {\n  return date.toISOString();\n}",
+        content:
+          "export function formatDate(date: Date): string {\n  return date.toISOString();\n}",
       },
       cwd: tmpDir,
     });
@@ -383,9 +380,7 @@ describe("Moat 3: Pattern Learning", () => {
     expect(meta.title).toContain("formatDate");
     expect(meta.pattern_type).toBe("function");
     expect(meta.language).toBe("typescript");
-    },
-    15000,
-  );
+  }, 15000);
 
   it("PATTERNS: PostToolUse does NOT capture from non-code files", () => {
     const stdin = JSON.stringify({
@@ -399,9 +394,7 @@ describe("Moat 3: Pattern Learning", () => {
     runHook("hook-post-tool-use", stdin, { TDAI_DB_PATH: dbPath });
 
     const db = require("better-sqlite3")(dbPath, { readonly: true });
-    const patterns = db
-      .prepare("SELECT type FROM captures WHERE type = 'pattern'")
-      .all();
+    const patterns = db.prepare("SELECT type FROM captures WHERE type = 'pattern'").all();
     db.close();
 
     expect(patterns.length).toBe(0);
@@ -482,7 +475,9 @@ describe("Moat 2/3: Advanced Features", () => {
     // Check that the new decision has a conflict_warning
     const db2 = require("better-sqlite3")(dbPath);
     const dec = db2
-      .prepare("SELECT metadata FROM captures WHERE type = 'decision' AND json_extract(metadata, '$.choice') LIKE '%pg%'")
+      .prepare(
+        "SELECT metadata FROM captures WHERE type = 'decision' AND json_extract(metadata, '$.choice') LIKE '%pg%'",
+      )
       .get() as { metadata: string };
     db2.close();
 
@@ -505,7 +500,9 @@ describe("Moat 2/3: Advanced Features", () => {
       confidence: 1,
     });
     // Manually set conflict_warning
-    db.prepare("UPDATE captures SET metadata = json_set(metadata, '$.conflict_warning', 'CONFLICT: Previously chose sqlite but now choosing postgres.') WHERE id = 'dec-conflict-1'").run();
+    db.prepare(
+      "UPDATE captures SET metadata = json_set(metadata, '$.conflict_warning', 'CONFLICT: Previously chose sqlite but now choosing postgres.') WHERE id = 'dec-conflict-1'",
+    ).run();
     db.close();
 
     const output = runCli("decisions conflicts", { TDAI_DB_PATH: dbPath });
@@ -637,7 +634,9 @@ describe("Moat 2/3: Advanced Features", () => {
     // Check that the new pattern has a conflict_warning
     const db2 = require("better-sqlite3")(dbPath);
     const pat = db2
-      .prepare("SELECT metadata FROM captures WHERE type = 'pattern' AND json_extract(metadata, '$.file_path') = 'src/legacy.js'")
+      .prepare(
+        "SELECT metadata FROM captures WHERE type = 'pattern' AND json_extract(metadata, '$.file_path') = 'src/legacy.js'",
+      )
       .get() as { metadata: string };
     db2.close();
 
@@ -661,7 +660,9 @@ describe("Moat 2/3: Advanced Features", () => {
       filePath: "src/legacy.js",
       confidence: 1,
     });
-    db.prepare("UPDATE captures SET metadata = json_set(metadata, '$.conflict_warning', 'CONFLICT: src/server.js uses ESM import but src/legacy.js uses CommonJS require.') WHERE id = 'pat-conflict-1'").run();
+    db.prepare(
+      "UPDATE captures SET metadata = json_set(metadata, '$.conflict_warning', 'CONFLICT: src/server.js uses ESM import but src/legacy.js uses CommonJS require.') WHERE id = 'pat-conflict-1'",
+    ).run();
     db.close();
 
     const output = runCli("patterns conflicts", { TDAI_DB_PATH: dbPath });
@@ -683,7 +684,9 @@ describe("Moat 2/3: Advanced Features", () => {
       filePath: "src/validators.ts",
       confidence: 3,
     });
-    db.prepare("UPDATE captures SET metadata = json_set(metadata, '$.pattern_template', '{\"template\":\"validateInput data\",\"similar_pattern_count\":3,\"language\":\"typescript\",\"pattern_type\":\"function\"}') WHERE id = 'pat-tmpl-1'").run();
+    db.prepare(
+      'UPDATE captures SET metadata = json_set(metadata, \'$.pattern_template\', \'{"template":"validateInput data","similar_pattern_count":3,"language":"typescript","pattern_type":"function"}\') WHERE id = \'pat-tmpl-1\'',
+    ).run();
     db.close();
 
     const output = runCli("patterns templates", { TDAI_DB_PATH: dbPath });
@@ -723,24 +726,20 @@ describe("Moat 2/3: Advanced Features", () => {
   });
 
   // 10. Clean DB reports
-  it(
-    "ADVANCED: clean DB shows no conflicts/templates/inherited",
-    () => {
-      const conflictsOutput = runCli("decisions conflicts", { TDAI_DB_PATH: dbPath });
-      expect(conflictsOutput).toContain("No decision conflicts detected");
+  it("ADVANCED: clean DB shows no conflicts/templates/inherited", () => {
+    const conflictsOutput = runCli("decisions conflicts", { TDAI_DB_PATH: dbPath });
+    expect(conflictsOutput).toContain("No decision conflicts detected");
 
-      const inheritedOutput = runCli("decisions inherited", { TDAI_DB_PATH: dbPath });
-      expect(inheritedOutput).toContain("No cross-project decision inheritance");
+    const inheritedOutput = runCli("decisions inherited", { TDAI_DB_PATH: dbPath });
+    expect(inheritedOutput).toContain("No cross-project decision inheritance");
 
-      const patConflictsOutput = runCli("patterns conflicts", { TDAI_DB_PATH: dbPath });
-      expect(patConflictsOutput).toContain("No pattern conflicts detected");
+    const patConflictsOutput = runCli("patterns conflicts", { TDAI_DB_PATH: dbPath });
+    expect(patConflictsOutput).toContain("No pattern conflicts detected");
 
-      const patTemplatesOutput = runCli("patterns templates", { TDAI_DB_PATH: dbPath });
-      expect(patTemplatesOutput).toContain("No pattern templates extracted");
+    const patTemplatesOutput = runCli("patterns templates", { TDAI_DB_PATH: dbPath });
+    expect(patTemplatesOutput).toContain("No pattern templates extracted");
 
-      const patInheritedOutput = runCli("patterns inherited", { TDAI_DB_PATH: dbPath });
-      expect(patInheritedOutput).toContain("No cross-project pattern inheritance");
-    },
-    30000,
-  );
+    const patInheritedOutput = runCli("patterns inherited", { TDAI_DB_PATH: dbPath });
+    expect(patInheritedOutput).toContain("No cross-project pattern inheritance");
+  }, 30000);
 });

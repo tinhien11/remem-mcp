@@ -437,6 +437,15 @@ export class SQLiteBackend implements StorageBackend {
     return rows.map(rowToEntry);
   }
 
+  async listByTags(tags: string[], limit = 50): Promise<CaptureEntry[]> {
+    if (tags.length === 0) return [];
+    const tagConditions = tags.map(() => "tags LIKE ?").join(" OR ");
+    const sql = `SELECT * FROM captures WHERE (${tagConditions}) AND deleted_at IS NULL AND trust_state != 'rejected' ORDER BY created_at DESC LIMIT ?`;
+    const params = [...tags.map((t) => `%"${t}"%`), limit];
+    const rows = this.db.prepare(sql).all(...params) as DbRow[];
+    return rows.map(rowToEntry);
+  }
+
   async search(
     query: string,
     queryEmbedding: number[] | null,
@@ -514,6 +523,11 @@ export class SQLiteBackend implements StorageBackend {
         sql += " AND c.task_id = ?";
         params.push(filters.taskId);
       }
+      if (filters?.tags && filters.tags.length > 0) {
+        const tagConditions = filters.tags.map(() => "c.tags LIKE ?").join(" OR ");
+        sql += ` AND (${tagConditions})`;
+        params.push(...filters.tags.map((t) => `%"${t}"%`));
+      }
       if (filters?.dateFrom) {
         sql += " AND c.created_at >= ?";
         params.push(new Date(filters.dateFrom).getTime());
@@ -579,6 +593,11 @@ export class SQLiteBackend implements StorageBackend {
     if (filters?.taskId) {
       sql += " AND c.task_id = ?";
       params.push(filters.taskId);
+    }
+    if (filters?.tags && filters.tags.length > 0) {
+      const tagConditions = filters.tags.map(() => "c.tags LIKE ?").join(" OR ");
+      sql += ` AND (${tagConditions})`;
+      params.push(...filters.tags.map((t) => `%"${t}"%`));
     }
     if (filters?.dateFrom) {
       sql += " AND c.created_at >= ?";

@@ -439,3 +439,60 @@ describe("Integration: install-hooks", () => {
     expect(config.agent.model).toBe("test");
   });
 });
+
+describe("Integration: hook-pre-compact", () => {
+  let tmpDir: string;
+  let dbPath: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "tdai-precompact-test-"));
+    dbPath = join(tmpDir, "memory.db");
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("saves a compaction checkpoint to the DB", () => {
+    const stdin = JSON.stringify({
+      trigger: "auto",
+      session_id: "test-compact-session",
+    });
+
+    const output = runHook("hook-pre-compact", stdin, { TDAI_DB_PATH: dbPath });
+    const parsed = JSON.parse(output);
+
+    // Should return PreCompact hook output with recovery context
+    expect(parsed.hookSpecificOutput).toBeDefined();
+    expect(parsed.hookSpecificOutput.hookEventName).toBe("PreCompact");
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("[tdai-memory]");
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("compaction");
+
+    // Should have saved a checkpoint capture to the DB
+    const Database = require("better-sqlite3");
+    const db = new Database(dbPath, { readonly: true });
+    const rows = db.prepare("SELECT * FROM captures WHERE tags LIKE '%checkpoint%'").all();
+    db.close();
+
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    expect(rows[0].type).toBe("task");
+    expect(rows[0].content).toContain("compaction");
+    expect(rows[0].agent_id).toBe("tdai-memory-hook");
+  });
+
+  it("handles empty stdin gracefully", () => {
+    const output = runHook("hook-pre-compact", "", { TDAI_DB_PATH: dbPath });
+    const parsed = JSON.parse(output);
+
+    expect(parsed.hookSpecificOutput).toBeDefined();
+    expect(parsed.hookSpecificOutput.hookEventName).toBe("PreCompact");
+  });
+
+  it("handles invalid JSON without crashing", () => {
+    const output = runHook("hook-pre-compact", "not valid json", { TDAI_DB_PATH: dbPath });
+    const parsed = JSON.parse(output);
+
+    // Should return empty JSON (not crash)
+    expect(parsed).toBeDefined();
+  });
+});

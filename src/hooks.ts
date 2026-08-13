@@ -70,12 +70,26 @@ const HOOKS_CONFIG = {
   ],
   // PreCompact: save a session checkpoint before context compaction
   // destroys conversation details. Memory survives the compact.
+  // Supported by Claude Code and Devin CLI.
   PreCompact: [
     {
       hooks: [
         {
           type: "command",
           command: hookCommand("hook-pre-compact"),
+          timeout: 10,
+        },
+      ],
+    },
+  ],
+  // PostCompaction: re-inject memory after context compaction.
+  // Supported by Devin CLI and Codex CLI. Claude Code uses PreCompact only.
+  PostCompaction: [
+    {
+      hooks: [
+        {
+          type: "command",
+          command: hookCommand("hook-post-compaction"),
           timeout: 10,
         },
       ],
@@ -215,6 +229,35 @@ command = "${hookCommand("hook-recall")}"
 timeout = 10
 # <<< tdai-memory SessionStart <<<
 
+# >>> tdai-memory PreToolUse >>>
+[[hooks.PreToolUse]]
+matcher = "Bash|exec"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "${hookCommand("hook-pre-tool-use")}"
+timeout = 5
+# <<< tdai-memory PreToolUse <<<
+
+# >>> tdai-memory PostToolUse >>>
+[[hooks.PostToolUse]]
+matcher = "Bash|exec"
+
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = "${hookCommand("hook-post-tool-use")}"
+timeout = 5
+# <<< tdai-memory PostToolUse <<<
+
+# >>> tdai-memory PostCompaction >>>
+[[hooks.PostCompaction]]
+
+[[hooks.PostCompaction.hooks]]
+type = "command"
+command = "${hookCommand("hook-post-compaction")}"
+timeout = 10
+# <<< tdai-memory PostCompaction <<<
+
 # >>> tdai-memory Stop >>>
 [[hooks.Stop]]
 
@@ -223,6 +266,15 @@ type = "command"
 command = "${hookCommand("hook-stop")}"
 timeout = 5
 # <<< tdai-memory Stop <<<
+
+# >>> tdai-memory SessionEnd >>>
+[[hooks.SessionEnd]]
+
+[[hooks.SessionEnd.hooks]]
+type = "command"
+command = "${hookCommand("hook-session-end")}"
+timeout = 10
+# <<< tdai-memory SessionEnd <<<
 `;
 
   content = content.trimEnd() + "\n" + hooksToml;
@@ -254,7 +306,8 @@ export async function installHooks(): Promise<void> {
   console.log("  SessionStart → auto-recall recent memory into agent context");
   console.log("  PreToolUse   → inject past errors before lint/build/test commands");
   console.log("  PostToolUse  → auto-capture failed commands as error memories");
-  console.log("  PreCompact   → save checkpoint before context compaction (memory survives)");
+  console.log("  PreCompact     → save checkpoint before context compaction (Claude Code, Devin)");
+  console.log("  PostCompaction → re-inject memory after context compaction (Devin, Codex)");
   console.log("  Stop         → auto-capture session transcript + remind to save");
   console.log("  SessionEnd   → silently capture session summary to memory DB");
   console.log("\nRestart your agent for hooks to take effect.");
@@ -273,6 +326,7 @@ export async function uninstallHooks(): Promise<void> {
     "PreToolUse",
     "PostToolUse",
     "PreCompact",
+    "PostCompaction",
   ];
 
   // Remove from Devin CLI
@@ -326,6 +380,19 @@ export async function uninstallHooks(): Promise<void> {
       }
       writeJsonConfig(claudePath, config);
       console.log(`  Claude Code: Hooks removed from ${claudePath}`);
+      removed++;
+    }
+  }
+
+  // Remove from Codex CLI (TOML config)
+  const codexPath = join(homedir(), ".codex", "config.toml");
+  if (existsSync(codexPath)) {
+    let content = readFileSync(codexPath, "utf-8");
+    if (content.includes(">>> tdai-memory")) {
+      // Remove all tdai-memory TOML blocks (between >>> tdai-memory ... >>> and <<< tdai-memory ... <<<)
+      content = content.replace(/\n?# >>> tdai-memory[\s\S]*?# <<< tdai-memory[^<]*<<<\n?/g, "\n");
+      writeFileSync(codexPath, content.trimEnd() + "\n", "utf-8");
+      console.log(`  Codex CLI: Hooks removed from ${codexPath}`);
       removed++;
     }
   }

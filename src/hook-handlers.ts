@@ -3525,3 +3525,96 @@ Compaction trigger: ${trigger}`;
     }
   });
 }
+
+/**
+ * PostCompaction hook (Codex CLI).
+ * Codex fires PostCompaction AFTER compaction (not before like Claude Code's PreCompact).
+ * This handler recalls recent memory + any PreCompact checkpoint, re-injecting context
+ * that was lost during compaction.
+ *
+ * Input (Codex): { session_id, cwd, ... }
+ * Output: additionalContext with recalled memory.
+ */
+export function hookPostCompaction(dbPath: string): void {
+  const chunks: Buffer[] = [];
+  process.stdin.setEncoding("utf-8");
+  process.stdin.on("data", (chunk) => {
+    chunks.push(Buffer.from(chunk));
+  });
+
+  process.stdin.on("end", async () => {
+    try {
+      const raw = Buffer.concat(chunks).toString("utf-8");
+      const input = raw.trim() ? JSON.parse(raw) : {};
+      const sessionKey = input.session_id ?? input.cwd ?? process.cwd();
+
+      // Recall recent memory using the same logic as SessionStart
+      const { fileURLToPath } = await import("node:url");
+      const schemaPath = join(dirname(fileURLToPath(import.meta.url)), "storage", "schema.sql");
+      const db = new Database(dbPath, { readonly: true });
+
+      // Get recent captures (last 24h), prioritizing compaction checkpoints
+      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+      const rows = db
+        .prepare(
+          `SELECT id, type, content, tags, created_at FROM captures
+           WHERE deleted_at IS NULL AND trust_state != 'rejected'
+           AND created_at >= ?
+           ORDER BY
+             CASE WHEN tags LIKE '%checkpoint%' THEN 0 ELSE 1 END,
+             created_at DESC
+           LIMIT 15`,
+        )
+        .all(cutoff) as {
+        id: string;
+        type: string;
+        content: string;
+        tags: string | null;
+        created_at: number;
+      }[];
+
+      db.close();
+
+      if (rows.length === 0) {
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+
+      // Build recovery context
+      const lines: string[] = [
+        "[tdai-memory] Context compaction just happened.",
+        "Re-injecting recent memory so you don't lose context:",
+        "",
+      ];
+
+      for (const row of rows) {
+        const tags = row.tags ? JSON.parse(row.tags) : [];
+        const isCheckpoint = tags.includes("checkpoint");
+        const marker = isCheckpoint ? " [CHECKPOINT]" : "";
+        const preview = row.content.slice(0, 200).replace(/\n/g, " ");
+        lines.push(`- [${row.type}]${marker} ${preview}`);
+      }
+
+      lines.push("");
+      lines.push("Do NOT re-explain things you already told the user — check memory first.");
+
+      const context = lines.join("\n");
+
+      // Visible feedback
+      feedback("📦", `tdai-memory: re-injected ${rows.length} memories after compaction`);
+
+      const output = {
+        hookSpecificOutput: {
+          hookEventName: "PostCompaction",
+          additionalContext: context,
+        },
+      };
+
+      process.stdout.write(JSON.stringify(output));
+    } catch (err) {
+      process.stderr.write(`[tdai-memory hook-post-compaction] Error: ${err}\n`);
+      logToFile(`PostCompaction: error - ${err}`);
+      process.stdout.write(JSON.stringify({}));
+    }
+  });
+}
