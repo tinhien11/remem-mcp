@@ -98,20 +98,6 @@ Then run `npx tdai-memory-mcp install-hooks`.
 
 ---
 
-## Team memory (git-native)
-
-```bash
-npx tdai-memory-mcp sync-export    # Export to .tdai-memory/ in project root
-```
-
-Commit `.tdai-memory/memory-export.jsonl` to git. Your team gets the same error fixes, decisions, and patterns — no cloud, no sync conflicts, just `git pull`.
-
-```bash
-npx tdai-memory-mcp sync-import    # Import on startup (auto-runs)
-```
-
----
-
 ## How it works
 
 Two layers: **automatic** (runs via hooks, zero tool calls) and **on-demand** (you call when you need deeper context).
@@ -187,6 +173,8 @@ All settings have defaults. Config file is optional: `~/.config/tdai-memory-mcp/
 | Retro window (days) | `TDAI_RETRO_DAYS` | `7` |
 | Core-only mode (disable advanced tools) | `TDAI_CORE_ONLY` | _(unset, set to `1`)_ |
 | LLM API key (pipeline) | `TDAI_LLM_API_KEY` | _(unset)_ |
+
+**Team sharing** — `npx tdai-memory-mcp sync-export` writes `.tdai-memory/memory-export.jsonl`. Commit it to git. Team members get the same memory on `git pull` (auto-imports on startup).
 
 ---
 
