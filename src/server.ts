@@ -188,7 +188,8 @@ const TOOLS: Tool[] = [
         type: {
           type: "string",
           enum: ["conversation", "decision", "learning", "task", "error", "atom"],
-          description: "The type of the memory.",
+          default: "conversation",
+          description: "The type of the memory. Defaults to 'conversation' if omitted.",
         },
         tags: { type: "array", items: { type: "string" }, description: "Optional tags." },
         session_key: { type: "string", description: "The session key. The default is hash(cwd)." },
@@ -210,9 +211,15 @@ const TOOLS: Tool[] = [
           description:
             "Set this to true to force capture even if the content was previously rejected. Use this only when the rejection reason no longer applies.",
         },
+        format: {
+          type: "string",
+          enum: ["text", "json"],
+          default: "text",
+          description:
+            "The response format. Use 'json' for structured data (e.g. benchmarks). Defaults to 'text'.",
+        },
         ...TENANT_PARAMS,
       },
-      required: ["type"],
     },
   },
   {
@@ -251,6 +258,13 @@ const TOOLS: Tool[] = [
           },
         },
         limit: { type: "integer", default: 20, maximum: 100 },
+        format: {
+          type: "string",
+          enum: ["text", "json"],
+          default: "text",
+          description:
+            "The response format. Use 'json' for structured data (e.g. benchmarks). Defaults to 'text'.",
+        },
       },
       required: ["query"],
     },
@@ -361,6 +375,13 @@ const TOOLS: Tool[] = [
           type: "string",
           description:
             "The reason for rejection. Required when reject is true. The agent stores this with the tombstone.",
+        },
+        format: {
+          type: "string",
+          enum: ["text", "json"],
+          default: "text",
+          description:
+            "The response format. Use 'json' for structured data (e.g. benchmarks). Defaults to 'text'.",
         },
       },
     },
@@ -1167,7 +1188,7 @@ async function handleCapture(
   args: Record<string, unknown>,
   opts: ServerOptions,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
-  const type = args.type as CaptureType;
+  const type = (args.type as CaptureType) ?? "conversation";
   const tags = (args.tags as string[]) ?? [];
   const sessionKey = (args.session_key as string) ?? defaultSessionKey();
   const metadata = args.metadata as Record<string, unknown> | undefined;
@@ -1176,6 +1197,7 @@ async function handleCapture(
   const verified = (args.verified as boolean) ?? false;
   const supersedes = args.supersedes as string | undefined;
   const overrideRejection = (args.override_rejection as boolean) ?? false;
+  const format = (args.format as "text" | "json") ?? "text";
 
   // Build content from either 'content' or 'messages'
   let content: string;
@@ -1347,6 +1369,25 @@ async function handleCapture(
     redacted: wasRedacted,
   });
 
+  if (format === "json") {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            id,
+            content: redactedContent,
+            type,
+            tags,
+            created_at: new Date(entry.createdAt).toISOString(),
+            verified: trustState === "verified",
+            conflicts: conflictInfo ? conflictInfo.trim() : undefined,
+          }),
+        },
+      ],
+    };
+  }
+
   const redactionNote = wasRedacted ? " (secrets were redacted)" : "";
   const msgNote = messages ? ` (${messages.length} messages)` : "";
   const trustNote = trustState === "verified" ? " [verified]" : "";
@@ -1368,6 +1409,7 @@ async function handleSearch(
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
   const query = args.query as string;
   const mode = (args.mode as SearchMode) ?? "hybrid";
+  const format = (args.format as "text" | "json") ?? "text";
   const filters = args.filters as
     | {
         type?: CaptureType;
@@ -1411,6 +1453,26 @@ async function handleSearch(
         }
       : undefined,
   });
+
+  if (format === "json") {
+    const jsonResults = results.map((r) => ({
+      id: r.entry.id,
+      content: r.entry.content,
+      score: r.score,
+      type: r.entry.type,
+      tags: r.entry.tags,
+      created_at: new Date(r.entry.createdAt).toISOString(),
+    }));
+    const jsonText = JSON.stringify(jsonResults);
+    opts.audit.log({
+      tool: "search",
+      argsHash: AuditLogger.hashArgs({ query, mode, filters }),
+      resultLen: jsonText.length,
+      quotaHit: false,
+      redacted: false,
+    });
+    return { content: [{ type: "text", text: jsonText }] };
+  }
 
   let text = formatResults(results);
   if (vectorDegraded) {
@@ -1790,9 +1852,11 @@ async function handleForget(
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
   const id = args.id as string | undefined;
   const filter = args.filter as DeleteFilter | undefined;
-  const confirm = (args.confirm as boolean) ?? false;
+  // When id is provided, default confirm to true (for MCP adapter compatibility)
+  const confirm = (args.confirm as boolean) ?? (id ? true : false);
   const reject = (args.reject as boolean) ?? false;
   const reason = args.reason as string | undefined;
+  const format = (args.format as "text" | "json") ?? "text";
 
   if (!confirm) {
     return {
@@ -1859,6 +1923,23 @@ async function handleForget(
   });
 
   const action = reject ? "Rejected" : "Deleted";
+  if (format === "json") {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            deleted: true,
+            id: id ?? null,
+            action: action.toLowerCase(),
+            captures: result.captures,
+            atoms: result.atoms,
+            scenarios: result.scenarios,
+          }),
+        },
+      ],
+    };
+  }
   return {
     content: [
       {
