@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -129,6 +129,143 @@ function parseFlags(argv: string[]): Record<string, string> {
   return flags;
 }
 
+// ─── Bootstrap detection helpers ──────────────────────────────
+
+/** Detect package manager from lockfiles in cwd. */
+function detectPackageManager(): string | null {
+  const cwd = process.cwd();
+  if (existsSync(join(cwd, "pnpm-lock.yaml"))) return "pnpm";
+  if (existsSync(join(cwd, "bun.lockb")) || existsSync(join(cwd, "bun.lock"))) return "bun";
+  if (existsSync(join(cwd, "yarn.lock"))) return "yarn";
+  if (existsSync(join(cwd, "package-lock.json"))) return "npm";
+  if (existsSync(join(cwd, "Cargo.toml"))) return "cargo";
+  if (existsSync(join(cwd, "go.mod"))) return "go";
+  if (existsSync(join(cwd, "pom.xml")) || existsSync(join(cwd, "build.gradle"))) return "maven";
+  if (existsSync(join(cwd, "build.gradle.kts"))) return "gradle";
+  if (existsSync(join(cwd, "Gemfile"))) return "bundle";
+  if (existsSync(join(cwd, "requirements.txt")) || existsSync(join(cwd, "pyproject.toml")))
+    return "pip";
+  return null;
+}
+
+/** Detect key scripts from package.json (limited to important ones). */
+function detectPackageScripts(): Record<string, string> {
+  const cwd = process.cwd();
+  const pkgPath = join(cwd, "package.json");
+  if (!existsSync(pkgPath)) return {};
+  try {
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+    const scripts = pkg.scripts ?? {};
+    const important: Record<string, string> = {};
+    for (const key of ["build", "test", "lint", "format", "dev", "start", "typecheck", "check"]) {
+      if (scripts[key]) important[key] = scripts[key];
+    }
+    return important;
+  } catch {
+    return {};
+  }
+}
+
+/** Detect framework from dependencies. */
+function detectFramework(): string | null {
+  const cwd = process.cwd();
+  const pkgPath = join(cwd, "package.json");
+  if (!existsSync(pkgPath)) {
+    // Non-JS frameworks
+    if (existsSync(join(cwd, "Cargo.toml"))) return "Rust";
+    if (existsSync(join(cwd, "go.mod"))) return "Go";
+    return null;
+  }
+  try {
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+    const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
+    if (deps["next"]) return "Next.js";
+    if (deps["react-scripts"]) return "Create React App";
+    if (deps["react"] && deps["vite"]) return "React + Vite";
+    if (deps["react"]) return "React";
+    if (deps["vue"]) return "Vue";
+    if (deps["svelte"] || deps["@sveltejs/kit"]) return "Svelte";
+    if (deps["astro"]) return "Astro";
+    if (deps["nuxt"]) return "Nuxt";
+    if (deps["@angular/core"]) return "Angular";
+    if (deps["express"]) return "Express";
+    if (deps["hono"]) return "Hono";
+    if (deps["fastify"]) return "Fastify";
+    if (deps["nestjs"] || deps["@nestjs/core"]) return "NestJS";
+    if (deps["h3"]) return "h3";
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Detect lint/format tool from dependencies or config files. */
+function detectLintTool(): string | null {
+  const cwd = process.cwd();
+  const pkgPath = join(cwd, "package.json");
+  if (existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+      const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
+      if (deps["biome"]) return "Biome";
+      if (deps["eslint"]) return "ESLint";
+      if (deps["dprint"]) return "dprint";
+      if (deps["prettier"]) return "Prettier";
+      if (deps["@biomejs/biome"]) return "Biome";
+    } catch {
+      // fall through
+    }
+  }
+  if (existsSync(join(cwd, "biome.json")) || existsSync(join(cwd, "biome.jsonc"))) return "Biome";
+  if (
+    existsSync(join(cwd, ".eslintrc")) ||
+    existsSync(join(cwd, ".eslintrc.js")) ||
+    existsSync(join(cwd, ".eslintrc.json")) ||
+    existsSync(join(cwd, "eslint.config.js")) ||
+    existsSync(join(cwd, "eslint.config.mjs"))
+  )
+    return "ESLint";
+  if (existsSync(join(cwd, ".prettierrc")) || existsSync(join(cwd, ".prettierrc.json")))
+    return "Prettier";
+  if (existsSync(join(cwd, "rustfmt.toml"))) return "rustfmt";
+  if (existsSync(join(cwd, ".gofmt"))) return "gofmt";
+  return null;
+}
+
+/** Detect test command. */
+function detectTestCommand(pkgManager: string | null): string | null {
+  const cwd = process.cwd();
+  const pm = pkgManager ?? "npm";
+
+  // JS: check package.json scripts
+  const pkgPath = join(cwd, "package.json");
+  if (existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+      const scripts = pkg.scripts ?? {};
+      if (scripts.test && scripts.test !== 'echo "Error: no test specified" && exit 1') {
+        return `${pm} run test`;
+      }
+      if (scripts.vitest) return `${pm} run vitest`;
+      if (scripts.jest) return `${pm} run jest`;
+      // vitest/jest in deps but no script
+      const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
+      if (deps["vitest"]) return `${pm} exec vitest run`;
+      if (deps["jest"]) return `${pm} exec jest`;
+    } catch {
+      // fall through
+    }
+  }
+
+  // Other ecosystems
+  if (existsSync(join(cwd, "Cargo.toml"))) return "cargo test";
+  if (existsSync(join(cwd, "go.mod"))) return "go test ./...";
+  if (existsSync(join(cwd, "pytest.ini")) || existsSync(join(cwd, "pyproject.toml")))
+    return "pytest";
+  if (existsSync(join(cwd, "Gemfile"))) return "bundle exec rspec";
+  return null;
+}
+
 async function main(): Promise<void> {
   const arg = process.argv[2];
   if (arg === "install-skill") {
@@ -141,27 +278,98 @@ async function main(): Promise<void> {
   }
   if (arg === "setup") {
     console.log("tdai-memory-mcp setup\n");
-    console.log("This will register the MCP server, install hooks, and run a test capture.\n");
+    console.log("This will register the MCP server, install hooks, and capture project basics.\n");
     await installMcpServer();
     console.log("");
     await installHooks();
-    console.log("\nTest capture...");
+    console.log("\nCapturing project basics...");
     const { Memory } = await import("./sdk.js");
     const mem = new Memory();
-    const id = await mem.capture(
-      "tdai-memory-mcp setup completed. This is a test capture.",
-      "task",
-      ["setup", "test"],
-    );
-    if (id) {
-      console.log(`Test capture saved: ${id}`);
-    } else {
-      console.log("Test capture already exists (duplicate).");
+    const sessionKey = process.cwd();
+    let captured = 0;
+
+    // Detect package manager
+    const pkgManager = detectPackageManager();
+    if (pkgManager) {
+      const id = await mem.capture(
+        `This project uses ${pkgManager}. Use ${pkgManager} for all package operations (install, run, etc.).`,
+        "decision",
+        ["bootstrap", "package-manager", pkgManager],
+        { sessionKey },
+      );
+      if (id) captured++;
     }
+
+    // Detect scripts from package.json
+    const scripts = detectPackageScripts();
+    for (const [name, cmd] of Object.entries(scripts)) {
+      const id = await mem.capture(
+        `Project script: \`${pkgManager ? pkgManager + " run " : "npm run "}${name}\` runs: ${cmd}`,
+        "decision",
+        ["bootstrap", "script", name],
+        { sessionKey },
+      );
+      if (id) captured++;
+    }
+
+    // Detect framework
+    const framework = detectFramework();
+    if (framework) {
+      const id = await mem.capture(
+        `This project uses ${framework}. Follow ${framework} conventions and patterns.`,
+        "decision",
+        ["bootstrap", "framework", framework.toLowerCase()],
+        { sessionKey },
+      );
+      if (id) captured++;
+    }
+
+    // Detect lint/format tool
+    const lintTool = detectLintTool();
+    if (lintTool) {
+      const id = await mem.capture(
+        `This project uses ${lintTool} for linting/formatting. Run it before committing.`,
+        "decision",
+        ["bootstrap", "lint", lintTool.toLowerCase()],
+        { sessionKey },
+      );
+      if (id) captured++;
+    }
+
+    // Test command
+    const testCmd = detectTestCommand(pkgManager);
+    if (testCmd) {
+      const id = await mem.capture(
+        `Run tests with: \`${testCmd}\``,
+        "decision",
+        ["bootstrap", "test"],
+        { sessionKey },
+      );
+      if (id) captured++;
+    }
+
+    if (captured > 0) {
+      console.log(
+        `  Captured ${captured} project basics (package manager, scripts, framework, lint, test).`,
+      );
+      console.log("  These will be injected into your next agent session automatically.");
+    } else {
+      console.log(
+        "  No project files detected (package.json, Cargo.toml, etc.). Skipping bootstrap.",
+      );
+      // Fallback to test capture
+      const id = await mem.capture(
+        "tdai-memory-mcp setup completed. This is a test capture.",
+        "task",
+        ["setup", "test"],
+      );
+      if (id) console.log(`Test capture saved: ${id}`);
+    }
+
     console.log("\n✓ Setup complete.");
     console.log("\nNext steps:");
     console.log("  1. Restart your agent (close and reopen the session)");
-    console.log("  2. On restart, SessionStart hook loads recent memory automatically");
+    console.log("  2. On restart, SessionStart hook loads project basics automatically");
     console.log("  3. Run `npx tdai-memory-mcp status` anytime to see your memory");
     console.log("\nOptional: `npx tdai-memory-mcp install-skill` teaches your agent");
     console.log("when to recall/capture mid-session (adds ~4K tokens to context).");

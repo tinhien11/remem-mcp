@@ -5,6 +5,18 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 
+/** Whether to show visible feedback on stderr when memory is injected.
+ * Set TDAI_QUIET=1 to suppress. Default: show feedback. */
+const SHOW_FEEDBACK = process.env.TDAI_QUIET !== "1";
+
+/** Print a short visible feedback line to stderr so the user can see
+ *  that memory was injected. Does NOT interfere with stdout JSON. */
+function feedback(emoji: string, message: string): void {
+  if (SHOW_FEEDBACK) {
+    process.stderr.write(`\n  ${emoji} ${message}\n\n`);
+  }
+}
+
 /**
  * Hook handler for SessionStart event.
  * Reads JSON from stdin (Devin CLI hook payload), queries the memory DB
@@ -507,6 +519,14 @@ export function hookRecall(dbPath: string): void {
       // Append the summary to the log file so the user can inspect it
       // without the output interfering with the terminal prompt.
       logToFile(`SessionStart: loaded ${rows.length} capture(s)\n${context}`);
+
+      // Visible feedback so user sees memory was loaded
+      const errorCount = rows.filter((r: any) => r.type === "error").length;
+      const otherCount = rows.length - errorCount;
+      const parts: string[] = [];
+      if (errorCount > 0) parts.push(`${errorCount} past error(s)`);
+      if (otherCount > 0) parts.push(`${otherCount} memorie(s)`);
+      feedback("💡", `tdai-memory: loaded ${parts.join(" + ")} from previous sessions`);
 
       // Output hook JSON with additionalContext
       const output = {
@@ -1482,6 +1502,9 @@ ${patternAlert ? `\n⚠️ CROSS-PROJECT PATTERN: ${patternAlert}` : ""}
 
 Before retrying, reflect on WHY this failed and what you should do differently. Call capture() with type="learning" to save your reflection.`;
 
+      // Visible feedback
+      feedback("📸", `tdai-memory: captured ${errorType} error — will inject fix next time`);
+
       const output = {
         hookSpecificOutput: {
           hookEventName: "PostToolUse",
@@ -2243,6 +2266,13 @@ export function hookPreToolUse(dbPath: string): void {
       const k = decayed.length;
       logToFile(
         `PreToolUse: injected ${k} past error(s) (k=${k}, decayed confidence, ${resolvedFixes.length} fixes) before: ${command.slice(0, 60)}`,
+      );
+
+      // Visible feedback
+      const fixCount = resolvedFixes.length;
+      feedback(
+        "🛡️",
+        `tdai-memory: injected ${k} past error(s)${fixCount > 0 ? ` + ${fixCount} proven fix(es)` : ""} before: ${command.slice(0, 50)}`,
       );
 
       // [Drift Detection] Log each injected error so PostToolUse can detect

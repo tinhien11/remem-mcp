@@ -5,7 +5,7 @@
 
 > Your coding agent stops repeating the same mistakes.
 
-Local memory that learns from every error — and syncs to your git repo so your whole team shares it.
+Local memory that survives context compaction — learns from every error, injects fixes before the next attempt, and syncs to your git repo so your whole team shares it.
 
 <video src="https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/demo-learning-loop.mp4" controls muted width="100%"></video>
 
@@ -35,7 +35,9 @@ The demo creates a real TypeScript project, runs real `npm run build`, captures 
 
 | | tdai-memory-mcp | Mem0 | Claude MEMORY.md |
 |---|---|---|---|
+| **Survives compaction** | Yes — memory is external SQLite, re-injected every session | Yes — cloud store | No — 200-line cap, silent truncation |
 | **Learns from errors** | Yes — auto-captures, injects fixes | No | No |
+| **Semantic search** | Hybrid BM25 + sqlite-vec | Vector only | No — LLM filename picker, max 5 files |
 | **Setup** | 1 command | API key + cloud | Built-in |
 | **Data location** | Local SQLite | Cloud | Local markdown |
 | **Team sharing** | Git-native (commit, diff, merge) | Cloud sync | Copy-paste |
@@ -100,13 +102,15 @@ Then run `npx tdai-memory-mcp install-hooks`.
 
 ## How it works
 
+Memory lives in a local SQLite database — outside the agent's context window. When the agent compacts or starts a new session, memory is re-injected automatically. No more re-explaining what you already told it yesterday.
+
 Two layers: **automatic** (runs via hooks, zero tool calls) and **on-demand** (you call when you need deeper context).
 
 ### Automatic — three learning loops
 
 All three run via lifecycle hooks. The agent doesn't need to call any tool.
 
-1. **Error learning** — command fails → capture → inject fix next time → succeed → upvote.
+1. **Error learning** — command fails → capture → inject fix before next attempt → succeed → upvote.
 
 2. **Decision learning** — `npm install`, `git commit`, config → auto-capture → inject past decisions before similar commands.
 
@@ -170,6 +174,7 @@ All settings have defaults. Config file is optional: `~/.config/tdai-memory-mcp/
 | DB path | `TDAI_DB_PATH` | `~/.local/share/tdai-memory-mcp/memory.db` |
 | Cross-project memory | `TDAI_GLOBAL_SESSION_KEY` | _(unset)_ |
 | Cross-project errors | `TDAI_GLOBAL_ERRORS` | _(unset, set to `1`)_ |
+| Suppress hook feedback | `TDAI_QUIET` | _(unset, set to `1`)_ |
 | Retro window (days) | `TDAI_RETRO_DAYS` | `7` |
 | Core-only mode (disable advanced tools) | `TDAI_CORE_ONLY` | _(unset, set to `1`)_ |
 | LLM API key (pipeline) | `TDAI_LLM_API_KEY` | _(unset)_ |
