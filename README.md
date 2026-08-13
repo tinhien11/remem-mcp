@@ -114,23 +114,21 @@ npx tdai-memory-mcp sync-import    # Import on startup (auto-runs)
 
 ## How it works
 
-Three learning loops, all automatic:
+Two layers: **automatic** (runs via hooks, zero tool calls) and **on-demand** (you call when you need deeper context).
 
-1. **Error learning** — command fails → capture → inject fix next time → succeed → upvote. 41 features: severity, escalation, lineage, drift detection, cross-project inheritance, confidence decay.
-
-2. **Decision learning** — `npm install`, `git commit`, config → auto-capture → inject past decisions before similar commands. Tracks follow rate, drift, conflicts.
-
-3. **Pattern learning** — Write/Edit → auto-capture code patterns → inject same-language patterns before editing. Tracks adoption, drift, template extraction.
+### Automatic — three learning loops
 
 All three run via lifecycle hooks. The agent doesn't need to call any tool.
 
----
+1. **Error learning** — command fails → capture → inject fix next time → succeed → upvote.
 
-## Advanced tools
+2. **Decision learning** — `npm install`, `git commit`, config → auto-capture → inject past decisions before similar commands.
 
-![CodeGraph demo](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/demo-codegraph.gif)
+3. **Pattern learning** — Write/Edit → auto-capture code patterns → inject same-language patterns before editing.
 
-![CodeGraph viewer](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/viewer-demo.gif)
+### On-demand — CodeGraph, Wiki, Search
+
+When the automatic loops aren't enough, use these for deeper code navigation.
 
 ```bash
 # 1. Index your codebase (one-time, rerun after major changes)
@@ -155,9 +153,11 @@ npx tdai-memory-mcp wiki outdated                 # Find outdated wiki pages
 npx tdai-memory-mcp viewer                        # Web UI at localhost:7331
 ```
 
-- **CodeGraph** — symbol search, callers/callees, impact analysis. `codegraph_search`, `codegraph_callers`, `codegraph_impact`, etc. Auto-scoped to your project — no cross-project contamination.
-- **Wiki** — markdown docs, ADRs, outdated detection. `wiki_search`, `wiki_outdated`, etc.
+- **CodeGraph** — symbol search, callers/callees, impact analysis. Auto-scoped to your project — no cross-project contamination.
+- **Wiki** — markdown docs, ADRs, outdated detection.
 - **Search** — hybrid BM25 + sqlite-vec vector search with RRF fusion. `explain_recall` shows scores.
+
+![CodeGraph demo](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/demo-codegraph.gif)
 
 ---
 
