@@ -456,14 +456,21 @@ export class SQLiteBackend implements StorageBackend {
     let bm25Results: RankedResult[] = [];
     let vecResults: RankedResult[] = [];
 
+    // In hybrid mode, use different candidate pool sizes for each channel:
+    // - BM25: tight pool (limit*2) for high precision — only best keyword matches
+    // - Vector: broad pool (limit*5, cap 200) for high recall — semantic matches
+    // This prevents OR-semantics BM25 noise from drowning out vector results at scale.
+    const bm25CandidateLimit = mode === "hybrid" ? limit * 2 : limit * 2;
+    const vecCandidateLimit = mode === "hybrid" ? Math.min(Math.max(limit * 5, 50), 200) : limit * 2;
+
     // BM25 search (FTS5)
     if (mode === "hybrid" || mode === "keyword") {
-      bm25Results = this.bm25Search(query, limit * 2, sessionKey, filters);
+      bm25Results = this.bm25Search(query, bm25CandidateLimit, sessionKey, filters);
     }
 
     // Vector search (sqlite-vec)
     if ((mode === "hybrid" || mode === "vector") && queryEmbedding) {
-      vecResults = this.vectorSearch(queryEmbedding, limit * 2, sessionKey, filters);
+      vecResults = this.vectorSearch(queryEmbedding, vecCandidateLimit, sessionKey, filters);
     }
 
     if (mode === "keyword") {
@@ -657,13 +664,25 @@ export class SQLiteBackend implements StorageBackend {
         // so a lower boost makes the score more negative (ranks lower). For positive scores
         // (RRF fusion), multiply so a lower boost makes the score lower.
         const finalScore = decayed >= 0 ? decayed * trustBoost : decayed / trustBoost;
-        return { entry: rowToEntry(row), score: finalScore };
+        // Recency tiebreaker: add a small boost proportional to how recent the memory is.
+        // This helps temporal reasoning queries where the latest fact should win,
+        // even when scores are very close (memories stored seconds apart).
+        const recencyBias = 1 / (1 + ageMs / 60000); // 1.0 for new, ~0.0 for 1hr old
+        const biasedScore = finalScore >= 0
+          ? finalScore * (1 + recencyBias * 0.01)
+          : finalScore / (1 + recencyBias * 0.01);
+        return { entry: rowToEntry(row), score: biasedScore };
       })
       .filter((r): r is SearchResult => r !== null)
       .sort((a, b) => b.score - a.score);
   }
 
-  /** Escape a query string for FTS5 MATCH. */
+  /** Escape a query string for FTS5 MATCH.
+   *  Uses AND semantics (all tokens must match) for high precision.
+   *  At scale (1K+ memories), OR semantics introduces too much BM25 noise
+   *  that drowns out vector search results in RRF fusion.
+   *  Semantic recall is handled by the vector search channel instead.
+   */
   private escapeFtsQuery(query: string): string {
     const tokens = query.trim().split(/\s+/).filter(Boolean);
     if (tokens.length === 0) return "";

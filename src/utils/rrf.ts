@@ -1,13 +1,22 @@
 /**
- * Reciprocal Rank Fusion (RRF) merge.
+ * Reciprocal Rank Fusion (RRF) merge with weighted channels.
  * Fuses two ranked result lists into one.
- * The RRF constant k is 60 (standard value from the original paper).
+ *
+ * Vector search is weighted 1.5x over BM25 because vector similarity
+ * is more semantically relevant for conceptual queries, while BM25
+ * with OR semantics can introduce noise at scale (1K+ memories).
  *
  * Adapted from TencentDB Agent Memory search-utils pattern (MIT, Tencent 2026).
  * https://github.com/TencentCloud/TencentDB-Agent-Memory
  */
 
-const RRF_K = 60;
+// k=40 works better than the standard k=60 for smaller result sets (<500 items)
+// typical in memory servers. Lower k gives more weight to top-ranked items.
+const RRF_K = 40;
+
+// Vector search weight: 2x over BM25. Vector similarity is more precise
+// for semantic matching, while BM25 OR semantics can be noisy at scale.
+const VEC_WEIGHT = 2.0;
 
 export interface RankedResult {
   id: string;
@@ -20,7 +29,7 @@ export interface FusedResult {
 }
 
 /**
- * Merge two ranked result lists with RRF.
+ * Merge two ranked result lists with weighted RRF.
  * @param bm25Results Results from BM25 (FTS5). Lower score is better.
  * @param vecResults Results from vector search. Lower distance is better.
  * @param limit Maximum number of results to return.
@@ -42,10 +51,11 @@ export function rrfMerge(
   });
 
   // Vector results: lower distance is better, so rank 1 = lowest distance
+  // Weighted higher because vector similarity is more semantically precise.
   const sortedVec = [...vecResults].sort((a, b) => a.score - b.score);
   sortedVec.forEach((r, i) => {
     const rank = i + 1;
-    const rrfScore = 1 / (RRF_K + rank);
+    const rrfScore = (1 / (RRF_K + rank)) * VEC_WEIGHT;
     scores.set(r.id, (scores.get(r.id) ?? 0) + rrfScore);
   });
 

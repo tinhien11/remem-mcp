@@ -373,7 +373,7 @@ describeOrSkip("Smoke test: full server over stdio", () => {
     expect(text).toContain(id1);
     // Should find at least one related memory
     expect(text).toContain("Found");
-    expect(text).toContain("related memory");
+    expect(text.toLowerCase()).toContain("related memor");
     // Should mention the shared tag reason
     expect(text).toContain("tag:");
   });

@@ -26,8 +26,8 @@ const SECRET_PATTERNS: RegExp[] = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
   // Google API key
   /AIza[0-9A-Za-z\-_]{35}/g,
-  // Generic bearer token
-  /Bearer\s+[a-zA-Z0-9\-._~+/]+=*/g,
+  // Generic bearer token (require 20+ char token to avoid redacting "Bearer with JWT")
+  /Bearer\s+[a-zA-Z0-9\-._~+/]{20,}=*/g,
 ];
 
 /** Minimum length for high-entropy detection. */
