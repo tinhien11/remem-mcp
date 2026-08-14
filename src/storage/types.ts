@@ -199,11 +199,14 @@ export interface StorageBackend {
   /** Find captures by tag (bypasses FTS5, direct SQL on tags column). */
   listByTags(tags: string[], limit?: number): Promise<CaptureEntry[]>;
 
-  /** Find captures with content hash matching the given content. Used for dedup. */
-  findByContentHash(contentHash: string, sessionKey?: string): Promise<CaptureEntry[]>;
+  /** Find captures with content hash matching the given content. Used for dedup.
+   *  When agentId is provided, dedup is scoped to that agent — the same content
+   *  captured by a different agent is not treated as a duplicate. */
+  findByContentHash(contentHash: string, sessionKey?: string, agentId?: string): Promise<CaptureEntry[]>;
 
-  /** Find rejected tombstones by content hash. Used to block re-extraction of rejected values. */
-  findRejectedByContentHash(contentHash: string, sessionKey?: string): Promise<CaptureEntry[]>;
+  /** Find rejected tombstones by content hash. Used to block re-extraction of rejected values.
+   *  When agentId is provided, the tombstone is scoped to that agent. */
+  findRejectedByContentHash(contentHash: string, sessionKey?: string, agentId?: string): Promise<CaptureEntry[]>;
 
   /** Delete a capture by ID. Also deletes children (atoms, scenarios, messages). */
   delete(id: string): Promise<DeleteResult>;

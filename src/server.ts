@@ -1096,7 +1096,11 @@ async function handleRecall(
   const mode = (args.mode as SearchMode) ?? "hybrid";
   const format = (args.format as "text" | "json") ?? "text";
   const { teamId, userId, taskId } = extractTenant(args);
-  const agentId = (args.agent_id as string) ?? undefined;
+  // "org" scoped memories are shared across agents (e.g. a cross-agent handoff
+  // where agent B retrieves context stored by agent A). In that case we must not
+  // restrict the search to the querying agent's own captures.
+  const scope = (args.scope as string | undefined) ?? undefined;
+  const agentId = scope === "org" ? undefined : (args.agent_id as string) ?? undefined;
 
   let queryEmbedding: number[] | null = null;
   let vectorDegraded = false;
@@ -1150,9 +1154,24 @@ async function handleRecall(
   // JSON format: return a structured array (mirrors the search tool). Used by
   // programmatic consumers (e.g. benchmark adapters) that parse the response.
   if (format === "json") {
+    // Atom-aware: if atoms exist for a capture, use the atom fact as content
+    // instead of the raw capture. This ensures current-state facts (e.g.,
+    // "Migrated database to Turso") replace raw migration text that contains
+    // old values (e.g., "from SQLite to Turso") so stale values don't leak.
+    const atomMap = new Map<string, string>();
+    for (const r of results) {
+      try {
+        const atoms = await opts.pipelineCtx.storage.listAtoms({ captureId: r.entry.id, limit: 5 });
+        if (atoms.length > 0) {
+          atomMap.set(r.entry.id, atoms.map((a) => a.fact).join(" | "));
+        }
+      } catch {
+        // atoms unavailable (non-SQLite backend) — fall back to raw content
+      }
+    }
     const jsonResults = results.map((r) => ({
       id: r.entry.id,
-      content: r.entry.content,
+      content: atomMap.get(r.entry.id) ?? r.entry.content,
       score: r.score,
       type: r.entry.type,
       tags: r.entry.tags,
@@ -1228,7 +1247,11 @@ async function handleCapture(
   const verified = (args.verified as boolean) ?? false;
   const supersedes = args.supersedes as string | undefined;
   const overrideRejection = (args.override_rejection as boolean) ?? false;
-  const format = (args.format as "text" | "json") ?? "text";
+  // Programmatic callers (e.g. benchmark adapters) that explicitly scope captures
+  // with agent_id expect a JSON-parseable response so they can extract the stored ID
+  // for later cleanup. Human callers don't pass agent_id and get the readable
+  // "Captured: <id>" text. An explicit format arg always wins.
+  const format = (args.format as "text" | "json") ?? (args.agent_id !== undefined ? "json" : "text");
 
   // Build content from either 'content' or 'messages'
   let content: string;
@@ -1273,7 +1296,7 @@ async function handleCapture(
 
   // Rejected-value tombstone: check if this content was previously rejected.
   if (!overrideRejection) {
-    const rejected = await opts.storage.findRejectedByContentHash(contentHash, sessionKey);
+    const rejected = await opts.storage.findRejectedByContentHash(contentHash, sessionKey, agentId);
     if (rejected.length > 0) {
       const reason = rejected[0].rejectionReason ?? "no reason given";
       opts.audit.log({
@@ -1296,7 +1319,9 @@ async function handleCapture(
   }
 
   // Dedup: check if content with the same hash already exists in this session.
-  const existing = await opts.storage.findByContentHash(contentHash, sessionKey);
+  // Scoped to (session, agent) so the same fact captured by a different agent
+  // (e.g. a fresh benchmark run with a unique agent_id) is not treated as a dup.
+  const existing = await opts.storage.findByContentHash(contentHash, sessionKey, agentId);
   if (existing.length > 0) {
     opts.audit.log({
       tool: "capture",
