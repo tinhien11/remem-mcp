@@ -66,7 +66,7 @@ describe("Integration: knowledge management", () => {
   let server: Server;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-knowledge-test-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-knowledge-test-"));
     dbPath = join(tmpDir, "memory.db");
     auditPath = join(tmpDir, "audit.jsonl");
 
@@ -215,7 +215,7 @@ describe("Integration: skill management", () => {
   let server: Server;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-skills-test-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-skills-test-"));
     dbPath = join(tmpDir, "memory.db");
     auditPath = join(tmpDir, "audit.jsonl");
 

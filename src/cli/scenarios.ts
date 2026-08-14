@@ -4,7 +4,7 @@ import { SQLiteBackend } from "../storage/sqlite.js";
  * scenarios CLI command: list L2 scenarios.
  *
  * Usage:
- *   tdai-memory-mcp scenarios [--team-id <id>] [--agent-id <id>] [--user-id <id>] [--limit <n>]
+ *   remem-mcp scenarios [--team-id <id>] [--agent-id <id>] [--user-id <id>] [--limit <n>]
  */
 export async function scenariosCommand(
   dbPath: string,

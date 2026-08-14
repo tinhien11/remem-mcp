@@ -143,7 +143,7 @@ describe.skipIf(!CLAUDE_AVAILABLE)("E2E: Claude CLI hook auto-capture", () => {
   let dbPath: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-e2e-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-e2e-"));
     dbPath = join(tmpDir, "memory.db");
     initDb(dbPath);
     setupClaudeHome(tmpDir, dbPath);
@@ -192,7 +192,7 @@ describe.skipIf(!CLAUDE_AVAILABLE)("E2E: Claude CLI round-trip (capture → reca
   let dbPath: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-roundtrip-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-roundtrip-"));
     dbPath = join(tmpDir, "memory.db");
     initDb(dbPath);
     setupClaudeHome(tmpDir, dbPath);
@@ -263,7 +263,7 @@ describe.skipIf(!CLAUDE_AVAILABLE)("E2E: Claude CLI round-trip (capture → reca
 
     const parsed = JSON.parse(recallOutput);
     expect(parsed.hookSpecificOutput).toBeDefined();
-    expect(parsed.hookSpecificOutput.additionalContext).toContain("[tdai-memory]");
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("[remem-mcp]");
     expect(parsed.hookSpecificOutput.additionalContext).toContain("SQLite");
     expect(parsed.hookSpecificOutput.additionalContext).toContain("local-first");
   }, 60000);
@@ -286,7 +286,7 @@ describe.skipIf(!DEVIN_AVAILABLE)("E2E: Devin CLI hook smoke test", () => {
   let dbPath: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-devin-e2e-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-devin-e2e-"));
     dbPath = join(tmpDir, "memory.db");
     initDb(dbPath);
   });

@@ -5,7 +5,7 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SQLiteBackend } from "../../src/storage/sqlite.js";
 
-const testDir = join(homedir(), ".local", "share", "tdai-memory-mcp", "test-detection");
+const testDir = join(homedir(), ".local", "share", "remem-mcp", "test-detection");
 const testDbPath = join(testDir, "memory.db");
 
 function cleanup() {

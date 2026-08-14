@@ -6,9 +6,9 @@ import { dirname, join } from "node:path";
 function loadSkillContent(): string {
   // Try multiple locations: package root, dist parent, dist
   const candidates = [
-    join(process.cwd(), "skills", "tdai-memory", "SKILL.md"),
-    join(__dirname, "..", "skills", "tdai-memory", "SKILL.md"),
-    join(__dirname, "skills", "tdai-memory", "SKILL.md"),
+    join(process.cwd(), "skills", "remem-mcp", "SKILL.md"),
+    join(__dirname, "..", "skills", "remem-mcp", "SKILL.md"),
+    join(__dirname, "skills", "remem-mcp", "SKILL.md"),
   ];
 
   for (const path of candidates) {
@@ -20,7 +20,7 @@ function loadSkillContent(): string {
   }
 
   throw new Error(
-    "Could not find skills/tdai-memory/SKILL.md. Make sure the package includes the skills directory.",
+    "Could not find skills/remem-mcp/SKILL.md. Make sure the package includes the skills directory.",
   );
 }
 
@@ -28,19 +28,19 @@ function loadSkillContent(): string {
 const SKILL_TARGETS = [
   {
     name: "Devin CLI",
-    path: join(homedir(), ".config", "devin", "skills", "tdai-memory", "SKILL.md"),
+    path: join(homedir(), ".config", "devin", "skills", "remem-mcp", "SKILL.md"),
   },
   {
     name: "Claude Code",
-    path: join(homedir(), ".claude", "skills", "tdai-memory", "SKILL.md"),
+    path: join(homedir(), ".claude", "skills", "remem-mcp", "SKILL.md"),
   },
   {
     name: "Codex CLI",
-    path: join(homedir(), ".codex", "skills", "tdai-memory", "SKILL.md"),
+    path: join(homedir(), ".codex", "skills", "remem-mcp", "SKILL.md"),
   },
   {
     name: "Generic (.agents)",
-    path: join(homedir(), ".agents", "skills", "tdai-memory", "SKILL.md"),
+    path: join(homedir(), ".agents", "skills", "remem-mcp", "SKILL.md"),
   },
 ];
 

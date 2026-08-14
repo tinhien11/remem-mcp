@@ -69,7 +69,7 @@ describe("Integration: ADR tool", () => {
   let server: Server;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-adr-test-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-adr-test-"));
     dbPath = join(tmpDir, "memory.db");
     auditPath = join(tmpDir, "audit.jsonl");
 
@@ -259,7 +259,7 @@ describe("Integration: team-shared artifact (JSONL)", () => {
   let dbPath: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-artifact-test-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-artifact-test-"));
     projectDir = join(tmpDir, "my-project");
     dbPath = join(tmpDir, "memory.db");
     mkdirSync(projectDir, { recursive: true });
@@ -269,7 +269,7 @@ describe("Integration: team-shared artifact (JSONL)", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("exports captures to .tdai-memory/memory-export.jsonl", () => {
+  it("exports captures to .remem-mcp/memory-export.jsonl", () => {
     const db = new (require("better-sqlite3"))(dbPath);
     db.pragma("journal_mode = WAL");
     db.exec(`
@@ -286,7 +286,7 @@ describe("Integration: team-shared artifact (JSONL)", () => {
 
     exportArtifact(dbPath, projectDir);
 
-    const artifactFile = join(projectDir, ".tdai-memory", "memory-export.jsonl");
+    const artifactFile = join(projectDir, ".remem-mcp", "memory-export.jsonl");
     expect(existsSync(artifactFile)).toBe(true);
 
     // JSONL: one JSON object per line
@@ -325,7 +325,7 @@ describe("Integration: team-shared artifact (JSONL)", () => {
     // Second export — should append, not rewrite
     exportArtifact(dbPath, projectDir);
 
-    const artifactFile = join(projectDir, ".tdai-memory", "memory-export.jsonl");
+    const artifactFile = join(projectDir, ".remem-mcp", "memory-export.jsonl");
     const lines = readFileSync(artifactFile, "utf-8").trim().split("\n");
     expect(lines.length).toBe(2);
     expect(JSON.parse(lines[0]).id).toBe("id-1");
@@ -350,13 +350,13 @@ describe("Integration: team-shared artifact (JSONL)", () => {
     exportArtifact(dbPath, projectDir);
     exportArtifact(dbPath, projectDir); // re-export should be no-op
 
-    const artifactFile = join(projectDir, ".tdai-memory", "memory-export.jsonl");
+    const artifactFile = join(projectDir, ".remem-mcp", "memory-export.jsonl");
     const lines = readFileSync(artifactFile, "utf-8").trim().split("\n");
     expect(lines.length).toBe(1);
   });
 
-  it("imports captures from .tdai-memory/memory-export.jsonl", () => {
-    const artifactDir = join(projectDir, ".tdai-memory");
+  it("imports captures from .remem-mcp/memory-export.jsonl", () => {
+    const artifactDir = join(projectDir, ".remem-mcp");
     mkdirSync(artifactDir, { recursive: true });
     const artifactFile = join(artifactDir, "memory-export.jsonl");
 
@@ -384,7 +384,7 @@ describe("Integration: team-shared artifact (JSONL)", () => {
   });
 
   it("imports from legacy .json format (backward compat)", () => {
-    const artifactDir = join(projectDir, ".tdai-memory");
+    const artifactDir = join(projectDir, ".remem-mcp");
     mkdirSync(artifactDir, { recursive: true });
     const legacyFile = join(artifactDir, "memory-export.json");
 
@@ -419,7 +419,7 @@ describe("Integration: team-shared artifact (JSONL)", () => {
   });
 
   it("skips already-existing captures on import", () => {
-    const artifactDir = join(projectDir, ".tdai-memory");
+    const artifactDir = join(projectDir, ".remem-mcp");
     mkdirSync(artifactDir, { recursive: true });
     const artifactFile = join(artifactDir, "memory-export.jsonl");
 
@@ -451,7 +451,7 @@ describe("Integration: team-shared artifact (JSONL)", () => {
   it("hasArtifact returns true when JSONL artifact exists", () => {
     expect(hasArtifact(projectDir)).toBe(false);
 
-    const artifactDir = join(projectDir, ".tdai-memory");
+    const artifactDir = join(projectDir, ".remem-mcp");
     mkdirSync(artifactDir, { recursive: true });
     writeFileSync(join(artifactDir, "memory-export.jsonl"), "{}\n");
 
@@ -459,7 +459,7 @@ describe("Integration: team-shared artifact (JSONL)", () => {
   });
 
   it("hasArtifact returns true for legacy .json artifact", () => {
-    const artifactDir = join(projectDir, ".tdai-memory");
+    const artifactDir = join(projectDir, ".remem-mcp");
     mkdirSync(artifactDir, { recursive: true });
     writeFileSync(join(artifactDir, "memory-export.json"), "{}");
 
@@ -468,11 +468,11 @@ describe("Integration: team-shared artifact (JSONL)", () => {
 
   it("artifactPath returns the .jsonl path", () => {
     const path = artifactPath(projectDir);
-    expect(path).toBe(join(projectDir, ".tdai-memory", "memory-export.jsonl"));
+    expect(path).toBe(join(projectDir, ".remem-mcp", "memory-export.jsonl"));
   });
 
   it("handles corrupted JSONL lines gracefully", () => {
-    const artifactDir = join(projectDir, ".tdai-memory");
+    const artifactDir = join(projectDir, ".remem-mcp");
     mkdirSync(artifactDir, { recursive: true });
     const artifactFile = join(artifactDir, "memory-export.jsonl");
 
@@ -499,7 +499,7 @@ describe("Integration: team-shared artifact (JSONL)", () => {
   });
 
   it("simulates git merge: two branches append different lines, no conflict", () => {
-    const artifactDir = join(projectDir, ".tdai-memory");
+    const artifactDir = join(projectDir, ".remem-mcp");
     mkdirSync(artifactDir, { recursive: true });
     const artifactFile = join(artifactDir, "memory-export.jsonl");
 

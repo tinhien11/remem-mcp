@@ -4,9 +4,9 @@ import { SQLiteBackend } from "../storage/sqlite.js";
  * skills CLI command: list or search skills for a team.
  *
  * Usage:
- *   tdai-memory-mcp skills --team-id <id>
- *   tdai-memory-mcp skills --team-id <id> --agent-id <id>
- *   tdai-memory-mcp skills --team-id <id> --agent-id <id> --query "deploy"
+ *   remem-mcp skills --team-id <id>
+ *   remem-mcp skills --team-id <id> --agent-id <id>
+ *   remem-mcp skills --team-id <id> --agent-id <id> --query "deploy"
  */
 export async function skillsCommand(dbPath: string, flags: Record<string, string>): Promise<void> {
   const teamId = flags["team-id"];

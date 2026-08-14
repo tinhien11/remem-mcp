@@ -4,8 +4,8 @@ import { SQLiteBackend } from "../storage/sqlite.js";
  * persona CLI command: read or write the L3 persona.
  *
  * Usage:
- *   tdai-memory-mcp persona --team-id <id> --agent-id <id> --user-id <id>
- *   tdai-memory-mcp persona --team-id <id> --agent-id <id> --user-id <id> --write "content"
+ *   remem-mcp persona --team-id <id> --agent-id <id> --user-id <id>
+ *   remem-mcp persona --team-id <id> --agent-id <id> --user-id <id> --write "content"
  */
 export async function personaCommand(dbPath: string, flags: Record<string, string>): Promise<void> {
   const teamId = flags["team-id"];

@@ -5,10 +5,10 @@ import { generateId } from "../utils/ulid.js";
  * knowledge CLI command: list, create, or delete knowledge assets.
  *
  * Usage:
- *   tdai-memory-mcp knowledge --team-id <id>
- *   tdai-memory-mcp knowledge --team-id <id> --type wiki
- *   tdai-memory-mcp knowledge --team-id <id> --create --name "My Wiki" --type wiki --summary "..."
- *   tdai-memory-mcp knowledge --delete <id1> [<id2> ...]
+ *   remem-mcp knowledge --team-id <id>
+ *   remem-mcp knowledge --team-id <id> --type wiki
+ *   remem-mcp knowledge --team-id <id> --create --name "My Wiki" --type wiki --summary "..."
+ *   remem-mcp knowledge --delete <id1> [<id2> ...]
  */
 export async function knowledgeCommand(
   dbPath: string,

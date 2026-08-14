@@ -3,23 +3,23 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 /**
- * Register the tdai-memory MCP server in agent config files.
+ * Register the remem-mcp MCP server in agent config files.
  *
  * Config locations:
- * - Claude Code: ~/.claude.json → mcpServers.tdai-memory
- * - Devin CLI:   ~/.config/devin/mcp_config.json → mcpServers.tdai-memory
- * - Cursor:      ~/.cursor/mcp.json → mcpServers.tdai-memory
- * - Codex CLI:   ~/.codex/config.toml → [mcp_servers.tdai-memory] (TOML, skip if no parser)
+ * - Claude Code: ~/.claude.json → mcpServers.remem-mcp
+ * - Devin CLI:   ~/.config/devin/mcp_config.json → mcpServers.remem-mcp
+ * - Cursor:      ~/.cursor/mcp.json → mcpServers.remem-mcp
+ * - Codex CLI:   ~/.codex/config.toml → [mcp_servers.remem-mcp] (TOML, skip if no parser)
  */
 
 const MCP_SERVER_ENTRY = {
   command: "npx",
-  args: ["-y", "tdai-memory-mcp"],
+  args: ["-y", "remem-mcp"],
 };
 
 const MCP_SERVER_ENTRY_WITH_GLOBAL = {
   command: "npx",
-  args: ["-y", "tdai-memory-mcp"],
+  args: ["-y", "remem-mcp"],
   env: {
     TDAI_GLOBAL_SESSION_KEY: "global",
   },
@@ -68,12 +68,12 @@ function registerJsonServer(target: JsonTarget): boolean {
   const servers = (config[target.key] as Record<string, unknown>) || {};
   const entry = target.useGlobal ? MCP_SERVER_ENTRY_WITH_GLOBAL : MCP_SERVER_ENTRY;
 
-  if (JSON.stringify(servers["tdai-memory"]) === JSON.stringify(entry)) {
+  if (JSON.stringify(servers["remem-mcp"]) === JSON.stringify(entry)) {
     console.log(`  ${target.name}: Already registered.`);
     return true;
   }
 
-  servers["tdai-memory"] = entry;
+  servers["remem-mcp"] = entry;
   config[target.key] = servers;
 
   const dir = dirname(target.path);
@@ -122,16 +122,16 @@ export async function installMcpServer(): Promise<void> {
   const codexConfig = join(homedir(), ".codex", "config.toml");
   if (existsSync(codexConfig)) {
     const content = readFileSync(codexConfig, "utf-8");
-    if (content.includes("[mcp_servers.tdai-memory]")) {
+    if (content.includes("[mcp_servers.remem-mcp]")) {
       console.log("  Codex CLI: Already registered.");
       count++;
     } else {
       const tomlEntry = `
-[mcp_servers.tdai-memory]
+[mcp_servers.remem-mcp]
 command = "npx"
-args = ["-y", "tdai-memory-mcp"]
+args = ["-y", "remem-mcp"]
 
-[mcp_servers.tdai-memory.env]
+[mcp_servers.remem-mcp.env]
 TDAI_GLOBAL_SESSION_KEY = "global"
 `;
       writeFileSync(codexConfig, content + tomlEntry, "utf-8");

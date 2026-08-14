@@ -29,7 +29,7 @@ const BIN = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "dist", "i
 // ─── Helpers ───────────────────────────────────────────────────
 
 function makeTmpHome(): string {
-  const tmpDir = mkdtempSync(join(tmpdir(), "tdai-regression-"));
+  const tmpDir = mkdtempSync(join(tmpdir(), "remem-regression-"));
   return tmpDir;
 }
 
@@ -81,7 +81,7 @@ describe("Regression: Claude Code hooks", () => {
   let fakeHome: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-claude-reg-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-claude-reg-"));
     fakeHome = join(tmpDir, "fake-home");
     mkdirSync(join(fakeHome, ".claude"), { recursive: true });
   });
@@ -133,8 +133,8 @@ describe("Regression: Claude Code hooks", () => {
     const settingsPath = join(fakeHome, ".claude", "settings.json");
     const withHooks = {
       hooks: {
-        SessionStart: [{ hooks: [{ type: "command", command: "tdai-memory-mcp hook-recall" }] }],
-        Stop: [{ hooks: [{ type: "command", command: "tdai-memory-mcp hook-stop" }] }],
+        SessionStart: [{ hooks: [{ type: "command", command: "remem-mcp hook-recall" }] }],
+        Stop: [{ hooks: [{ type: "command", command: "remem-mcp hook-stop" }] }],
         PreToolUse: [{ hooks: [{ type: "command", command: "keep-me" }] }],
       },
     };
@@ -159,7 +159,7 @@ describe("Regression: Devin CLI hooks", () => {
   let fakeHome: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-devin-reg-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-devin-reg-"));
     fakeHome = join(tmpDir, "fake-home");
     mkdirSync(join(fakeHome, ".config", "devin"), { recursive: true });
   });
@@ -188,8 +188,8 @@ describe("Regression: Devin CLI hooks", () => {
     const withHooks = {
       agent: { model: "test" },
       hooks: {
-        SessionStart: [{ hooks: [{ type: "command", command: "tdai-memory-mcp hook-recall" }] }],
-        Stop: [{ hooks: [{ type: "command", command: "tdai-memory-mcp hook-stop" }] }],
+        SessionStart: [{ hooks: [{ type: "command", command: "remem-mcp hook-recall" }] }],
+        Stop: [{ hooks: [{ type: "command", command: "remem-mcp hook-stop" }] }],
       },
     };
     writeFileSync(configPath, JSON.stringify(withHooks, null, 2));
@@ -200,18 +200,18 @@ describe("Regression: Devin CLI hooks", () => {
     });
 
     const config = JSON.parse(readFileSync(configPath, "utf-8"));
-    // All tdai-memory hooks removed, hooks key deleted entirely
+    // All remem-mcp hooks removed, hooks key deleted entirely
     expect(config.hooks).toBeUndefined();
     expect(config.agent.model).toBe("test");
   });
 
-  it("uninstall-hooks preserves non-tdai hooks in Devin config", () => {
+  it("uninstall-hooks preserves non-remem hooks in Devin config", () => {
     const configPath = join(fakeHome, ".config", "devin", "config.json");
     const withHooks = {
       agent: { model: "test" },
       hooks: {
-        SessionStart: [{ hooks: [{ type: "command", command: "tdai-memory-mcp hook-recall" }] }],
-        Stop: [{ hooks: [{ type: "command", command: "tdai-memory-mcp hook-stop" }] }],
+        SessionStart: [{ hooks: [{ type: "command", command: "remem-mcp hook-recall" }] }],
+        Stop: [{ hooks: [{ type: "command", command: "remem-mcp hook-stop" }] }],
         PreToolUse: [{ hooks: [{ type: "command", command: "keep-me" }] }],
       },
     };
@@ -237,7 +237,7 @@ describe("Regression: Codex CLI hooks (TOML)", () => {
   let fakeHome: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-codex-reg-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-codex-reg-"));
     fakeHome = join(tmpDir, "fake-home");
     mkdirSync(join(fakeHome, ".codex"), { recursive: true });
   });
@@ -258,9 +258,9 @@ describe("Regression: Codex CLI hooks (TOML)", () => {
     const content = readFileSync(configPath, "utf-8");
     // Preserves existing config
     expect(content).toContain('model = "gpt-5.5"');
-    // Adds tdai-memory hooks
-    expect(content).toContain("tdai-memory SessionStart");
-    expect(content).toContain("tdai-memory Stop");
+    // Adds remem-mcp hooks
+    expect(content).toContain("remem-mcp SessionStart");
+    expect(content).toContain("remem-mcp Stop");
     expect(content).toContain("hook-recall");
     expect(content).toContain("hook-stop");
     expect(content).toContain('matcher = "startup|resume|clear|compact"');
@@ -281,8 +281,8 @@ describe("Regression: Codex CLI hooks (TOML)", () => {
     });
 
     const content = readFileSync(configPath, "utf-8");
-    // Should only have one set of tdai-memory hooks
-    const matchCount = (content.match(/>>> tdai-memory SessionStart >>>/g) || []).length;
+    // Should only have one set of remem-mcp hooks
+    const matchCount = (content.match(/>>> remem-mcp SessionStart >>>/g) || []).length;
     expect(matchCount).toBe(1);
   });
 
@@ -307,7 +307,7 @@ trust_level = "trusted"
     expect(content).toContain("[mcp_servers.codebase-memory-mcp]");
     expect(content).toContain('command = "/usr/local/bin/codebase-memory-mcp"');
     expect(content).toContain('[projects."/Users/tin/a/myapp"]');
-    expect(content).toContain("tdai-memory SessionStart");
+    expect(content).toContain("remem-mcp SessionStart");
   });
 });
 
@@ -318,7 +318,7 @@ describe("Regression: read-only DB fallback", () => {
   let dbPath: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-readonly-reg-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-readonly-reg-"));
     dbPath = join(tmpDir, "memory.db");
     makeDb(dbPath, [
       {
@@ -393,7 +393,7 @@ describe("Regression: global + project hybrid recall", () => {
   let dbPath: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-global-reg-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-global-reg-"));
     dbPath = join(tmpDir, "memory.db");
     // Seed both global and project captures
     makeDb(dbPath, [
@@ -479,7 +479,7 @@ describe("Regression: install-skill targets all agents", () => {
   let fakeHome: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-skill-reg-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-skill-reg-"));
     fakeHome = join(tmpDir, "fake-home");
     // Create all agent directories
     mkdirSync(join(fakeHome, ".config", "devin", "skills"), { recursive: true });
@@ -499,16 +499,16 @@ describe("Regression: install-skill targets all agents", () => {
     });
 
     const targets = [
-      join(fakeHome, ".config", "devin", "skills", "tdai-memory", "SKILL.md"),
-      join(fakeHome, ".claude", "skills", "tdai-memory", "SKILL.md"),
-      join(fakeHome, ".codex", "skills", "tdai-memory", "SKILL.md"),
-      join(fakeHome, ".agents", "skills", "tdai-memory", "SKILL.md"),
+      join(fakeHome, ".config", "devin", "skills", "remem-mcp", "SKILL.md"),
+      join(fakeHome, ".claude", "skills", "remem-mcp", "SKILL.md"),
+      join(fakeHome, ".codex", "skills", "remem-mcp", "SKILL.md"),
+      join(fakeHome, ".agents", "skills", "remem-mcp", "SKILL.md"),
     ];
 
     for (const path of targets) {
       expect(existsSync(path)).toBe(true);
       const content = readFileSync(path, "utf-8");
-      expect(content).toContain("name: tdai-memory");
+      expect(content).toContain("name: remem-mcp");
       expect(content).toContain("recall");
       expect(content).toContain("capture");
     }

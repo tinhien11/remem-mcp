@@ -12,7 +12,7 @@ import { SQLiteBackend } from "../../src/storage/sqlite.js";
 import type { CaptureEntry, CaptureType } from "../../src/storage/types.js";
 import { generateId } from "../../src/utils/ulid.js";
 
-const testDir = join(homedir(), ".local", "share", "tdai-memory-mcp", "test-integration");
+const testDir = join(homedir(), ".local", "share", "remem-mcp", "test-integration");
 const testDbPath = join(testDir, "memory.db");
 const testAuditPath = join(testDir, "audit.jsonl");
 
@@ -326,7 +326,7 @@ describe("Integration: capture → recall → search → forget", () => {
     // This test calls the real MCP server handler, not the test helper.
     // The helper fills in sessionKey ?? "test-session", which masks the bug
     // where handleRecall previously omitted ?? defaultSessionKey().
-    // See: https://neoneye.github.io/agent-memory-atlas/systems/tdai-memory-mcp/
+    // See: https://neoneye.github.io/agent-memory-atlas/systems/remem-mcp/
     const { createServer } = await import("../../src/server.js");
     type Server = import("@modelcontextprotocol/sdk/server/index.js").Server;
 

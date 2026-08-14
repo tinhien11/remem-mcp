@@ -8,7 +8,7 @@ import { importData } from "../../src/import.js";
 import { SQLiteBackend } from "../../src/storage/sqlite.js";
 import { generateId } from "../../src/utils/ulid.js";
 
-const testDir = join(homedir(), ".local", "share", "tdai-memory-mcp", "test-export-import");
+const testDir = join(homedir(), ".local", "share", "remem-mcp", "test-export-import");
 const testDbPath = join(testDir, "memory.db");
 const exportPath = join(testDir, "export.json");
 

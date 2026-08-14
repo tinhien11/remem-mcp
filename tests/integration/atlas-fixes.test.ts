@@ -84,7 +84,7 @@ describe("Integration: Atlas fixes", () => {
   let server: Server;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-atlas-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-atlas-"));
     dbPath = join(tmpDir, "memory.db");
     auditPath = join(tmpDir, "audit.jsonl");
 

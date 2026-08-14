@@ -1,10 +1,10 @@
 /**
- * Programmatic API for tdai-memory-mcp.
+ * Programmatic API for remem-mcp.
  * Use this to embed memory directly in your application without MCP.
  *
  * @example
  * ```ts
- * import { Memory } from "tdai-memory-mcp";
+ * import { Memory } from "remem-mcp";
  *
  * const memory = new Memory();
  * await memory.capture("We chose SQLite for storage.", "decision", ["arch"]);
@@ -53,7 +53,7 @@ export class Memory {
     redactSecrets?: boolean;
   }) {
     const dbPath =
-      opts?.dbPath ?? join(homedir(), ".local", "share", "tdai-memory-mcp", "memory.db");
+      opts?.dbPath ?? join(homedir(), ".local", "share", "remem-mcp", "memory.db");
     this.storage = new SQLiteBackend(dbPath);
     this.embedder = new LocalEmbedder();
     this.sessionKey =

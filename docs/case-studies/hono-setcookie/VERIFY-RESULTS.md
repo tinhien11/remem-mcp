@@ -1,4 +1,4 @@
-# Verification Results — tdai-memory-mcp
+# Verification Results — remem-mcp
 
 Tested against **honojs/hono** (commit `329b6f4`, 326 source files, 4,769 tests).
 

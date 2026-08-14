@@ -29,11 +29,11 @@ function feedback(emoji: string, message: string): void {
  * loaded without the output interfering with the terminal prompt.
  */
 
-/** Default log path: ~/.local/share/tdai-memory-mcp/session.log */
+/** Default log path: ~/.local/share/remem-mcp/session.log */
 function defaultLogPath(): string {
   return (
     process.env.TDAI_HOOK_LOG_PATH ??
-    join(homedir(), ".local", "share", "tdai-memory-mcp", "session.log")
+    join(homedir(), ".local", "share", "remem-mcp", "session.log")
   );
 }
 
@@ -55,7 +55,7 @@ function logToFile(text: string): void {
  * and checked by PostToolUse.
  */
 function driftFilePath(sessionKey: string): string {
-  return join(tmpdir(), `tdai-drift-${sessionKey}.jsonl`);
+  return join(tmpdir(), `remem-drift-${sessionKey}.jsonl`);
 }
 
 /**
@@ -69,7 +69,7 @@ function logInjectionDrift(
   command: string,
 ): void {
   try {
-    const path = join(tmpdir(), `tdai-drift-${sessionKey}.jsonl`);
+    const path = join(tmpdir(), `remem-drift-${sessionKey}.jsonl`);
     const record = JSON.stringify({
       type: captureType,
       content_hash: captureId,
@@ -498,7 +498,7 @@ export function hookRecall(dbPath: string): void {
       }
 
       // Build context text
-      const lines: string[] = ["[tdai-memory] Recent project memory:"];
+      const lines: string[] = ["[remem-mcp] Recent project memory:"];
       for (const row of rows) {
         const date = new Date(row.created_at).toISOString().split("T")[0];
         const tags = row.tags ? (JSON.parse(row.tags) as string[]) : [];
@@ -526,7 +526,7 @@ export function hookRecall(dbPath: string): void {
       const parts: string[] = [];
       if (errorCount > 0) parts.push(`${errorCount} past error(s)`);
       if (otherCount > 0) parts.push(`${otherCount} memorie(s)`);
-      feedback("💡", `tdai-memory: loaded ${parts.join(" + ")} from previous sessions`);
+      feedback("💡", `remem-mcp: loaded ${parts.join(" + ")} from previous sessions`);
 
       // Output hook JSON with additionalContext
       const output = {
@@ -539,7 +539,7 @@ export function hookRecall(dbPath: string): void {
       process.stdout.write(JSON.stringify(output));
     } catch (err) {
       // On any error, output empty JSON (don't block the session)
-      process.stderr.write(`[tdai-memory hook-recall] Error: ${err}\n`);
+      process.stderr.write(`[remem-mcp hook-recall] Error: ${err}\n`);
       logToFile(`SessionStart: error - ${err}`);
       process.stdout.write(JSON.stringify({}));
     }
@@ -1494,7 +1494,7 @@ export function hookPostToolUse(dbPath: string): void {
 
       // [Feature 3] Self-reflection prompt (Reflexion pattern)
       // Inject a prompt asking the agent to reflect on the error
-      const reflection = `[tdai-memory] Auto-captured ${errorType} error: ${title}
+      const reflection = `[remem-mcp] Auto-captured ${errorType} error: ${title}
 
 Anti-pattern: ${antiPattern}
 Suggested fix: ${correctApproach}
@@ -1503,7 +1503,7 @@ ${patternAlert ? `\n⚠️ CROSS-PROJECT PATTERN: ${patternAlert}` : ""}
 Before retrying, reflect on WHY this failed and what you should do differently. Call capture() with type="learning" to save your reflection.`;
 
       // Visible feedback
-      feedback("📸", `tdai-memory: captured ${errorType} error — will inject fix next time`);
+      feedback("📸", `remem-mcp: captured ${errorType} error — will inject fix next time`);
 
       const output = {
         hookSpecificOutput: {
@@ -1514,7 +1514,7 @@ Before retrying, reflect on WHY this failed and what you should do differently. 
 
       process.stdout.write(JSON.stringify(output));
     } catch (err) {
-      process.stderr.write(`[tdai-memory hook-post-tool-use] Error: ${err}\n`);
+      process.stderr.write(`[remem-mcp hook-post-tool-use] Error: ${err}\n`);
       logToFile(`PostToolUse: error - ${err}`);
       process.stdout.write(JSON.stringify({}));
     }
@@ -1607,7 +1607,7 @@ export function hookPreToolUse(dbPath: string): void {
 
             if (fileErrors.length > 0) {
               const lines: string[] = [
-                `[tdai-memory] File has error history — ${fileErrors.length} past error(s) on this file:`,
+                `[remem-mcp] File has error history — ${fileErrors.length} past error(s) on this file:`,
               ];
               for (const e of fileErrors) {
                 const date = new Date(e.created_at).toISOString().split("T")[0];
@@ -1722,7 +1722,7 @@ export function hookPreToolUse(dbPath: string): void {
 
               if (patterns.length > 0) {
                 const lines: string[] = [
-                  `[tdai-memory] ${patterns.length} code pattern(s) from this project (same language):`,
+                  `[remem-mcp] ${patterns.length} code pattern(s) from this project (same language):`,
                 ];
                 for (const p of patterns) {
                   lines.push(`- [${p.ptype}] ${p.title}`);
@@ -1997,7 +1997,7 @@ export function hookPreToolUse(dbPath: string): void {
             }
 
             if (decisions.length > 0) {
-              const lines: string[] = [`[tdai-memory] Past decisions for similar commands:`];
+              const lines: string[] = [`[remem-mcp] Past decisions for similar commands:`];
               for (const d of decisions) {
                 const date = new Date(d.created_at).toISOString().split("T")[0];
                 lines.push(`- ${date}: ${d.title}`);
@@ -2069,7 +2069,7 @@ export function hookPreToolUse(dbPath: string): void {
         .slice(0, 2);
 
       // Build structured warning context (ReasoningBank format)
-      const lines: string[] = [`[tdai-memory] Past error to avoid repeating:`];
+      const lines: string[] = [`[remem-mcp] Past error to avoid repeating:`];
       for (const { err, meta, decayedConfidence } of decayed) {
         const date = new Date(err.created_at).toISOString().split("T")[0];
         const title = meta.title ?? "Untitled error";
@@ -2272,7 +2272,7 @@ export function hookPreToolUse(dbPath: string): void {
       const fixCount = resolvedFixes.length;
       feedback(
         "🛡️",
-        `tdai-memory: injected ${k} past error(s)${fixCount > 0 ? ` + ${fixCount} proven fix(es)` : ""} before: ${command.slice(0, 50)}`,
+        `remem-mcp: injected ${k} past error(s)${fixCount > 0 ? ` + ${fixCount} proven fix(es)` : ""} before: ${command.slice(0, 50)}`,
       );
 
       // [Drift Detection] Log each injected error so PostToolUse can detect
@@ -2292,7 +2292,7 @@ export function hookPreToolUse(dbPath: string): void {
 
       process.stdout.write(JSON.stringify(output));
     } catch (err) {
-      process.stderr.write(`[tdai-memory hook-pre-tool-use] Error: ${err}\n`);
+      process.stderr.write(`[remem-mcp hook-pre-tool-use] Error: ${err}\n`);
       logToFile(`PreToolUse: error - ${err}`);
       process.stdout.write(JSON.stringify({}));
     }
@@ -2326,10 +2326,10 @@ function checkDangerousCommand(command: string): string | null {
   if (/git\s+push\s+(--force|-f|--force-with-lease)/.test(lower)) {
     const hasBranch = /git\s+push\s+\S+\s+\S+/.test(command);
     return hasBranch
-      ? `[tdai-memory] ⚠ DANGER: git push --force detected.\n` +
+      ? `[remem-mcp] ⚠ DANGER: git push --force detected.\n` +
           `This rewrites remote history and can destroy others' commits.\n` +
           `Only do this on your own branch. Use --force-with-lease for safer force push.`
-      : `[tdai-memory] ⚠ DANGER: git push --force WITHOUT a branch name.\n` +
+      : `[remem-mcp] ⚠ DANGER: git push --force WITHOUT a branch name.\n` +
           `This force-pushes ALL branches. This is almost certainly a mistake.\n` +
           `Specify the branch: git push --force origin <branch>`;
   }
@@ -2341,7 +2341,7 @@ function checkDangerousCommand(command: string): string | null {
     const dangerousTargets = /^(\/|~|\*|\.\.?$|\/home|\/usr|\/var|\/etc|\/bin|\/sbin|\/boot)/;
     if (dangerousTargets.test(target)) {
       return (
-        `[tdai-memory] ⚠ DANGER: rm -rf on a critical path: ${target.slice(0, 60)}\n` +
+        `[remem-mcp] ⚠ DANGER: rm -rf on a critical path: ${target.slice(0, 60)}\n` +
         `This can destroy the filesystem, home directory, or system files.\n` +
         `Verify the path is correct before proceeding.`
       );
@@ -2355,7 +2355,7 @@ function checkDangerousCommand(command: string): string | null {
     );
     const target = match ? match[1] : "unknown";
     return (
-      `[tdai-memory] ⚠ DANGER: SQL destructive operation detected: ${target.slice(0, 60)}\n` +
+      `[remem-mcp] ⚠ DANGER: SQL destructive operation detected: ${target.slice(0, 60)}\n` +
       `This permanently deletes data. Ensure you have a backup and are in the right environment.`
     );
   }
@@ -2366,7 +2366,7 @@ function checkDangerousCommand(command: string): string | null {
     /\bdelete\s+from\s+\S+\s*$/i.test(command)
   ) {
     return (
-      `[tdai-memory] ⚠ DANGER: DELETE FROM without a WHERE clause.\n` +
+      `[remem-mcp] ⚠ DANGER: DELETE FROM without a WHERE clause.\n` +
       `This deletes ALL rows in the table. Add a WHERE clause to limit the deletion.`
     );
   }
@@ -2374,7 +2374,7 @@ function checkDangerousCommand(command: string): string | null {
   // npm publish (production publish)
   if (/^npm\s+publish\b/.test(lower)) {
     return (
-      `[tdai-memory] ⚠ CAUTION: npm publish detected.\n` +
+      `[remem-mcp] ⚠ CAUTION: npm publish detected.\n` +
       `This publishes a package to the npm registry. Verify:\n` +
       `  - The version number is correct (check package.json)\n` +
       `  - You are publishing the right package\n` +
@@ -2385,7 +2385,7 @@ function checkDangerousCommand(command: string): string | null {
   // docker system prune / docker volume rm
   if (/docker\s+(system\s+prune|volume\s+rm|container\s+rm\s+-f|image\s+rm\s+-f)/.test(lower)) {
     return (
-      `[tdai-memory] ⚠ DANGER: Docker destructive command detected.\n` +
+      `[remem-mcp] ⚠ DANGER: Docker destructive command detected.\n` +
       `This can remove containers, volumes, or images that are in use.\n` +
       `Verify you are not deleting production resources.`
     );
@@ -2394,7 +2394,7 @@ function checkDangerousCommand(command: string): string | null {
   // kubectl delete namespace / kubectl delete -f (production)
   if (/kubectl\s+delete\s+(namespace|ns)\b/.test(lower)) {
     return (
-      `[tdai-memory] ⚠ DANGER: kubectl delete namespace detected.\n` +
+      `[remem-mcp] ⚠ DANGER: kubectl delete namespace detected.\n` +
       `This deletes ALL resources in the namespace (pods, services, configs).\n` +
       `Verify this is not a production namespace.`
     );
@@ -3031,7 +3031,7 @@ async function captureSessionTranscript(
     for (const step of steps) {
       if (step.source === "user" && typeof step.message === "string") {
         if (
-          !step.message.startsWith("[tdai-memory]") &&
+          !step.message.startsWith("[remem-mcp]") &&
           !step.message.startsWith("Code was changed") &&
           !step.message.startsWith("<!-- ") &&
           !step.message.startsWith("# LoopX") &&
@@ -3075,7 +3075,7 @@ async function captureSessionTranscript(
         }
 
         if (!text.trim()) continue;
-        if (text.startsWith("[tdai-memory]") || text.startsWith("Code was changed")) continue;
+        if (text.startsWith("[remem-mcp]") || text.startsWith("Code was changed")) continue;
         // Skip skill/system injections (LoopX, agent rules, etc.)
         if (
           text.startsWith("<!-- ") ||
@@ -3231,7 +3231,7 @@ export function hookSessionEnd(dbPath: string): void {
           process.stdout.write(JSON.stringify({}));
         });
     } catch (err) {
-      process.stderr.write(`[tdai-memory hook-session-end] Error: ${err}\n`);
+      process.stderr.write(`[remem-mcp hook-session-end] Error: ${err}\n`);
       logToFile(`SessionEnd: error - ${err}`);
       process.stdout.write(JSON.stringify({}));
     }
@@ -3379,7 +3379,7 @@ export async function hookPostCommit(dbPath: string): Promise<void> {
     logToFile(`PostCommit: indexed ${indexed} file(s), skipped ${skipped}`);
     process.stdout.write(JSON.stringify({}));
   } catch (err) {
-    process.stderr.write(`[tdai-memory hook-post-commit] Error: ${err}\n`);
+    process.stderr.write(`[remem-mcp hook-post-commit] Error: ${err}\n`);
     logToFile(`PostCommit: error - ${err}`);
     process.stdout.write(JSON.stringify({}));
   }
@@ -3453,7 +3453,7 @@ export function hookPreCompact(dbPath: string): void {
           session_key: sessionKey,
         }),
         sessionKey,
-        "tdai-memory-hook",
+        "remem-mcp-hook",
         Date.now(),
       );
 
@@ -3482,7 +3482,7 @@ export function hookPreCompact(dbPath: string): void {
               compacted_at: new Date().toISOString(),
             }),
             sessionKey,
-            "tdai-memory-hook",
+            "remem-mcp-hook",
             Date.now(),
           );
           transcriptNote = " + transcript excerpt";
@@ -3498,10 +3498,10 @@ export function hookPreCompact(dbPath: string): void {
       );
 
       // Visible feedback
-      feedback("📦", `tdai-memory: saved compaction checkpoint — memory survives the compact`);
+      feedback("📦", `remem-mcp: saved compaction checkpoint — memory survives the compact`);
 
       // Inject recovery context so the agent knows to recall after compaction
-      const recoveryContext = `[tdai-memory] Context compaction is about to happen.
+      const recoveryContext = `[remem-mcp] Context compaction is about to happen.
 
 A checkpoint of this session has been saved to memory. After compaction completes:
 1. Your recent decisions, errors, and learnings are preserved in the memory DB.
@@ -3519,7 +3519,7 @@ Compaction trigger: ${trigger}`;
 
       process.stdout.write(JSON.stringify(output));
     } catch (err) {
-      process.stderr.write(`[tdai-memory hook-pre-compact] Error: ${err}\n`);
+      process.stderr.write(`[remem-mcp hook-pre-compact] Error: ${err}\n`);
       logToFile(`PreCompact: error - ${err}`);
       process.stdout.write(JSON.stringify({}));
     }
@@ -3582,7 +3582,7 @@ export function hookPostCompaction(dbPath: string): void {
 
       // Build recovery context
       const lines: string[] = [
-        "[tdai-memory] Context compaction just happened.",
+        "[remem-mcp] Context compaction just happened.",
         "Re-injecting recent memory so you don't lose context:",
         "",
       ];
@@ -3601,7 +3601,7 @@ export function hookPostCompaction(dbPath: string): void {
       const context = lines.join("\n");
 
       // Visible feedback
-      feedback("📦", `tdai-memory: re-injected ${rows.length} memories after compaction`);
+      feedback("📦", `remem-mcp: re-injected ${rows.length} memories after compaction`);
 
       const output = {
         hookSpecificOutput: {
@@ -3612,7 +3612,7 @@ export function hookPostCompaction(dbPath: string): void {
 
       process.stdout.write(JSON.stringify(output));
     } catch (err) {
-      process.stderr.write(`[tdai-memory hook-post-compaction] Error: ${err}\n`);
+      process.stderr.write(`[remem-mcp hook-post-compaction] Error: ${err}\n`);
       logToFile(`PostCompaction: error - ${err}`);
       process.stdout.write(JSON.stringify({}));
     }

@@ -10,7 +10,7 @@ import { SQLiteBackend } from "../../src/storage/sqlite.js";
 import type { CaptureEntry, CaptureType } from "../../src/storage/types.js";
 import { generateId } from "../../src/utils/ulid.js";
 
-const testDir = join(homedir(), ".local", "share", "tdai-memory-mcp", "test-correction");
+const testDir = join(homedir(), ".local", "share", "remem-mcp", "test-correction");
 const testDbPath = join(testDir, "memory.db");
 const testAuditPath = join(testDir, "audit.jsonl");
 

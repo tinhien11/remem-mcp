@@ -3,12 +3,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 /**
- * Configuration for the tdai-memory-mcp server.
+ * Configuration for the remem-mcp server.
  * All fields have sensible defaults. A configuration file is not required.
  */
 export interface Config {
   /** Storage backend. Default: "sqlite". */
-  storage: "sqlite" | "pgvector" | "file" | "tdai-gateway";
+  storage: "sqlite" | "pgvector" | "file" | "remem-gateway";
 
   /** Pipeline stage. Default: "noop". */
   pipeline: "noop" | "atom" | "scenario" | "mermaid";
@@ -56,16 +56,16 @@ export const SCHEMA_VERSION = 3;
 function defaultDataDir(): string {
   const home = homedir();
   const xdgData = process.env.XDG_DATA_HOME;
-  if (xdgData) return join(xdgData, "tdai-memory-mcp");
-  return join(home, ".local", "share", "tdai-memory-mcp");
+  if (xdgData) return join(xdgData, "remem-mcp");
+  return join(home, ".local", "share", "remem-mcp");
 }
 
 /** Default config directory. */
 function defaultConfigDir(): string {
   const home = homedir();
   const xdgConfig = process.env.XDG_CONFIG_HOME;
-  if (xdgConfig) return join(xdgConfig, "tdai-memory-mcp");
-  return join(home, ".config", "tdai-memory-mcp");
+  if (xdgConfig) return join(xdgConfig, "remem-mcp");
+  return join(home, ".config", "remem-mcp");
 }
 
 /** Parse a boolean environment variable. "false", "0", "" = false. Everything else = true. */

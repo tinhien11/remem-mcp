@@ -47,12 +47,12 @@ interface ExportRow {
 }
 
 /**
- * Team-shared artifact path: `.tdai-memory/memory-export.jsonl` in the project root.
+ * Team-shared artifact path: `.remem-mcp/memory-export.jsonl` in the project root.
  * Uses JSONL (one JSON object per line) so git can merge line-by-line.
  * Commit this file to your repo so teammates can import your memory.
  */
 export function artifactPath(projectRoot: string): string {
-  return join(projectRoot, ".tdai-memory", "memory-export.jsonl");
+  return join(projectRoot, ".remem-mcp", "memory-export.jsonl");
 }
 
 /**
@@ -60,7 +60,7 @@ export function artifactPath(projectRoot: string): string {
  * Used for backward-compat import only.
  */
 function legacyArtifactPath(projectRoot: string): string {
-  return join(projectRoot, ".tdai-memory", "memory-export.json");
+  return join(projectRoot, ".remem-mcp", "memory-export.json");
 }
 
 /**
@@ -86,7 +86,7 @@ function readExistingIds(filePath: string): Set<string> {
 }
 
 /**
- * Append captures to `.tdai-memory/memory-export.jsonl`.
+ * Append captures to `.remem-mcp/memory-export.jsonl`.
  *
  * Uses append-only JSONL format so parallel branches can merge without conflicts:
  * - Branch A appends line X, branch B appends line Y → git auto-merges (different lines)
@@ -111,7 +111,7 @@ export function exportArtifact(dbPath: string, projectRoot: string, sessionKey?:
   db.close();
 
   const outPath = artifactPath(projectRoot);
-  const dir = join(projectRoot, ".tdai-memory");
+  const dir = join(projectRoot, ".remem-mcp");
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
@@ -136,7 +136,7 @@ export function exportArtifact(dbPath: string, projectRoot: string, sessionKey?:
 }
 
 /**
- * Import captures from `.tdai-memory/memory-export.jsonl` (or legacy `.json`).
+ * Import captures from `.remem-mcp/memory-export.jsonl` (or legacy `.json`).
  * Called on server startup. Skips captures that already exist (by ID).
  * Returns the number of captures imported.
  */
@@ -168,7 +168,7 @@ export function importArtifact(dbPath: string, projectRoot: string): number {
         rows.push(...data.captures);
       }
     } catch {
-      console.error("[tdai-memory] Failed to parse legacy team artifact. Skipping import.");
+      console.error("[remem-mcp] Failed to parse legacy team artifact. Skipping import.");
       return 0;
     }
   } else {
@@ -221,7 +221,7 @@ export function importArtifact(dbPath: string, projectRoot: string): number {
 
   if (inserted > 0) {
     console.log(
-      `[tdai-memory] Imported ${inserted} captures from team artifact (${skipped} already exist).`,
+      `[remem-mcp] Imported ${inserted} captures from team artifact (${skipped} already exist).`,
     );
   }
 

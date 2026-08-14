@@ -42,7 +42,7 @@ export class AuditLogger {
       appendFileSync(this.logPath, `${line}\n`);
     } catch (err) {
       // The audit log must not crash the server
-      console.error(`[tdai-memory] Audit log write failed: ${err}`);
+      console.error(`[remem-mcp] Audit log write failed: ${err}`);
     }
   }
 

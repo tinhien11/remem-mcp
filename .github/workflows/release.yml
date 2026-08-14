@@ -61,8 +61,8 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/tdai-memory-mcp:${{ steps.version.outputs.VERSION }}
-            ghcr.io/${{ github.repository_owner }}/tdai-memory-mcp:latest
+            ghcr.io/${{ github.repository_owner }}/remem-mcp:${{ steps.version.outputs.VERSION }}
+            ghcr.io/${{ github.repository_owner }}/remem-mcp:latest
 
   # Create GitHub Release
   release:
@@ -85,12 +85,12 @@ jobs:
           body: |
             ## npm
             ```
-            npx tdai-memory-mcp@${{ steps.version.outputs.VERSION }}
+            npx remem-mcp@${{ steps.version.outputs.VERSION }}
             ```
 
             ## Docker
             ```
-            docker pull ghcr.io/tinhien11/tdai-memory-mcp:${{ steps.version.outputs.VERSION }}
+            docker pull ghcr.io/tinhien11/remem-mcp:${{ steps.version.outputs.VERSION }}
             ```
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

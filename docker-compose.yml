@@ -1,9 +1,9 @@
 services:
-  tdai-memory:
+  remem-mcp:
     build: .
-    container_name: tdai-memory-mcp
+    container_name: remem-mcp
     volumes:
-      - tdai-data:/data
+      - remem-data:/data
     environment:
       - TDAI_DB_PATH=/data/memory.db
       - TDAI_AUDIT_LOG_PATH=/data/audit.jsonl
@@ -17,16 +17,16 @@ services:
     tty: true
 
   # Optional: web viewer
-  tdai-memory-viewer:
+  remem-mcp-viewer:
     build: .
-    container_name: tdai-memory-viewer
+    container_name: remem-mcp-viewer
     command: ["viewer"]
     ports:
       - "7331:7331"
     volumes:
-      - tdai-data:/data
+      - remem-data:/data
     depends_on:
-      - tdai-memory
+      - remem-mcp
 
 volumes:
-  tdai-data:
+  remem-data:

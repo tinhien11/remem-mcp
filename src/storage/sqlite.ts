@@ -163,9 +163,9 @@ export class SQLiteBackend implements StorageBackend {
     try {
       this.db.pragma("wal_checkpoint(FULL)");
       copyFileSync(dbPath, backupPath);
-      console.error(`[tdai-memory] Backed up database to ${backupPath}`);
+      console.error(`[remem-mcp] Backed up database to ${backupPath}`);
     } catch (err) {
-      console.error(`[tdai-memory] Backup failed: ${err}`);
+      console.error(`[remem-mcp] Backup failed: ${err}`);
     }
   }
 
@@ -206,7 +206,7 @@ export class SQLiteBackend implements StorageBackend {
     const hasContentHash = cols.some((c) => c.name === "content_hash");
     if (!hasContentHash) {
       this.db.exec("ALTER TABLE captures ADD COLUMN content_hash TEXT");
-      console.error("[tdai-memory] Added content_hash column to captures");
+      console.error("[remem-mcp] Added content_hash column to captures");
     }
     const idxs = this.db
       .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_captures_hash'")
@@ -224,7 +224,7 @@ export class SQLiteBackend implements StorageBackend {
       stmt.run(hash, row.id);
     }
     if (rows.length > 0) {
-      console.error(`[tdai-memory] Backfilled content_hash for ${rows.length} existing captures`);
+      console.error(`[remem-mcp] Backfilled content_hash for ${rows.length} existing captures`);
     }
   }
 
@@ -302,7 +302,7 @@ export class SQLiteBackend implements StorageBackend {
     // Indexes are created by the full schema.sql run, not here.
 
     console.error(
-      "[tdai-memory] Migrated schema v2 → v3 (multi-tenant + messages + knowledge + skills + persona)",
+      "[remem-mcp] Migrated schema v2 → v3 (multi-tenant + messages + knowledge + skills + persona)",
     );
   }
 
@@ -312,9 +312,9 @@ export class SQLiteBackend implements StorageBackend {
     const hasDeletedAt = cols.some((c) => c.name === "deleted_at");
     if (!hasDeletedAt) {
       this.db.exec("ALTER TABLE captures ADD COLUMN deleted_at INTEGER");
-      console.error("[tdai-memory] Added deleted_at column to captures (tombstone support)");
+      console.error("[remem-mcp] Added deleted_at column to captures (tombstone support)");
     }
-    console.error("[tdai-memory] Migrated schema v3 → v4 (tombstone / soft delete)");
+    console.error("[remem-mcp] Migrated schema v3 → v4 (tombstone / soft delete)");
   }
 
   /** Migrate schema v4 → v5: add trust_state, rejection_reason, superseded_by columns. */
@@ -323,30 +323,30 @@ export class SQLiteBackend implements StorageBackend {
     const hasTrustState = cols.some((c) => c.name === "trust_state");
     if (!hasTrustState) {
       this.db.exec("ALTER TABLE captures ADD COLUMN trust_state TEXT NOT NULL DEFAULT 'candidate'");
-      console.error("[tdai-memory] Added trust_state column to captures");
+      console.error("[remem-mcp] Added trust_state column to captures");
     }
     const hasRejectionReason = cols.some((c) => c.name === "rejection_reason");
     if (!hasRejectionReason) {
       this.db.exec("ALTER TABLE captures ADD COLUMN rejection_reason TEXT");
-      console.error("[tdai-memory] Added rejection_reason column to captures");
+      console.error("[remem-mcp] Added rejection_reason column to captures");
     }
     const hasSupersededBy = cols.some((c) => c.name === "superseded_by");
     if (!hasSupersededBy) {
       this.db.exec("ALTER TABLE captures ADD COLUMN superseded_by TEXT REFERENCES captures(id)");
-      console.error("[tdai-memory] Added superseded_by column to captures");
+      console.error("[remem-mcp] Added superseded_by column to captures");
     }
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_captures_trust ON captures (trust_state)");
     this.db.exec(
       "CREATE INDEX IF NOT EXISTS idx_captures_rejected_hash ON captures (content_hash) WHERE trust_state = 'rejected'",
     );
-    console.error("[tdai-memory] Migrated schema v4 → v5 (trust state + correction)");
+    console.error("[remem-mcp] Migrated schema v4 → v5 (trust state + correction)");
   }
 
   /** Migrate schema v5 → v6: add CodeGraph + Wiki tables (created by runSchema). */
   private migrateV5ToV6(): void {
     // Tables are created by runSchema() which runs CREATE TABLE IF NOT EXISTS.
     // This migration is a no-op placeholder for version tracking.
-    console.error("[tdai-memory] Migrated schema v5 → v6 (CodeGraph + Wiki tables)");
+    console.error("[remem-mcp] Migrated schema v5 → v6 (CodeGraph + Wiki tables)");
   }
 
   async put(entry: CaptureEntry): Promise<void> {

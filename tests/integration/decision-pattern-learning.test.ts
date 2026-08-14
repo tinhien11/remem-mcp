@@ -142,7 +142,7 @@ function insertPattern(
 
 describe("Moat 2: Decision Learning", () => {
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-dec-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-dec-"));
     dbPath = join(tmpDir, "test.db");
     makeDb(dbPath);
   });
@@ -296,7 +296,7 @@ describe("Moat 2: Decision Learning", () => {
 
 describe("Moat 3: Pattern Learning", () => {
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-pat-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-pat-"));
     dbPath = join(tmpDir, "test.db");
     makeDb(dbPath);
   });
@@ -439,7 +439,7 @@ describe("Moat 3: Pattern Learning", () => {
 
 describe("Moat 2/3: Advanced Features", () => {
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-adv-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-adv-"));
     dbPath = join(tmpDir, "test.db");
     makeDb(dbPath);
   });

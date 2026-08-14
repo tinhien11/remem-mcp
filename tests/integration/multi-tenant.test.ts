@@ -54,7 +54,7 @@ describe("Integration: multi-tenant isolation", () => {
   let server: Server;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-tenant-test-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-tenant-test-"));
     dbPath = join(tmpDir, "memory.db");
     auditPath = join(tmpDir, "audit.jsonl");
 

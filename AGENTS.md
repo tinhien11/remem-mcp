@@ -1,8 +1,8 @@
 # Agent Rules
 
-## Always use tdai-memory-mcp
+## Always use remem-mcp
 
-You have a long-term memory server (`tdai-memory` MCP). Always prefer it over grep/glob for code navigation and project context.
+You have a long-term memory server (`remem-mcp` MCP). Always prefer it over grep/glob for code navigation and project context.
 
 ### Before answering or coding
 1. Call `recall` with the user's question as query

@@ -6,7 +6,7 @@ import { SQLiteBackend } from "../../src/storage/sqlite.js";
 import type { CaptureEntry } from "../../src/storage/types.js";
 import { generateId } from "../../src/utils/ulid.js";
 
-const testDbPath = join(homedir(), ".local", "share", "tdai-memory-mcp", "test-memory.db");
+const testDbPath = join(homedir(), ".local", "share", "remem-mcp", "test-memory.db");
 
 function makeEntry(overrides: Partial<CaptureEntry> = {}): CaptureEntry {
   return {

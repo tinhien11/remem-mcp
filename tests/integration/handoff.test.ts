@@ -75,7 +75,7 @@ describe("Integration: handoff tool", () => {
   let server: Server;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-handoff-test-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-handoff-test-"));
     dbPath = join(tmpDir, "memory.db");
     auditPath = join(tmpDir, "audit.jsonl");
 

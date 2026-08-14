@@ -1,30 +1,30 @@
-# tdai-memory-mcp
+# remem-mcp
 
-[![npm version](https://img.shields.io/npm/v/tdai-memory-mcp.svg)](https://www.npmjs.com/package/tdai-memory-mcp)
-[![GitHub stars](https://img.shields.io/github/stars/tinhien11/tdai-memory-mcp.svg)](https://github.com/tinhien11/tdai-memory-mcp)
+[![npm version](https://img.shields.io/npm/v/remem-mcp.svg)](https://www.npmjs.com/package/remem-mcp)
+[![GitHub stars](https://img.shields.io/github/stars/tinhien11/remem-mcp.svg)](https://github.com/tinhien11/remem-mcp)
 
 > Your coding agent stops repeating the same mistakes.
 
 Local memory that survives context compaction — learns from every error, injects fixes before the next attempt, and syncs to your git repo so your whole team shares it.
 
-<video src="https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/demo-learning-loop.mp4" controls muted width="100%"></video>
+<video src="https://raw.githubusercontent.com/tinhien11/remem-mcp/main/docs/screenshots/demo-learning-loop.mp4" controls muted width="100%"></video>
 
-![Demo (GIF)](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/demo-learning-loop.gif)
+![Demo (GIF)](https://raw.githubusercontent.com/tinhien11/remem-mcp/main/docs/screenshots/demo-learning-loop.gif)
 
 ---
 
 ## Install
 
 ```bash
-npx tdai-memory-mcp setup
+npx remem-mcp setup
 ```
 
 That's it. Auto-detects Claude Code, Cursor, Devin, Codex. Registers MCP server + hooks. Restart your agent.
 
 ```bash
-npx tdai-memory-mcp demo     # Live demo: real build, real errors, real hooks
-npx tdai-memory-mcp demo-codegraph  # Live CodeGraph demo on facebook/react
-npx tdai-memory-mcp status   # One dashboard: everything at a glance
+npx remem-mcp demo     # Live demo: real build, real errors, real hooks
+npx remem-mcp demo-codegraph  # Live CodeGraph demo on facebook/react
+npx remem-mcp status   # One dashboard: everything at a glance
 ```
 
 The demo creates a real TypeScript project, runs real `npm run build`, captures real TS2307 errors, and shows the full learning loop — capture → inject → fix → upvote → cross-project inheritance. No hardcoded strings.
@@ -33,7 +33,7 @@ The demo creates a real TypeScript project, runs real `npm run build`, captures 
 
 ## Why it's different
 
-| | tdai-memory-mcp | Mem0 | Claude MEMORY.md | Mneme |
+| | remem-mcp | Mem0 | Claude MEMORY.md | Mneme |
 |---|---|---|---|---|
 | **Survives compaction** | Yes — PreCompact hook saves checkpoint, re-injects after | Yes — cloud store | No — 200-line cap, silent truncation | Yes — PreCompact hook |
 | **Learns from errors** | Yes — auto-captures, injects fixes | No | No | No |
@@ -52,21 +52,21 @@ The demo creates a real TypeScript project, runs real `npm run build`, captures 
 <summary>Claude Code</summary>
 
 ```bash
-claude mcp add tdai-memory --scope user -- npx -y tdai-memory-mcp
-npx tdai-memory-mcp install-hooks
+claude mcp add remem-mcp --scope user -- npx -y remem-mcp
+npx remem-mcp install-hooks
 ```
 </details>
 
 <details>
 <summary>Cursor</summary>
 
-[![Install in Cursor](https://img.shields.io/badge/Cursor-Install-blue)](cursor://anysphere.cursor-deeplink/mcp/install?name=tdai-memory&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsInRkYWktbWVtb3J5LW1jcCJdfQ==)
+[![Install in Cursor](https://img.shields.io/badge/Cursor-Install-blue)](cursor://anysphere.cursor-deeplink/mcp/install?name=remem-mcp&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsInRkYWktbWVtb3J5LW1jcCJdfQ==)
 
 Or add to `~/.cursor/mcp.json`:
 ```json
 {
   "mcpServers": {
-    "tdai-memory": { "command": "npx", "args": ["-y", "tdai-memory-mcp"] }
+    "remem-mcp": { "command": "npx", "args": ["-y", "remem-mcp"] }
   }
 }
 ```
@@ -76,8 +76,8 @@ Or add to `~/.cursor/mcp.json`:
 <summary>Devin CLI</summary>
 
 ```bash
-devin mcp add tdai-memory --scope user -- npx -y tdai-memory-mcp
-npx tdai-memory-mcp install-hooks
+devin mcp add remem-mcp --scope user -- npx -y remem-mcp
+npx remem-mcp install-hooks
 ```
 </details>
 
@@ -86,15 +86,15 @@ npx tdai-memory-mcp install-hooks
 
 Add to `~/.codex/config.toml`:
 ```toml
-[mcp_servers.tdai-memory]
+[mcp_servers.remem-mcp]
 command = "npx"
-args = ["-y", "tdai-memory-mcp"]
+args = ["-y", "remem-mcp"]
 
-[mcp_servers.tdai-memory.env]
+[mcp_servers.remem-mcp.env]
 TDAI_GLOBAL_SESSION_KEY = "global"
 ```
 
-Then run `npx tdai-memory-mcp install-hooks`.
+Then run `npx remem-mcp install-hooks`.
 > MCP tools require `sandbox_mode = "danger-full-access"`.
 </details>
 
@@ -104,7 +104,7 @@ Then run `npx tdai-memory-mcp install-hooks`.
 
 Memory lives in a local SQLite database — outside the agent's context window. When the agent compacts or starts a new session, memory is re-injected automatically. No more re-explaining what you already told it yesterday.
 
-**PreCompact hook**: when the agent is about to compact context, tdai-memory saves a checkpoint (decisions made, approaches tried, what's verified working) to the DB. After compaction, the agent recalls it — so the compact doesn't destroy your session's learnings.
+**PreCompact hook**: when the agent is about to compact context, remem-mcp saves a checkpoint (decisions made, approaches tried, what's verified working) to the DB. After compaction, the agent recalls it — so the compact doesn't destroy your session's learnings.
 
 Two layers: **automatic** (runs via hooks, zero tool calls) and **on-demand** (you call when you need deeper context).
 
@@ -126,56 +126,56 @@ When the automatic loops aren't enough, use these for deeper code navigation.
 
 ```bash
 # 1. Index your codebase (one-time, rerun after major changes)
-npx tdai-memory-mcp index --path src --repo .
+npx remem-mcp index --path src --repo .
 
 # 2. Search symbols (auto-scoped to current directory)
-npx tdai-memory-mcp search-code --query "parseTar"
+npx remem-mcp search-code --query "parseTar"
 # → parseTar  at  src/parse.ts:22
 
 # 3. List symbols in a file
-npx tdai-memory-mcp list-code src/reporters/fancy.ts
+npx remem-mcp list-code src/reporters/fancy.ts
 # → Class    L49-135  FancyReporter
 # → Method   L86-134  formatLogObj
 
 # 4. Trace callers / callees / impact (use symbol ID from step 2)
-npx tdai-memory-mcp callers 01KZXPPHF93TS4HV8FWCSSK36A
-npx tdai-memory-mcp impact  01KZXPPHF93TS4HV8FWCSSK36A
+npx remem-mcp callers 01KZXPPHF93TS4HV8FWCSSK36A
+npx remem-mcp impact  01KZXPPHF93TS4HV8FWCSSK36A
 
 # Wiki + viewer
-npx tdai-memory-mcp wiki ingest --path docs      # Index markdown docs + ADRs
-npx tdai-memory-mcp wiki outdated                 # Find outdated wiki pages
-npx tdai-memory-mcp viewer                        # Web UI at localhost:7331
+npx remem-mcp wiki ingest --path docs      # Index markdown docs + ADRs
+npx remem-mcp wiki outdated                 # Find outdated wiki pages
+npx remem-mcp viewer                        # Web UI at localhost:7331
 ```
 
 - **CodeGraph** — symbol search, callers/callees, impact analysis. Auto-scoped to your project — no cross-project contamination.
 - **Wiki** — markdown docs, ADRs, outdated detection.
 - **Search** — hybrid BM25 + sqlite-vec vector search with RRF fusion. `explain_recall` shows scores.
 
-![CodeGraph demo](https://raw.githubusercontent.com/tinhien11/tdai-memory-mcp/main/docs/screenshots/demo-codegraph.gif)
+![CodeGraph demo](https://raw.githubusercontent.com/tinhien11/remem-mcp/main/docs/screenshots/demo-codegraph.gif)
 
 ---
 
 ## Daily commands
 
 ```bash
-npx tdai-memory-mcp status           # Everything at a glance
-npx tdai-memory-mcp viewer           # Web UI at localhost:7331
-npx tdai-memory-mcp errors           # Error dashboard
-npx tdai-memory-mcp decisions        # Decision dashboard
-npx tdai-memory-mcp patterns         # Pattern dashboard
-npx tdai-memory-mcp recent [N]       # Recent captures
-npx tdai-memory-mcp help all         # Full list of 40+ subcommands
+npx remem-mcp status           # Everything at a glance
+npx remem-mcp viewer           # Web UI at localhost:7331
+npx remem-mcp errors           # Error dashboard
+npx remem-mcp decisions        # Decision dashboard
+npx remem-mcp patterns         # Pattern dashboard
+npx remem-mcp recent [N]       # Recent captures
+npx remem-mcp help all         # Full list of 40+ subcommands
 ```
 
 ---
 
 ## Configuration
 
-All settings have defaults. Config file is optional: `~/.config/tdai-memory-mcp/config.json`.
+All settings have defaults. Config file is optional: `~/.config/remem-mcp/config.json`.
 
 | Setting | Env var | Default |
 |---|---|---|
-| DB path | `TDAI_DB_PATH` | `~/.local/share/tdai-memory-mcp/memory.db` |
+| DB path | `TDAI_DB_PATH` | `~/.local/share/remem-mcp/memory.db` |
 | Cross-project memory | `TDAI_GLOBAL_SESSION_KEY` | _(unset)_ |
 | Cross-project errors | `TDAI_GLOBAL_ERRORS` | _(unset, set to `1`)_ |
 | Suppress hook feedback | `TDAI_QUIET` | _(unset, set to `1`)_ |
@@ -183,14 +183,14 @@ All settings have defaults. Config file is optional: `~/.config/tdai-memory-mcp/
 | Core-only mode (disable advanced tools) | `TDAI_CORE_ONLY` | _(unset, set to `1`)_ |
 | LLM API key (pipeline) | `TDAI_LLM_API_KEY` | _(unset)_ |
 
-**Team sharing** — `npx tdai-memory-mcp sync-export` writes `.tdai-memory/memory-export.jsonl`. Commit it to git. Team members get the same memory on `git pull` (auto-imports on startup).
+**Team sharing** — `npx remem-mcp sync-export` writes `.remem-mcp/memory-export.jsonl`. Commit it to git. Team members get the same memory on `git pull` (auto-imports on startup).
 
 ---
 
 ## TypeScript SDK
 
 ```ts
-import { Memory } from "tdai-memory-mcp";
+import { Memory } from "remem-mcp";
 
 const memory = new Memory();
 await memory.capture("We chose SQLite for storage.", "decision", ["arch"]);
@@ -201,9 +201,9 @@ const results = await memory.recall("storage decision");
 
 ## Benchmark
 
-tdai-memory-mcp is evaluated against the same benchmarks as TencentDB Agent Memory, plus the Agent Memory Benchmark (AMB) suite.
+remem-mcp is evaluated against the same benchmarks as TencentDB Agent Memory, plus the Agent Memory Benchmark (AMB) suite.
 
-| Benchmark | tdai-memory-mcp | TencentDB Agent Memory | Without memory |
+| Benchmark | remem-mcp | TencentDB Agent Memory | Without memory |
 |---|---|---|---|
 | **AMB Layer 1** (basic recall) | **100** | — | — |
 | **AMB Layer 2** (multi-session) | **100** | — | — |
@@ -212,10 +212,10 @@ tdai-memory-mcp is evaluated against the same benchmarks as TencentDB Agent Memo
 | **PersonaMem** (personalization) | **80** | 76 | 48 |
 | **LongMemEval** (long-term memory, ICLR 2025) | **92** | — | — |
 
-- **PersonaMem** — [bowen-upenn/PersonaMem](https://github.com/bowen-upenn/PersonaMem) (588 questions, 20 personas, multiple-choice QA). TencentDB reports 76% with memory enabled, 48% without. tdai-memory-mcp scores **80%** using a search-recall proxy (no LLM API key needed).
-- **LoCoMo** — long conversation multi-hop QA (19 sessions, 400+ turns). tdai-memory-mcp scores **85%** with keyword-heuristic scoring.
-- **AMB** — Agent Memory Benchmark (L1: 56 recall tests, L2: 5 multi-session scenarios, L3: 1K+ memories with distractors). tdai-memory-mcp scores **100/100/100**.
-- **LongMemEval** — [xiaowu0162/LongMemEval](https://github.com/xiaowu0162/LongMemEval) (ICLR 2025, 500 questions, 5 memory abilities: temporal reasoning, multi-session, knowledge update, single-session recall, abstention). tdai-memory-mcp scores **92%** on the oracle variant.
+- **PersonaMem** — [bowen-upenn/PersonaMem](https://github.com/bowen-upenn/PersonaMem) (588 questions, 20 personas, multiple-choice QA). TencentDB reports 76% with memory enabled, 48% without. remem-mcp scores **80%** using a search-recall proxy (no LLM API key needed).
+- **LoCoMo** — long conversation multi-hop QA (19 sessions, 400+ turns). remem-mcp scores **85%** with keyword-heuristic scoring.
+- **AMB** — Agent Memory Benchmark (L1: 56 recall tests, L2: 5 multi-session scenarios, L3: 1K+ memories with distractors). remem-mcp scores **100/100/100**.
+- **LongMemEval** — [xiaowu0162/LongMemEval](https://github.com/xiaowu0162/LongMemEval) (ICLR 2025, 500 questions, 5 memory abilities: temporal reasoning, multi-session, knowledge update, single-session recall, abstention). remem-mcp scores **92%** on the oracle variant.
 
 Run the benchmarks:
 

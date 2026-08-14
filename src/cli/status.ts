@@ -5,12 +5,12 @@ import Database from "better-sqlite3";
 
 function defaultDbPath(): string {
   return (
-    process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "tdai-memory-mcp", "memory.db")
+    process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "remem-mcp", "memory.db")
   );
 }
 
 /**
- * `tdai-memory-mcp status` — One unified dashboard.
+ * `remem-mcp status` — One unified dashboard.
  *
  * Replaces running `stats` + `errors` + `decisions` + `patterns` + `doctor` separately.
  * Shows: health, all 3 learning loops, recent activity — in one screen.
@@ -20,7 +20,7 @@ function defaultDbPath(): string {
 export function status(dbPath: string = defaultDbPath()): void {
   const bar = "═".repeat(60);
   console.log("\n" + bar);
-  console.log("  tdai-memory-mcp status");
+  console.log("  remem-mcp status");
   console.log(bar + "\n");
 
   // 1. Health check
@@ -33,7 +33,7 @@ export function status(dbPath: string = defaultDbPath()): void {
     console.log(`  Size:      ${(dbSize / 1024 / 1024).toFixed(1)} MB`);
     console.log(`  Path:      ${dbPath}`);
   } else {
-    console.log("\n  No database yet. Run `tdai-memory-mcp setup` to get started.");
+    console.log("\n  No database yet. Run `remem-mcp setup` to get started.");
     console.log(bar + "\n");
     return;
   }
@@ -146,15 +146,15 @@ export function status(dbPath: string = defaultDbPath()): void {
   if (total.c === 0) {
     console.log("  Get started: use your agent normally. Memory builds up automatically.");
   } else if (errorCount.c > 0) {
-    console.log("  Drill down:  tdai-memory-mcp errors    (full error dashboard)");
+    console.log("  Drill down:  remem-mcp errors    (full error dashboard)");
   }
   if (decisionCount.c > 0) {
-    console.log("  Drill down:  tdai-memory-mcp decisions (decision dashboard)");
+    console.log("  Drill down:  remem-mcp decisions (decision dashboard)");
   }
   if (patternCount.c > 0) {
-    console.log("  Drill down:  tdai-memory-mcp patterns  (pattern dashboard)");
+    console.log("  Drill down:  remem-mcp patterns  (pattern dashboard)");
   }
-  console.log("  Full list:   tdai-memory-mcp help all");
+  console.log("  Full list:   remem-mcp help all");
   console.log(bar + "\n");
 
   db.close();

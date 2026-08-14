@@ -54,7 +54,7 @@ describe("Integration: conversation messages", () => {
   let server: Server;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-messages-test-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-messages-test-"));
     dbPath = join(tmpDir, "memory.db");
     auditPath = join(tmpDir, "audit.jsonl");
 

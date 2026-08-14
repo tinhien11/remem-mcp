@@ -32,7 +32,7 @@ describe("Edge cases: empty database", () => {
   let storage: SQLiteBackend;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-edge-empty-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-edge-empty-"));
     dbPath = join(tmpDir, "empty.db");
     storage = new SQLiteBackend(dbPath);
   });
@@ -114,7 +114,7 @@ describe("Edge cases: large content", () => {
   let storage: SQLiteBackend;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-edge-large-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-edge-large-"));
     dbPath = join(tmpDir, "large.db");
     storage = new SQLiteBackend(dbPath);
   });
@@ -215,7 +215,7 @@ describe("Edge cases: special characters", () => {
   let storage: SQLiteBackend;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-edge-chars-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-edge-chars-"));
     dbPath = join(tmpDir, "chars.db");
     storage = new SQLiteBackend(dbPath);
   });
@@ -444,7 +444,7 @@ describe("Edge cases: concurrent writes", () => {
   let dbPath: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-edge-conc-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-edge-conc-"));
     dbPath = join(tmpDir, "concurrent.db");
   });
 
@@ -594,7 +594,7 @@ describe("Edge cases: tags and metadata", () => {
   let storage: SQLiteBackend;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-edge-tags-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-edge-tags-"));
     dbPath = join(tmpDir, "tags.db");
     storage = new SQLiteBackend(dbPath);
   });
@@ -734,7 +734,7 @@ describe("Edge cases: session keys", () => {
   let storage: SQLiteBackend;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-edge-sessions-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-edge-sessions-"));
     dbPath = join(tmpDir, "sessions.db");
     storage = new SQLiteBackend(dbPath);
   });
@@ -819,7 +819,7 @@ describe("Edge cases: search behavior", () => {
   let storage: SQLiteBackend;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-edge-search-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-edge-search-"));
     dbPath = join(tmpDir, "search.db");
     storage = new SQLiteBackend(dbPath);
   });

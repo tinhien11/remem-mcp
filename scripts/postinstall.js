@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Postinstall script — runs automatically after `npm install -g tdai-memory-mcp`.
+ * Postinstall script — runs automatically after `npm install -g remem-mcp`.
  * Auto-registers MCP server + hooks in detected agent configs.
  * Silent on failure (don't block npm install). Only runs on global install.
  */

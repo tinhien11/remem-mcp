@@ -1,5 +1,5 @@
 ---
-name: tdai-memory
+name: remem-mcp
 description: Long-term memory for coding agents. Automatically recall project context before answering, and capture decisions, learnings, and fixes after completing work. Use when the user references past work, starts a new session, or when the task needs project context that is not in the current conversation.
 user-invocable: false
 ---
@@ -106,7 +106,7 @@ Rules for atoms:
 
 You can also run atom extraction on existing captures via the CLI:
 ```bash
-npx tdai-memory-mcp extract --team-id <id> --limit 50
+npx remem-mcp extract --team-id <id> --limit 50
 ```
 This requires `TDAI_LLM_API_KEY` to be set.
 
@@ -397,7 +397,7 @@ Do not call CodeGraph tools if the project has no source code files (only docs, 
 To auto-index after each commit, add this to `.git/hooks/post-commit`:
 
 ```bash
-npx tdai-memory-mcp hook-post-commit
+npx remem-mcp hook-post-commit
 ```
 
 ## Wiki (advanced — requires `TDAI_ENABLE_ADVANCED=1`)
@@ -442,16 +442,16 @@ The `recall` tool augments its results with matching wiki pages.
 
 ## Team-shared memory
 
-If the project has a `.tdai-memory/memory-export.json` file, it is automatically imported on server startup. This means teammates can share memory by committing this file to the repo.
+If the project has a `.remem-mcp/memory-export.json` file, it is automatically imported on server startup. This means teammates can share memory by committing this file to the repo.
 
 To export your memory for the team:
 ```bash
-npx tdai-memory-mcp sync-export
+npx remem-mcp sync-export
 ```
 
 To import a teammate's memory:
 ```bash
-npx tdai-memory-mcp sync-import
+npx remem-mcp sync-import
 ```
 
 The server auto-imports on startup, so you only need `sync-export` before committing.
@@ -462,18 +462,18 @@ The L1-L3 pipeline runs via CLI, not MCP tools. This keeps the MCP interface lea
 
 ```bash
 # Run L1 atom extraction on existing captures (requires TDAI_LLM_API_KEY)
-npx tdai-memory-mcp extract --team-id <id> --limit 50
+npx remem-mcp extract --team-id <id> --limit 50
 
 # List or search L1 atoms
-npx tdai-memory-mcp atoms --team-id <id>
-npx tdai-memory-mcp atoms --query "SQLite"
+npx remem-mcp atoms --team-id <id>
+npx remem-mcp atoms --query "SQLite"
 
 # List L2 scenarios
-npx tdai-memory-mcp scenarios --team-id <id>
+npx remem-mcp scenarios --team-id <id>
 
 # Read or write L3 persona
-npx tdai-memory-mcp persona --team-id <id> --agent-id <id> --user-id <id>
-npx tdai-memory-mcp persona --team-id <id> --agent-id <id> --user-id <id> --write "Prefers concise answers."
+npx remem-mcp persona --team-id <id> --agent-id <id> --user-id <id>
+npx remem-mcp persona --team-id <id> --agent-id <id> --user-id <id> --write "Prefers concise answers."
 ```
 
 ## When to forget
@@ -486,7 +486,7 @@ There are two modes:
 
 ## Lifecycle hooks (automatic)
 
-If hooks are installed (`npx tdai-memory-mcp install-hooks`), memory works automatically:
+If hooks are installed (`npx remem-mcp install-hooks`), memory works automatically:
 
 - **SessionStart**: Recent captures are injected into your context. You do not need to call `recall` manually.
 - **SessionEnd**: When the session ends, a hook silently captures the session summary (first user message + last assistant message) to the memory DB. You do not need to do anything — this runs automatically on session exit.
@@ -507,7 +507,7 @@ The error learning system is the core differentiator. It is based on Reflexion (
 To see your error learning dashboard:
 
 ```bash
-npx tdai-memory-mcp errors
+npx remem-mcp errors
 ```
 
 This shows: top recurring error types, cross-project patterns, confidence distribution, recent errors, and proven fixes.
@@ -521,9 +521,9 @@ By default, each project gets its own session key (`hash(cwd)`). To have both gl
 ```json
 {
   "mcpServers": {
-    "tdai-memory": {
+    "remem-mcp": {
       "command": "npx",
-      "args": ["-y", "tdai-memory-mcp"],
+      "args": ["-y", "remem-mcp"],
       "env": {
         "TDAI_GLOBAL_SESSION_KEY": "global"
       }
@@ -556,7 +556,7 @@ This forces all captures and recalls to use the same session key, ignoring the w
 4. Use tags that you will search for later (for example: "arch", "bug", "config").
 5. Do not tell the user "I am capturing this to memory." Just do it silently.
 6. Do not tell the user "I am recalling from memory." Just use the results.
-7. **Prefer tdai-memory tools over grep/glob.** Call `recall` first — it searches Memory + CodeGraph + Wiki in one call. Only use grep/glob if recall returns nothing relevant.
+7. **Prefer remem-mcp tools over grep/glob.** Call `recall` first — it searches Memory + CodeGraph + Wiki in one call. Only use grep/glob if recall returns nothing relevant.
 8. **Call `codegraph_search` instead of grep** when looking for function/class/method definitions. It understands code structure, not just text.
 9. **Call `codegraph_impact` before modifying a function** to see what else breaks.
 10. **Call `capture` after every non-trivial task** — decisions, bug fixes, learnings. Do not ask permission.

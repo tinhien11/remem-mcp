@@ -86,7 +86,7 @@ import { findOutdatedPages, ingestDirectory, searchWiki } from "./wiki/engine.js
 /** Default DB path. */
 function defaultDbPath(): string {
   return (
-    process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "tdai-memory-mcp", "memory.db")
+    process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "remem-mcp", "memory.db")
   );
 }
 
@@ -279,7 +279,7 @@ async function main(): Promise<void> {
     return;
   }
   if (arg === "setup") {
-    console.log("tdai-memory-mcp setup\n");
+    console.log("remem-mcp setup\n");
     console.log("This will register the MCP server, install hooks, and capture project basics.\n");
     await installMcpServer();
     console.log("");
@@ -361,7 +361,7 @@ async function main(): Promise<void> {
       );
       // Fallback to test capture
       const id = await mem.capture(
-        "tdai-memory-mcp setup completed. This is a test capture.",
+        "remem-mcp setup completed. This is a test capture.",
         "task",
         ["setup", "test"],
       );
@@ -372,8 +372,8 @@ async function main(): Promise<void> {
     console.log("\nNext steps:");
     console.log("  1. Restart your agent (close and reopen the session)");
     console.log("  2. On restart, SessionStart hook loads project basics automatically");
-    console.log("  3. Run `npx tdai-memory-mcp status` anytime to see your memory");
-    console.log("\nOptional: `npx tdai-memory-mcp install-skill` teaches your agent");
+    console.log("  3. Run `npx remem-mcp status` anytime to see your memory");
+    console.log("\nOptional: `npx remem-mcp install-skill` teaches your agent");
     console.log("when to recall/capture mid-session (adds ~4K tokens to context).");
     console.log("\n─ Demo ─────────────────────────────────────────────────");
     await demo();
@@ -455,7 +455,7 @@ async function main(): Promise<void> {
       .get() as { ts: number | null };
     const dbSize = statSync(defaultDbPath()).size;
 
-    console.log("tdai-memory-mcp stats\n");
+    console.log("remem-mcp stats\n");
     console.log(`  Total captures: ${total}`);
     console.log(
       `  With vectors:   ${withVectors.cnt} (${total > 0 ? Math.round((withVectors.cnt / total) * 100) : 0}%)`,
@@ -499,7 +499,7 @@ async function main(): Promise<void> {
     const dbPath = defaultDbPath();
     const input = process.argv[3];
     if (!input) {
-      console.error("Error: Provide a file path. Usage: tdai-memory-mcp import <file.json>");
+      console.error("Error: Provide a file path. Usage: remem-mcp import <file.json>");
       process.exit(1);
     }
     importData(dbPath, input);
@@ -645,7 +645,7 @@ async function main(): Promise<void> {
     const projectRoot = process.cwd();
     const count = importArtifact(dbPath, projectRoot);
     if (count === 0) {
-      console.log("No team artifact found. Run 'tdai-memory-mcp sync-export' to create one.");
+      console.log("No team artifact found. Run 'remem-mcp sync-export' to create one.");
     }
     return;
   }
@@ -919,38 +919,38 @@ async function main(): Promise<void> {
     try {
       const pkgPath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
       const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
-      console.log(`tdai-memory-mcp v${pkg.version}`);
+      console.log(`remem-mcp v${pkg.version}`);
     } catch {
-      console.log("tdai-memory-mcp (version unknown)");
+      console.log("remem-mcp (version unknown)");
     }
     return;
   }
   if (arg === "help" || arg === "--help" || arg === "-h") {
     const showAll = process.argv[3] === "all";
-    console.log(`tdai-memory-mcp - Local-first MCP memory server
+    console.log(`remem-mcp - Local-first MCP memory server
 
 Getting started:
-  tdai-memory-mcp setup          One-command install (MCP + hooks + demo)
-  tdai-memory-mcp demo           Watch the error learning loop (30s)
-  tdai-memory-mcp demo-codegraph Live CodeGraph demo on facebook/react
-  tdai-memory-mcp status         One dashboard: health + all 3 loops + recent
-  tdai-memory-mcp viewer         Web UI at localhost:7331
-  tdai-memory-mcp doctor         Check setup health
-  tdai-memory-mcp version        Print version
+  remem-mcp setup          One-command install (MCP + hooks + demo)
+  remem-mcp demo           Watch the error learning loop (30s)
+  remem-mcp demo-codegraph Live CodeGraph demo on facebook/react
+  remem-mcp status         One dashboard: health + all 3 loops + recent
+  remem-mcp viewer         Web UI at localhost:7331
+  remem-mcp doctor         Check setup health
+  remem-mcp version        Print version
 
 Daily use:
-  tdai-memory-mcp errors         Error learning dashboard
-  tdai-memory-mcp decisions      Decision learning dashboard
-  tdai-memory-mcp patterns       Pattern learning dashboard
-  tdai-memory-mcp recent [N]     Show N most recent captures
+  remem-mcp errors         Error learning dashboard
+  remem-mcp decisions      Decision learning dashboard
+  remem-mcp patterns       Pattern learning dashboard
+  remem-mcp recent [N]     Show N most recent captures
 
-  Run \`tdai-memory-mcp help all\` for the full list of 40+ subcommands.
+  Run \`remem-mcp help all\` for the full list of 40+ subcommands.
 `);
     if (!showAll) {
       console.log(`The server runs as a stdio process. Add it to your MCP client:
   Claude Code: ~/.claude.json
   Cursor:      ~/.cursor/mcp.json
-  Devin CLI:   devin mcp add tdai-memory -- npx -y tdai-memory-mcp
+  Devin CLI:   devin mcp add remem-mcp -- npx -y remem-mcp
 `);
       return;
     }
@@ -960,85 +960,85 @@ Daily use:
 ${"─".repeat(60)}
 
 Setup & maintenance:
-  tdai-memory-mcp                Start the MCP server (stdio)
-  tdai-memory-mcp setup          Install MCP + hooks + run demo (one command)
-  tdai-memory-mcp install-skill  Install the agent skill for Devin CLI
-  tdai-memory-mcp install-hooks  Install lifecycle hooks (SessionStart, Stop, SessionEnd)
-  tdai-memory-mcp uninstall-hooks  Remove lifecycle hooks
-  tdai-memory-mcp hook-post-commit  Auto-index changed files (git post-commit hook)
-  tdai-memory-mcp doctor         Check setup health
-  tdai-memory-mcp demo           Run end-to-end learning loop demo (30s)
-  tdai-memory-mcp status         Unified dashboard (health + 3 loops + recent)
+  remem-mcp                Start the MCP server (stdio)
+  remem-mcp setup          Install MCP + hooks + run demo (one command)
+  remem-mcp install-skill  Install the agent skill for Devin CLI
+  remem-mcp install-hooks  Install lifecycle hooks (SessionStart, Stop, SessionEnd)
+  remem-mcp uninstall-hooks  Remove lifecycle hooks
+  remem-mcp hook-post-commit  Auto-index changed files (git post-commit hook)
+  remem-mcp doctor         Check setup health
+  remem-mcp demo           Run end-to-end learning loop demo (30s)
+  remem-mcp status         Unified dashboard (health + 3 loops + recent)
 
 Error learning (deep loop, 41 features):
-  tdai-memory-mcp errors              Error dashboard (patterns, fixes, resolution rate)
-  tdai-memory-mcp errors retro        Session retrospective (failure loops, wasted effort)
-  tdai-memory-mcp errors drift        Drift: injected warnings that were ignored
-  tdai-memory-mcp errors lineage      Fix lineage chains: E1→F1→E2→F2
-  tdai-memory-mcp errors by-goal      Error distribution by goal (set TDAI_GOAL_ID)
-  tdai-memory-mcp errors actions      Action items from resolved errors
-  tdai-memory-mcp errors severity     Severity distribution (blocker/critical/major/minor)
-  tdai-memory-mcp errors templates    Fix templates from 3+ similar resolved errors
-  tdai-memory-mcp errors correlations Sequential error patterns (E1→E2 within 10 min)
-  tdai-memory-mcp errors playbooks    Recovery playbooks (step-by-step)
-  tdai-memory-mcp errors stale        Fix staleness (older than TDAI_FIX_STALENESS_DAYS)
-  tdai-memory-mcp errors escalations  Auto-escalated errors (3+ recurrences)
-  tdai-memory-mcp errors context      Error context (git branch, commits, changed files)
-  tdai-memory-mcp errors inherited    Cross-project fix inheritance
-  tdai-memory-mcp errors provenance   Fix provenance chain
-  tdai-memory-mcp errors persona      Error profile per project
+  remem-mcp errors              Error dashboard (patterns, fixes, resolution rate)
+  remem-mcp errors retro        Session retrospective (failure loops, wasted effort)
+  remem-mcp errors drift        Drift: injected warnings that were ignored
+  remem-mcp errors lineage      Fix lineage chains: E1→F1→E2→F2
+  remem-mcp errors by-goal      Error distribution by goal (set TDAI_GOAL_ID)
+  remem-mcp errors actions      Action items from resolved errors
+  remem-mcp errors severity     Severity distribution (blocker/critical/major/minor)
+  remem-mcp errors templates    Fix templates from 3+ similar resolved errors
+  remem-mcp errors correlations Sequential error patterns (E1→E2 within 10 min)
+  remem-mcp errors playbooks    Recovery playbooks (step-by-step)
+  remem-mcp errors stale        Fix staleness (older than TDAI_FIX_STALENESS_DAYS)
+  remem-mcp errors escalations  Auto-escalated errors (3+ recurrences)
+  remem-mcp errors context      Error context (git branch, commits, changed files)
+  remem-mcp errors inherited    Cross-project fix inheritance
+  remem-mcp errors provenance   Fix provenance chain
+  remem-mcp errors persona      Error profile per project
 
 Decision learning (foundational loop):
-  tdai-memory-mcp decisions           Decision dashboard
-  tdai-memory-mcp decisions retro     Decision retrospective (follow rate, drift)
-  tdai-memory-mcp decisions conflicts Contradictory dependency choices
-  tdai-memory-mcp decisions inherited Cross-project decision inheritance
+  remem-mcp decisions           Decision dashboard
+  remem-mcp decisions retro     Decision retrospective (follow rate, drift)
+  remem-mcp decisions conflicts Contradictory dependency choices
+  remem-mcp decisions inherited Cross-project decision inheritance
 
 Pattern learning (foundational loop):
-  tdai-memory-mcp patterns            Pattern dashboard
-  tdai-memory-mcp patterns retro      Pattern retrospective (adoption rate)
-  tdai-memory-mcp patterns conflicts  Inconsistent style conflicts (CommonJS vs ESM)
-  tdai-memory-mcp patterns templates  Reusable templates from 3+ similar patterns
-  tdai-memory-mcp patterns inherited  Cross-project pattern inheritance
+  remem-mcp patterns            Pattern dashboard
+  remem-mcp patterns retro      Pattern retrospective (adoption rate)
+  remem-mcp patterns conflicts  Inconsistent style conflicts (CommonJS vs ESM)
+  remem-mcp patterns templates  Reusable templates from 3+ similar patterns
+  remem-mcp patterns inherited  Cross-project pattern inheritance
 
 CodeGraph:
-  tdai-memory-mcp index [--path src] [--repo .]  Index code symbols (Tree-sitter)
-  tdai-memory-mcp search-code --query <name>     Search symbols by name
-  tdai-memory-mcp callers <symbol_id>            Find who calls a symbol
-  tdai-memory-mcp callees <symbol_id>            Find what a symbol calls
-  tdai-memory-mcp impact <symbol_id>             Impact analysis (what breaks)
-  tdai-memory-mcp list-code <file_path>          List symbols in a file
+  remem-mcp index [--path src] [--repo .]  Index code symbols (Tree-sitter)
+  remem-mcp search-code --query <name>     Search symbols by name
+  remem-mcp callers <symbol_id>            Find who calls a symbol
+  remem-mcp callees <symbol_id>            Find what a symbol calls
+  remem-mcp impact <symbol_id>             Impact analysis (what breaks)
+  remem-mcp list-code <file_path>          List symbols in a file
 
 Wiki:
-  tdai-memory-mcp wiki ingest [--path docs]      Index markdown documentation
-  tdai-memory-mcp wiki search <query>            Search wiki pages
-  tdai-memory-mcp wiki outdated [--repo .]       Find outdated wiki pages
+  remem-mcp wiki ingest [--path docs]      Index markdown documentation
+  remem-mcp wiki search <query>            Search wiki pages
+  remem-mcp wiki outdated [--repo .]       Find outdated wiki pages
 
 Data:
-  tdai-memory-mcp stats          Memory statistics (by type, trust, size)
-  tdai-memory-mcp token-stats    Token savings report
-  tdai-memory-mcp verify [query] A/B proof: shows what memory injects vs re-reading files
-  tdai-memory-mcp recent [N]     Show N most recent captures (default: 20)
-  tdai-memory-mcp export [file]  Export captures to JSON (default: stdout)
-  tdai-memory-mcp import <file>  Import captures from JSON
-  tdai-memory-mcp backup [dir]   Backup database and audit log
-  tdai-memory-mcp viewer [port]  Start web viewer (default port: 7331)
-  tdai-memory-mcp sync-export    Export memory to .tdai-memory/ in project root
-  tdai-memory-mcp sync-import    Import memory from .tdai-memory/ (auto on startup)
+  remem-mcp stats          Memory statistics (by type, trust, size)
+  remem-mcp token-stats    Token savings report
+  remem-mcp verify [query] A/B proof: shows what memory injects vs re-reading files
+  remem-mcp recent [N]     Show N most recent captures (default: 20)
+  remem-mcp export [file]  Export captures to JSON (default: stdout)
+  remem-mcp import <file>  Import captures from JSON
+  remem-mcp backup [dir]   Backup database and audit log
+  remem-mcp viewer [port]  Start web viewer (default port: 7331)
+  remem-mcp sync-export    Export memory to .remem-mcp/ in project root
+  remem-mcp sync-import    Import memory from .remem-mcp/ (auto on startup)
 
 L1-L3 pipeline (require TDAI_LLM_API_KEY for extract):
-  tdai-memory-mcp extract        Run L1 atom extraction on existing captures
-  tdai-memory-mcp atoms          List or search L1 atoms
-  tdai-memory-mcp scenarios      List L2 scenarios
-  tdai-memory-mcp persona        Read or write L3 persona
+  remem-mcp extract        Run L1 atom extraction on existing captures
+  remem-mcp atoms          List or search L1 atoms
+  remem-mcp scenarios      List L2 scenarios
+  remem-mcp persona        Read or write L3 persona
 
 Knowledge & skills:
-  tdai-memory-mcp knowledge      List knowledge assets for a team
-  tdai-memory-mcp skills         List skills for a team
+  remem-mcp knowledge      List knowledge assets for a team
+  remem-mcp skills         List skills for a team
 
-  tdai-memory-mcp version        Print the version
-  tdai-memory-mcp help           Print short help
-  tdai-memory-mcp help all       Print this full list
+  remem-mcp version        Print the version
+  remem-mcp help           Print short help
+  remem-mcp help all       Print this full list
 
 Export options:
   --session-key <key>  Export only captures from this session
@@ -1056,10 +1056,10 @@ Common flags for L1-L3 and knowledge/skills commands:
 The server runs as a stdio process. Add it to your MCP client configuration:
   Claude Code: ~/.claude.json
   Cursor:      ~/.cursor/mcp.json
-  Devin CLI:   devin mcp add tdai-memory -- npx -y tdai-memory-mcp
+  Devin CLI:   devin mcp add remem-mcp -- npx -y remem-mcp
 
 To install the skill (Devin CLI only):
-  npx tdai-memory-mcp install-skill
+  npx remem-mcp install-skill
 `);
     return;
   }
@@ -1071,13 +1071,13 @@ To install the skill (Devin CLI only):
   try {
     importArtifact(config.dbPath, process.cwd());
   } catch (err) {
-    console.error(`[tdai-memory] Auto-import failed: ${err}`);
+    console.error(`[remem-mcp] Auto-import failed: ${err}`);
   }
 
   // Initialize the storage backend
   if (config.storage !== "sqlite") {
     console.error(
-      `[tdai-memory] Storage backend "${config.storage}" is not implemented yet. Using sqlite.`,
+      `[remem-mcp] Storage backend "${config.storage}" is not implemented yet. Using sqlite.`,
     );
   }
   const storage = new SQLiteBackend(config.dbPath);
@@ -1147,7 +1147,7 @@ To install the skill (Devin CLI only):
 }
 
 main().catch((err) => {
-  console.error(`[tdai-memory] Fatal error: ${err}`);
+  console.error(`[remem-mcp] Fatal error: ${err}`);
   process.exit(1);
 });
 
@@ -1162,7 +1162,7 @@ function estimateTokens(text: string): number {
  *  would have to re-read without memory. Inspired by Mnemos's verifier
  *  that runs Claude twice (with/without memory) to prove value. */
 async function verifyMemory(dbPath: string, query: string): Promise<void> {
-  console.log("tdai-memory-mcp verify — A/B proof of value\n");
+  console.log("remem-mcp verify — A/B proof of value\n");
   console.log(`Query: "${query}"\n`);
 
   const storage = new SQLiteBackend(dbPath);
@@ -1174,7 +1174,7 @@ async function verifyMemory(dbPath: string, query: string): Promise<void> {
 
   if (results.length === 0) {
     console.log("  No memories found for this query.");
-    console.log("  Run `npx tdai-memory-mcp setup` to bootstrap project basics,");
+    console.log("  Run `npx remem-mcp setup` to bootstrap project basics,");
     console.log("  or work on the project — hooks will auto-capture learnings.");
     storage.close();
     return;

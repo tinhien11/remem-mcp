@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-const testDir = join(homedir(), ".local", "share", "tdai-memory-mcp", "test-smoke");
+const testDir = join(homedir(), ".local", "share", "remem-mcp", "test-smoke");
 const dbPath = join(testDir, "memory.db");
 const auditPath = join(testDir, "audit.jsonl");
 const serverPath = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "index.js");

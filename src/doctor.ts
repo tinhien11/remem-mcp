@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { Memory } from "./sdk.js";
 
-/** Check if a JSON config file has the tdai-memory MCP server registered. */
+/** Check if a JSON config file has the remem-mcp MCP server registered. */
 function checkMcpConfig(name: string, path: string, key: string): { ok: boolean; detail: string } {
   if (!existsSync(path)) {
     return { ok: false, detail: `${name}: config not found at ${path}` };
@@ -12,7 +12,7 @@ function checkMcpConfig(name: string, path: string, key: string): { ok: boolean;
   try {
     const config = JSON.parse(readFileSync(path, "utf-8"));
     const servers = config[key] || {};
-    if (servers["tdai-memory"] || servers["tdai-memory-mcp"]) {
+    if (servers["remem-mcp"] || servers["remem-mcp"]) {
       return { ok: true, detail: `${name}: MCP server registered` };
     }
     return { ok: false, detail: `${name}: MCP server NOT registered` };
@@ -21,7 +21,7 @@ function checkMcpConfig(name: string, path: string, key: string): { ok: boolean;
   }
 }
 
-/** Check if a JSON config file has tdai-memory hooks. */
+/** Check if a JSON config file has remem-mcp hooks. */
 function checkHooksConfig(name: string, path: string): { ok: boolean; detail: string } {
   if (!existsSync(path)) {
     return { ok: false, detail: `${name}: config not found at ${path}` };
@@ -31,7 +31,7 @@ function checkHooksConfig(name: string, path: string): { ok: boolean; detail: st
     const hooks = config.hooks || {};
     const hasTdai = (event: string) =>
       hooks[event]?.some((h: { hooks: { command: string }[] }) =>
-        h.hooks?.some((hook: { command: string }) => hook.command?.includes("tdai-memory")),
+        h.hooks?.some((hook: { command: string }) => hook.command?.includes("remem-mcp")),
       );
     const required = ["SessionStart", "Stop"];
     const optional = ["PreToolUse", "PostToolUse", "SessionEnd", "PreCompact", "PostCompaction"];
@@ -57,7 +57,7 @@ function checkSkill(name: string, path: string): { ok: boolean; detail: string }
 
 /** Run all diagnostic checks and print results. */
 export async function doctor(): Promise<void> {
-  console.log("tdai-memory-mcp doctor\n");
+  console.log("remem-mcp doctor\n");
   console.log("Checking setup...\n");
 
   const checks: { ok: boolean; detail: string }[] = [];
@@ -67,7 +67,7 @@ export async function doctor(): Promise<void> {
   // 1. Binary
   let binPath = "";
   try {
-    binPath = execFileSync("which", ["tdai-memory-mcp"], { encoding: "utf-8" }).trim();
+    binPath = execFileSync("which", ["remem-mcp"], { encoding: "utf-8" }).trim();
     checks.push({ ok: true, detail: `Binary: ${binPath}` });
   } catch {
     checks.push({ ok: false, detail: "Binary: not in PATH (npx will be used)" });
@@ -91,7 +91,7 @@ export async function doctor(): Promise<void> {
   const codexConfig = join(homedir(), ".codex", "config.toml");
   if (existsSync(codexConfig)) {
     const content = readFileSync(codexConfig, "utf-8");
-    if (content.includes("[mcp_servers.tdai-memory]")) {
+    if (content.includes("[mcp_servers.remem-mcp]")) {
       checks.push({ ok: true, detail: "Codex CLI: MCP server registered" });
     } else {
       checks.push({ ok: false, detail: "Codex CLI: MCP server NOT registered" });
@@ -104,7 +104,7 @@ export async function doctor(): Promise<void> {
 
   if (existsSync(codexConfig)) {
     const content = readFileSync(codexConfig, "utf-8");
-    if (content.includes("tdai-memory") && content.includes("hook-recall")) {
+    if (content.includes("remem-mcp") && content.includes("hook-recall")) {
       const hasPostCompaction = content.includes("PostCompaction");
       const detail = hasPostCompaction
         ? "Codex CLI: hooks wired (SessionStart + Stop + PreToolUse, PostToolUse, PostCompaction, SessionEnd)"
@@ -117,21 +117,21 @@ export async function doctor(): Promise<void> {
 
   // 4. Skill files (optional)
   checks.push(
-    checkSkill("Claude Code", join(homedir(), ".claude", "skills", "tdai-memory", "SKILL.md")),
+    checkSkill("Claude Code", join(homedir(), ".claude", "skills", "remem-mcp", "SKILL.md")),
   );
   checks.push(
     checkSkill(
       "Devin CLI",
-      join(homedir(), ".config", "devin", "skills", "tdai-memory", "SKILL.md"),
+      join(homedir(), ".config", "devin", "skills", "remem-mcp", "SKILL.md"),
     ),
   );
   checks.push(
-    checkSkill("Generic", join(homedir(), ".agents", "skills", "tdai-memory", "SKILL.md")),
+    checkSkill("Generic", join(homedir(), ".agents", "skills", "remem-mcp", "SKILL.md")),
   );
 
   // 5. Database
   const dbPath =
-    process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "tdai-memory-mcp", "memory.db");
+    process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "remem-mcp", "memory.db");
   if (existsSync(dbPath)) {
     try {
       const mem = new Memory({ dbPath });
@@ -159,7 +159,7 @@ export async function doctor(): Promise<void> {
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   if (fail > 0) {
-    console.log("\nRun `npx tdai-memory-mcp setup` to fix missing configs.");
+    console.log("\nRun `npx remem-mcp setup` to fix missing configs.");
   } else {
     console.log("\nAll checks passed. Your agent has memory.");
   }

@@ -11,7 +11,7 @@ import {
   searchWiki,
 } from "../../src/wiki/engine.js";
 
-const TMP = join(process.env.HOME ?? "/tmp", ".local", "share", "tdai-memory-mcp", "test-wiki");
+const TMP = join(process.env.HOME ?? "/tmp", ".local", "share", "remem-mcp", "test-wiki");
 
 function makeDb(): Database.Database {
   const db = new Database(":memory:");

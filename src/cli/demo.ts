@@ -106,7 +106,7 @@ async function counterWithLabel(label: string, target: number, color = C.green):
 /** ASCII art banner. */
 function banner(): void {
   line(``);
-  line(`${C.bold}${C.cyan}  tdai-memory-mcp${C.reset}`);
+  line(`${C.bold}${C.cyan}  remem-mcp${C.reset}`);
   line(`${C.gray}  memory that learns from every mistake${C.reset}`);
   line(``);
 }
@@ -234,7 +234,7 @@ function createRealProject(dir: string, withError: boolean): void {
 }
 
 /**
- * `tdai-memory-mcp demo` — Cinematic terminal animation using REAL commands + REAL hooks.
+ * `remem-mcp demo` — Cinematic terminal animation using REAL commands + REAL hooks.
  *
  * Creates a real test project, runs real `npm run build`, captures real TS errors,
  * and passes real output to real hook handlers. Everything is real:
@@ -248,7 +248,7 @@ function createRealProject(dir: string, withError: boolean): void {
  */
 export async function demo(): Promise<void> {
   // ── Setup temp DB ──
-  const tmpDir = mkdtempSync(join(tmpdir(), "tdai-demo-"));
+  const tmpDir = mkdtempSync(join(tmpdir(), "remem-demo-"));
   const dbPath = join(tmpDir, "demo-memory.db");
   const db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
@@ -349,7 +349,7 @@ export async function demo(): Promise<void> {
   await sleep(800);
 
   // REAL PostToolUse hook — captures the REAL error
-  process.stdout.write(`  ${C.cyan}[tdai-memory]${C.reset} `);
+  process.stdout.write(`  ${C.cyan}[remem-mcp]${C.reset} `);
   await type(`PostToolUse hook firing...`, 14);
   await sleep(500);
 
@@ -398,7 +398,7 @@ export async function demo(): Promise<void> {
   await sleep(600);
 
   // REAL PostToolUse hook — success correlation → upvote + resolve
-  process.stdout.write(`  ${C.cyan}[tdai-memory]${C.reset} `);
+  process.stdout.write(`  ${C.cyan}[remem-mcp]${C.reset} `);
   await type(`PostToolUse hook firing...`, 14);
   await sleep(500);
 
@@ -457,7 +457,7 @@ export async function demo(): Promise<void> {
   line(`  ${C.gray}Agent runs: npm run build${C.reset}`);
   await sleep(600);
 
-  process.stdout.write(`  ${C.cyan}[tdai-memory]${C.reset} `);
+  process.stdout.write(`  ${C.cyan}[remem-mcp]${C.reset} `);
   await type(`PreToolUse hook firing...`, 14);
   await sleep(500);
 
@@ -493,7 +493,7 @@ export async function demo(): Promise<void> {
   await sleep(600);
 
   // REAL PostToolUse hook — success correlation → upvote + resolve
-  process.stdout.write(`  ${C.cyan}[tdai-memory]${C.reset} `);
+  process.stdout.write(`  ${C.cyan}[remem-mcp]${C.reset} `);
   await type(`PostToolUse hook firing...`, 14);
   await sleep(500);
 
@@ -594,7 +594,7 @@ export async function demo(): Promise<void> {
   await sleep(600);
 
   // REAL PreToolUse on project B — inherits fix from project A
-  process.stdout.write(`  ${C.magenta}[tdai-memory]${C.reset} `);
+  process.stdout.write(`  ${C.magenta}[remem-mcp]${C.reset} `);
   await type(`PreToolUse hook firing (project B)...`, 14);
   await sleep(500);
 
@@ -643,7 +643,7 @@ export async function demo(): Promise<void> {
   await sleep(500);
   banner();
   line();
-  line(`  ${C.bold}  tdai-memory-mcp status${C.reset}`);
+  line(`  ${C.bold}  remem-mcp status${C.reset}`);
   line(`  ${C.gray}  ════════════════════════════════════════════${C.reset}`);
   line();
   await sleep(1000);
@@ -701,7 +701,7 @@ export async function demo(): Promise<void> {
 }
 
 /**
- * `tdai-memory-mcp demo-codegraph` — Live CodeGraph demo on a real React repo.
+ * `remem-mcp demo-codegraph` — Live CodeGraph demo on a real React repo.
  *
  * Indexes facebook/react, searches symbols, finds callers, runs impact analysis.
  * Viewer opens at localhost:7331 showing the graph update in real-time.
@@ -715,7 +715,7 @@ export async function demoCodegraph(): Promise<void> {
 
   // Use the real DB so viewer can show it
   const dbPath =
-    process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "tdai-memory-mcp", "memory.db");
+    process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "remem-mcp", "memory.db");
   const distDir = dirname(fileURLToPath(import.meta.url));
   const indexPath = join(distDir, "index.js");
 
@@ -753,7 +753,7 @@ export async function demoCodegraph(): Promise<void> {
 
   line(`  ${C.gray}Indexing 1834 files with Tree-sitter...${C.reset}`);
   await sleep(500);
-  await prompt(`tdai-memory-mcp index --path packages --repo .`);
+  await prompt(`remem-mcp index --path packages --repo .`);
   await sleep(300);
 
   // Run real index
@@ -794,7 +794,7 @@ export async function demoCodegraph(): Promise<void> {
 
   line(`  ${C.gray}Agent asks: "Where is createElement defined?"${C.reset}`);
   await sleep(800);
-  await prompt(`tdai-memory-mcp codegraph search "createElement"`);
+  await prompt(`remem-mcp codegraph search "createElement"`);
   await sleep(300);
 
   // Query DB directly for search results
@@ -836,7 +836,7 @@ export async function demoCodegraph(): Promise<void> {
 
   line(`  ${C.gray}Agent asks: "Who calls createElement?"${C.reset}`);
   await sleep(800);
-  await prompt(`tdai-memory-mcp codegraph callers <createElement-id>`);
+  await prompt(`remem-mcp codegraph callers <createElement-id>`);
   await sleep(300);
 
   // Find callers via DB
@@ -887,7 +887,7 @@ export async function demoCodegraph(): Promise<void> {
 
   line(`  ${C.gray}Agent asks: "If I change createElement signature, what breaks?"${C.reset}`);
   await sleep(800);
-  await prompt(`tdai-memory-mcp codegraph impact <createElement-id>`);
+  await prompt(`remem-mcp codegraph impact <createElement-id>`);
   await sleep(300);
 
   // Run real impact analysis

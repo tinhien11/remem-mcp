@@ -34,4 +34,4 @@ jobs:
       - name: Test
         run: npm test
         env:
-          TDAI_DB_PATH: /tmp/tdai-test/memory.db
+          TDAI_DB_PATH: /tmp/remem-test/memory.db

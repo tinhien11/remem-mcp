@@ -908,7 +908,7 @@ function getTools(): Tool[] {
 export function createServer(opts: ServerOptions): Server {
   const server = new Server(
     {
-      name: "tdai-memory-mcp",
+      name: "remem-mcp",
       version: "0.5.6",
     },
     {
@@ -927,13 +927,13 @@ export function createServer(opts: ServerOptions): Server {
     return {
       resources: [
         {
-          uri: "tdai-memory://recent",
+          uri: "remem-mcp://recent",
           name: "Recent captures",
           description: "The 20 most recent memory captures.",
           mimeType: "text/plain",
         },
         {
-          uri: "tdai-memory://stats",
+          uri: "remem-mcp://stats",
           name: "Memory statistics",
           description: "Summary statistics for the memory database.",
           mimeType: "application/json",
@@ -945,7 +945,7 @@ export function createServer(opts: ServerOptions): Server {
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const uri = request.params.uri;
 
-    if (uri === "tdai-memory://recent") {
+    if (uri === "remem-mcp://recent") {
       const results = await opts.storage.search("", null, {
         limit: 20,
         offset: 0,
@@ -963,7 +963,7 @@ export function createServer(opts: ServerOptions): Server {
       };
     }
 
-    if (uri === "tdai-memory://stats") {
+    if (uri === "remem-mcp://stats") {
       return {
         contents: [
           {
@@ -971,7 +971,7 @@ export function createServer(opts: ServerOptions): Server {
             mimeType: "application/json",
             text: JSON.stringify({
               message: "Use the stats CLI command for full statistics.",
-              hint: "Run: npx tdai-memory-mcp stats",
+              hint: "Run: npx remem-mcp stats",
             }),
           },
         ],
@@ -1096,7 +1096,7 @@ async function handleRecall(
     try {
       queryEmbedding = await opts.embedder.embed(query);
     } catch (err) {
-      console.error(`[tdai-memory] Embedding failed: ${err}`);
+      console.error(`[remem-mcp] Embedding failed: ${err}`);
       vectorDegraded = true;
     }
   }
@@ -1327,7 +1327,7 @@ async function handleCapture(
     embedding = await opts.embedder.embed(redactedContent);
     await opts.storage.putVector(id, embedding);
   } catch (err) {
-    console.error(`[tdai-memory] Embedding failed: ${err}`);
+    console.error(`[remem-mcp] Embedding failed: ${err}`);
   }
 
   // Conflict detection: find similar captures in the same session.
@@ -1348,7 +1348,7 @@ async function handleCapture(
         conflictInfo = `\nConflicts detected:\n${conflictList}\nCall resolve to mark one as superseding the other.`;
       }
     } catch (err) {
-      console.error(`[tdai-memory] Conflict detection failed: ${err}`);
+      console.error(`[remem-mcp] Conflict detection failed: ${err}`);
     }
   }
 
@@ -1359,7 +1359,7 @@ async function handleCapture(
         { ...opts.pipelineCtx, sessionKey },
       );
     } catch (err) {
-      console.error(`[tdai-memory] Pipeline failed: ${err}`);
+      console.error(`[remem-mcp] Pipeline failed: ${err}`);
     }
   }
 
@@ -1433,7 +1433,7 @@ async function handleSearch(
     try {
       queryEmbedding = await opts.embedder.embed(query);
     } catch (err) {
-      console.error(`[tdai-memory] Embedding failed: ${err}`);
+      console.error(`[remem-mcp] Embedding failed: ${err}`);
       vectorDegraded = true;
     }
   }
@@ -1680,7 +1680,7 @@ async function handleExplainRecall(
     try {
       queryEmbedding = await opts.embedder.embed(query);
     } catch (err) {
-      console.error(`[tdai-memory] Embedding failed: ${err}`);
+      console.error(`[remem-mcp] Embedding failed: ${err}`);
       vectorDegraded = true;
     }
   }
@@ -2323,7 +2323,7 @@ async function handleHandoff(
     const embedding = await opts.embedder.embed(content);
     await opts.storage.putVector(id, embedding);
   } catch (err) {
-    console.error(`[tdai-memory] Embedding failed: ${err}`);
+    console.error(`[remem-mcp] Embedding failed: ${err}`);
   }
 
   opts.audit.log({
@@ -2448,7 +2448,7 @@ async function handleAdr(
     const embedding = await opts.embedder.embed(content);
     await opts.storage.putVector(id, embedding);
   } catch (err) {
-    console.error(`[tdai-memory] Embedding failed: ${err}`);
+    console.error(`[remem-mcp] Embedding failed: ${err}`);
   }
 
   opts.audit.log({

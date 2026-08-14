@@ -10,25 +10,25 @@ import { dirname, join } from "node:path";
  * For Claude Code: adds hooks to ~/.claude/settings.json under the "hooks" key.
  *
  * Hooks installed:
- * - SessionStart: runs `tdai-memory-mcp hook-recall` → injects recent memory into agent context
- * - SessionEnd: runs `tdai-memory-mcp hook-session-end` → silently captures session summary to memory DB
+ * - SessionStart: runs `remem-mcp hook-recall` → injects recent memory into agent context
+ * - SessionEnd: runs `remem-mcp hook-session-end` → silently captures session summary to memory DB
  */
 
 /**
- * Resolve the best command to invoke tdai-memory-mcp hooks.
+ * Resolve the best command to invoke remem-mcp hooks.
  * If the binary is globally installed, use it directly (fast, no npx overhead).
  * Fall back to npx --prefer-offline (uses cache, avoids re-download).
  */
 function hookCommand(subcommand: string): string {
   try {
-    const binPath = execFileSync("which", ["tdai-memory-mcp"], { encoding: "utf-8" }).trim();
+    const binPath = execFileSync("which", ["remem-mcp"], { encoding: "utf-8" }).trim();
     if (binPath && existsSync(binPath)) {
       return `${binPath} ${subcommand}`;
     }
   } catch {
     // Binary not found — fall back to npx
   }
-  return `npx --prefer-offline -y tdai-memory-mcp ${subcommand}`;
+  return `npx --prefer-offline -y remem-mcp ${subcommand}`;
 }
 
 /** Hooks configuration for Devin CLI and Codex CLI.
@@ -141,11 +141,11 @@ function mergeHooks(
 
   for (const [event, newEntries] of Object.entries(hooks)) {
     const existingEntries = (existing[event] as unknown[]) ?? [];
-    // Filter out any previous tdai-memory hooks for this event (avoid duplicates on re-install)
+    // Filter out any previous remem-mcp hooks for this event (avoid duplicates on re-install)
     const filtered = existingEntries.filter((entry) => {
       const hooks = (entry as { hooks?: { command?: string }[] })?.hooks;
       if (!hooks) return true;
-      return !hooks.some((h) => h?.command?.includes("tdai-memory"));
+      return !hooks.some((h) => h?.command?.includes("remem-mcp"));
     });
     merged[event] = [...filtered, ...(newEntries as unknown[])];
   }
@@ -217,15 +217,15 @@ function installCodexHooks(): boolean {
 
   let content = readFileSync(configPath, "utf-8");
 
-  // Check if tdai-memory hooks are already installed
-  if (content.includes(">>> tdai-memory SessionStart >>>")) {
+  // Check if remem-mcp hooks are already installed
+  if (content.includes(">>> remem-mcp SessionStart >>>")) {
     console.log(`  Codex CLI: Hooks already installed in ${configPath}`);
     return true;
   }
 
-  // Append tdai-memory hooks to the TOML config
+  // Append remem-mcp hooks to the TOML config
   const hooksToml = `
-# >>> tdai-memory SessionStart >>>
+# >>> remem-mcp SessionStart >>>
 [[hooks.SessionStart]]
 matcher = "startup|resume|clear|compact"
 
@@ -233,9 +233,9 @@ matcher = "startup|resume|clear|compact"
 type = "command"
 command = "${hookCommand("hook-recall")}"
 timeout = 10
-# <<< tdai-memory SessionStart <<<
+# <<< remem-mcp SessionStart <<<
 
-# >>> tdai-memory PreToolUse >>>
+# >>> remem-mcp PreToolUse >>>
 [[hooks.PreToolUse]]
 matcher = "Bash|exec"
 
@@ -243,9 +243,9 @@ matcher = "Bash|exec"
 type = "command"
 command = "${hookCommand("hook-pre-tool-use")}"
 timeout = 5
-# <<< tdai-memory PreToolUse <<<
+# <<< remem-mcp PreToolUse <<<
 
-# >>> tdai-memory PostToolUse >>>
+# >>> remem-mcp PostToolUse >>>
 [[hooks.PostToolUse]]
 matcher = "Bash|exec"
 
@@ -253,34 +253,34 @@ matcher = "Bash|exec"
 type = "command"
 command = "${hookCommand("hook-post-tool-use")}"
 timeout = 5
-# <<< tdai-memory PostToolUse <<<
+# <<< remem-mcp PostToolUse <<<
 
-# >>> tdai-memory PostCompaction >>>
+# >>> remem-mcp PostCompaction >>>
 [[hooks.PostCompaction]]
 
 [[hooks.PostCompaction.hooks]]
 type = "command"
 command = "${hookCommand("hook-post-compaction")}"
 timeout = 10
-# <<< tdai-memory PostCompaction <<<
+# <<< remem-mcp PostCompaction <<<
 
-# >>> tdai-memory Stop >>>
+# >>> remem-mcp Stop >>>
 [[hooks.Stop]]
 
 [[hooks.Stop.hooks]]
 type = "command"
 command = "${hookCommand("hook-stop")}"
 timeout = 5
-# <<< tdai-memory Stop <<<
+# <<< remem-mcp Stop <<<
 
-# >>> tdai-memory SessionEnd >>>
+# >>> remem-mcp SessionEnd >>>
 [[hooks.SessionEnd]]
 
 [[hooks.SessionEnd.hooks]]
 type = "command"
 command = "${hookCommand("hook-session-end")}"
 timeout = 10
-# <<< tdai-memory SessionEnd <<<
+# <<< remem-mcp SessionEnd <<<
 `;
 
   content = content.trimEnd() + "\n" + hooksToml;
@@ -325,7 +325,7 @@ export async function uninstallHooks(): Promise<void> {
   console.log("Removing lifecycle hooks...\n");
 
   let removed = 0;
-  const tdaiEvents = [
+  const rememEvents = [
     "SessionStart",
     "SessionEnd",
     "Stop",
@@ -341,13 +341,13 @@ export async function uninstallHooks(): Promise<void> {
     const config = readJsonConfig(devinPath);
     if (config.hooks) {
       const hooks = config.hooks as Record<string, unknown[]>;
-      for (const ev of tdaiEvents) {
+      for (const ev of rememEvents) {
         if (hooks[ev]) {
-          // Filter out only tdai-memory hooks, preserve user hooks
+          // Filter out only remem-mcp hooks, preserve user hooks
           hooks[ev] = (hooks[ev] as { hooks?: { command?: string }[] }[]).filter((entry) => {
             const entryHooks = entry?.hooks;
             if (!entryHooks) return true;
-            return !entryHooks.some((h) => h?.command?.includes("tdai-memory"));
+            return !entryHooks.some((h) => h?.command?.includes("remem-mcp"));
           });
           if (Array.isArray(hooks[ev]) && hooks[ev].length === 0) {
             delete hooks[ev];
@@ -369,12 +369,12 @@ export async function uninstallHooks(): Promise<void> {
     const config = readJsonConfig(claudePath);
     if (config.hooks) {
       const hooks = config.hooks as Record<string, unknown[]>;
-      for (const ev of tdaiEvents) {
+      for (const ev of rememEvents) {
         if (hooks[ev]) {
           hooks[ev] = (hooks[ev] as { hooks?: { command?: string }[] }[]).filter((entry) => {
             const entryHooks = entry?.hooks;
             if (!entryHooks) return true;
-            return !entryHooks.some((h) => h?.command?.includes("tdai-memory"));
+            return !entryHooks.some((h) => h?.command?.includes("remem-mcp"));
           });
           if (Array.isArray(hooks[ev]) && hooks[ev].length === 0) {
             delete hooks[ev];
@@ -394,9 +394,9 @@ export async function uninstallHooks(): Promise<void> {
   const codexPath = join(homedir(), ".codex", "config.toml");
   if (existsSync(codexPath)) {
     let content = readFileSync(codexPath, "utf-8");
-    if (content.includes(">>> tdai-memory")) {
-      // Remove all tdai-memory TOML blocks (between >>> tdai-memory ... >>> and <<< tdai-memory ... <<<)
-      content = content.replace(/\n?# >>> tdai-memory[\s\S]*?# <<< tdai-memory[^<]*<<<\n?/g, "\n");
+    if (content.includes(">>> remem-mcp")) {
+      // Remove all remem-mcp TOML blocks (between >>> remem-mcp ... >>> and <<< remem-mcp ... <<<)
+      content = content.replace(/\n?# >>> remem-mcp[\s\S]*?# <<< remem-mcp[^<]*<<<\n?/g, "\n");
       writeFileSync(codexPath, content.trimEnd() + "\n", "utf-8");
       console.log(`  Codex CLI: Hooks removed from ${codexPath}`);
       removed++;

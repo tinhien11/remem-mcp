@@ -41,7 +41,7 @@ describe("Integration: L1 atom extraction pipeline", () => {
   let storage: SQLiteBackend;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-atom-test-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-atom-test-"));
     dbPath = join(tmpDir, "memory.db");
     storage = new SQLiteBackend(dbPath);
   });
@@ -231,7 +231,7 @@ describe("Integration: L3 persona", () => {
   let storage: SQLiteBackend;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-persona-test-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-persona-test-"));
     dbPath = join(tmpDir, "memory.db");
     storage = new SQLiteBackend(dbPath);
   });
@@ -288,7 +288,7 @@ describe("Integration: L2 scenarios", () => {
   let storage: SQLiteBackend;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-scenario-test-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-scenario-test-"));
     dbPath = join(tmpDir, "memory.db");
     storage = new SQLiteBackend(dbPath);
   });

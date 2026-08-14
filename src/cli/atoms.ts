@@ -5,7 +5,7 @@ import type { AtomEntry } from "../storage/types.js";
  * atoms CLI command: list or search L1 atoms.
  *
  * Usage:
- *   tdai-memory-mcp atoms [--team-id <id>] [--agent-id <id>] [--user-id <id>] [--query <text>] [--limit <n>]
+ *   remem-mcp atoms [--team-id <id>] [--agent-id <id>] [--user-id <id>] [--query <text>] [--limit <n>]
  */
 export async function atomsCommand(dbPath: string, flags: Record<string, string>): Promise<void> {
   const storage = new SQLiteBackend(dbPath);

@@ -331,7 +331,7 @@ export function startViewer(dbPath: string, port: number): Server {
       try {
         const logPath =
           process.env.TDAI_HOOK_LOG_PATH ??
-          join(homedir(), ".local", "share", "tdai-memory-mcp", "session.log");
+          join(homedir(), ".local", "share", "remem-mcp", "session.log");
 
         const captures = db
           .prepare("SELECT content FROM captures ORDER BY created_at ASC")
@@ -409,7 +409,7 @@ export function startViewer(dbPath: string, port: number): Server {
   });
 
   server.listen(port, "127.0.0.1", () => {
-    console.log(`\n  tdai-memory viewer running at http://localhost:${port}\n`);
+    console.log(`\n  remem-mcp viewer running at http://localhost:${port}\n`);
     console.log(`  Press Ctrl+C to stop.\n`);
   });
 
@@ -427,7 +427,7 @@ function renderPage(): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>tdai-memory Memory Viewer</title>
+<title>remem-mcp Memory Viewer</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -1239,7 +1239,7 @@ function renderPage(): string {
 
 <!-- ─── Nav ─── -->
 <nav class="nav">
-  <div class="nav-brand">tdai-memory</div>
+  <div class="nav-brand">remem-mcp</div>
   <div class="nav-tabs">
     <button class="nav-tab active" data-tab="memory" onclick="switchTab('memory')">Memory</button>
     <button class="nav-tab" data-tab="codegraph" onclick="switchTab('codegraph')">CodeGraph</button>
@@ -1470,7 +1470,7 @@ function renderPage(): string {
           + '</div>';
       }).join('');
     } catch(e) {
-      document.getElementById('cgStatsGrid').innerHTML = '<p style="color:var(--text-dim);padding:1.5rem 0">No CodeGraph data. Run: tdai-memory-mcp index --path src --repo .</p>';
+      document.getElementById('cgStatsGrid').innerHTML = '<p style="color:var(--text-dim);padding:1.5rem 0">No CodeGraph data. Run: remem-mcp index --path src --repo .</p>';
     }
   }
 
@@ -1583,7 +1583,7 @@ function renderPage(): string {
           + '</div>';
       }).join('');
     } catch(e) {
-      document.getElementById('wikiStatsGrid').innerHTML = '<p style="color:var(--text-dim);padding:1.5rem 0">No Wiki data. Run: tdai-memory-mcp wiki ingest --path docs --repo .</p>';
+      document.getElementById('wikiStatsGrid').innerHTML = '<p style="color:var(--text-dim);padding:1.5rem 0">No Wiki data. Run: remem-mcp wiki ingest --path docs --repo .</p>';
     }
   }
 
@@ -1748,10 +1748,10 @@ function renderPage(): string {
 
   // ─── Theme ───
   function getStoredTheme() {
-    try { return localStorage.getItem('tdai-theme'); } catch(e) { return null; }
+    try { return localStorage.getItem('remem-theme'); } catch(e) { return null; }
   }
   function setStoredTheme(t) {
-    try { localStorage.setItem('tdai-theme', t); } catch(e) {}
+    try { localStorage.setItem('remem-theme', t); } catch(e) {}
   }
   function applyTheme(t) {
     document.documentElement.setAttribute('data-theme', t);

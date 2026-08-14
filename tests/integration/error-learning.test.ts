@@ -192,7 +192,7 @@ describe("Integration: error learning — PostToolUse capture", () => {
   let dbPath: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-error-test-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-error-test-"));
     dbPath = join(tmpDir, "memory.db");
   });
 
@@ -312,7 +312,7 @@ describe("Integration: error learning — PreToolUse injection", () => {
   let dbPath: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-pretool-test-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-pretool-test-"));
     dbPath = join(tmpDir, "memory.db");
   });
 
@@ -504,7 +504,7 @@ describe("Integration: error learning — errors CLI dashboard", () => {
   let dbPath: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-dashboard-test-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-dashboard-test-"));
     dbPath = join(tmpDir, "memory.db");
   });
 
@@ -600,7 +600,7 @@ describe("Integration: error learning — cross-project pattern detection", () =
   let dbPath: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-xproject-test-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-xproject-test-"));
     dbPath = join(tmpDir, "memory.db");
   });
 
@@ -660,7 +660,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
   let dbPath: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-smart-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-smart-"));
     dbPath = join(tmpDir, "memory.db");
     // Create a file that errors can reference (passes stale check)
     mkdirSync(join(tmpDir, "src"), { recursive: true });

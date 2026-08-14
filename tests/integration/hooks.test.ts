@@ -66,7 +66,7 @@ describe("Integration: hook-recall", () => {
   let dbPath: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-hook-test-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-hook-test-"));
     dbPath = join(tmpDir, "memory.db");
   });
 
@@ -91,7 +91,7 @@ describe("Integration: hook-recall", () => {
 
     expect(parsed.hookSpecificOutput).toBeDefined();
     expect(parsed.hookSpecificOutput.hookEventName).toBe("SessionStart");
-    expect(parsed.hookSpecificOutput.additionalContext).toContain("[tdai-memory]");
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("[remem-mcp]");
     expect(parsed.hookSpecificOutput.additionalContext).toContain("Use SQLite for storage");
     expect(parsed.hookSpecificOutput.additionalContext).toContain("FTS5 supports BM25 ranking");
   });
@@ -166,7 +166,7 @@ describe("Integration: hook-session-end", () => {
   let transcriptDir: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-session-end-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-session-end-"));
     dbPath = join(tmpDir, "memory.db");
     transcriptDir = join(tmpDir, "transcripts");
     mkdirSync(transcriptDir, { recursive: true });
@@ -338,7 +338,7 @@ describe("Integration: install-hooks", () => {
   let fakeHome: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-install-hooks-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-install-hooks-"));
     fakeHome = join(tmpDir, "fake-home");
     mkdirSync(join(fakeHome, ".config", "devin"), { recursive: true });
   });
@@ -394,13 +394,13 @@ describe("Integration: install-hooks", () => {
     expect(config.hooks.SessionEnd).toBeDefined();
   });
 
-  it("uninstall-hooks removes tdai-memory hooks but preserves user hooks", () => {
+  it("uninstall-hooks removes remem-mcp hooks but preserves user hooks", () => {
     const configPath = join(fakeHome, ".config", "devin", "config.json");
     const configWithHooks = {
       agent: { model: "test" },
       hooks: {
-        SessionStart: [{ hooks: [{ type: "command", command: "tdai-memory-mcp hook-recall" }] }],
-        SessionEnd: [{ hooks: [{ type: "command", command: "tdai-memory-mcp hook-session-end" }] }],
+        SessionStart: [{ hooks: [{ type: "command", command: "remem-mcp hook-recall" }] }],
+        SessionEnd: [{ hooks: [{ type: "command", command: "remem-mcp hook-session-end" }] }],
         PreToolUse: [{ hooks: [{ type: "command", command: "keep-me" }] }],
       },
     };
@@ -423,8 +423,8 @@ describe("Integration: install-hooks", () => {
     const configWithOnlyOurHooks = {
       agent: { model: "test" },
       hooks: {
-        SessionStart: [{ hooks: [{ type: "command", command: "tdai-memory-mcp hook-recall" }] }],
-        SessionEnd: [{ hooks: [{ type: "command", command: "tdai-memory-mcp hook-session-end" }] }],
+        SessionStart: [{ hooks: [{ type: "command", command: "remem-mcp hook-recall" }] }],
+        SessionEnd: [{ hooks: [{ type: "command", command: "remem-mcp hook-session-end" }] }],
       },
     };
     writeFileSync(configPath, JSON.stringify(configWithOnlyOurHooks, null, 2));
@@ -445,7 +445,7 @@ describe("Integration: hook-pre-compact", () => {
   let dbPath: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "tdai-precompact-test-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "remem-precompact-test-"));
     dbPath = join(tmpDir, "memory.db");
   });
 
@@ -465,7 +465,7 @@ describe("Integration: hook-pre-compact", () => {
     // Should return PreCompact hook output with recovery context
     expect(parsed.hookSpecificOutput).toBeDefined();
     expect(parsed.hookSpecificOutput.hookEventName).toBe("PreCompact");
-    expect(parsed.hookSpecificOutput.additionalContext).toContain("[tdai-memory]");
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("[remem-mcp]");
     expect(parsed.hookSpecificOutput.additionalContext).toContain("compaction");
 
     // Should have saved a checkpoint capture to the DB
@@ -477,7 +477,7 @@ describe("Integration: hook-pre-compact", () => {
     expect(rows.length).toBeGreaterThanOrEqual(1);
     expect(rows[0].type).toBe("task");
     expect(rows[0].content).toContain("compaction");
-    expect(rows[0].agent_id).toBe("tdai-memory-hook");
+    expect(rows[0].agent_id).toBe("remem-mcp-hook");
   });
 
   it("handles empty stdin gracefully", () => {

@@ -9,7 +9,7 @@ import type { CaptureEntry } from "../storage/types.js";
  * extract CLI command: run L1 atom extraction on existing captures.
  *
  * Usage:
- *   tdai-memory-mcp extract [--team-id <id>] [--limit <n>] [--capture-id <id>]
+ *   remem-mcp extract [--team-id <id>] [--limit <n>] [--capture-id <id>]
  *
  * Requires TDAI_LLM_API_KEY (or OPENAI_API_KEY) environment variable.
  */

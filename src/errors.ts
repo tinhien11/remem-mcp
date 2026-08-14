@@ -5,12 +5,12 @@ import Database from "better-sqlite3";
 /** Default DB path (matches index.ts). */
 function defaultDbPath(): string {
   return (
-    process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "tdai-memory-mcp", "memory.db")
+    process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "remem-mcp", "memory.db")
   );
 }
 
 /**
- * `tdai-memory-mcp errors` — Error learning dashboard.
+ * `remem-mcp errors` — Error learning dashboard.
  * Shows: top recurring error patterns, resolution rate, cross-project patterns,
  * confidence distribution, and recent errors.
  *
@@ -25,7 +25,7 @@ export function errors(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp errors — Error Learning Dashboard\n");
+  console.log("remem-mcp errors — Error Learning Dashboard\n");
   console.log(`${"─".repeat(60)}\n`);
 
   // 1. Summary stats
@@ -173,7 +173,7 @@ export function errors(dbPath: string = defaultDbPath()): void {
 }
 
 /**
- * `tdai-memory-mcp errors retro` — Session retrospective.
+ * `remem-mcp errors retro` — Session retrospective.
  * Analyzes error history for failure loops, wasted effort, repeated errors,
  * and stubborn commands. Helps the agent (and user) learn from patterns.
  *
@@ -188,7 +188,7 @@ export function errorsRetro(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp errors retro — Session Retrospective\n");
+  console.log("remem-mcp errors retro — Session Retrospective\n");
   console.log(`${"─".repeat(60)}\n`);
 
   // Time window: last 7 days by default (configurable via TDAI_RETRO_DAYS)
@@ -441,7 +441,7 @@ export function errorsRetro(dbPath: string = defaultDbPath()): void {
     }
     console.log(
       `\n  💡 These errors were injected as warnings but the agent still hit them.\n` +
-        `     Run \`tdai-memory-mcp errors drift\` for the full report.\n`,
+        `     Run \`remem-mcp errors drift\` for the full report.\n`,
     );
   }
 
@@ -637,7 +637,7 @@ export function errorsRetro(dbPath: string = defaultDbPath()): void {
 }
 
 /**
- * `tdai-memory-mcp errors drift` — Drift detection report.
+ * `remem-mcp errors drift` — Drift detection report.
  * Shows errors that were injected by PreToolUse but still occurred
  * (the agent was warned but ignored the warning).
  *
@@ -652,7 +652,7 @@ export function errorsDrift(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp errors drift — Drift Detection Report\n");
+  console.log("remem-mcp errors drift — Drift Detection Report\n");
   console.log(`${"─".repeat(60)}\n`);
 
   const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
@@ -792,7 +792,7 @@ export function errorsDrift(dbPath: string = defaultDbPath()): void {
 }
 
 /**
- * `tdai-memory-mcp errors lineage` — Fix lineage chain report.
+ * `remem-mcp errors lineage` — Fix lineage chain report.
  * Shows chains of errors linked by caused_by_error_id:
  *   E1 → F1 → E2 → F2 → E3
  * where each fix caused the next error (regression chain).
@@ -806,7 +806,7 @@ export function errorsLineage(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp errors lineage — Fix Lineage Chains\n");
+  console.log("remem-mcp errors lineage — Fix Lineage Chains\n");
   console.log(`${"─".repeat(60)}\n`);
 
   const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
@@ -1024,7 +1024,7 @@ export function errorsLineage(dbPath: string = defaultDbPath()): void {
 }
 
 /**
- * `tdai-memory-mcp errors by-goal` — Goal-linked error report.
+ * `remem-mcp errors by-goal` — Goal-linked error report.
  * Shows error distribution by goal_id (set via TDAI_GOAL_ID env var).
  * (LoopX-inspired: link errors to the goals they block)
  */
@@ -1037,7 +1037,7 @@ export function errorsByGoal(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp errors by-goal — Goal-Linked Error Report\n");
+  console.log("remem-mcp errors by-goal — Goal-Linked Error Report\n");
   console.log(`${"─".repeat(60)}\n`);
 
   const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
@@ -1105,7 +1105,7 @@ export function errorsByGoal(dbPath: string = defaultDbPath()): void {
 }
 
 /**
- * `tdai-memory-mcp errors actions` — Error action item tracker.
+ * `remem-mcp errors actions` — Error action item tracker.
  * Shows postmortem action items generated from resolved errors.
  * (SRE pattern: track preventive actions from incident postmortems)
  */
@@ -1118,7 +1118,7 @@ export function errorsActions(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp errors actions — Action Item Tracker\n");
+  console.log("remem-mcp errors actions — Action Item Tracker\n");
   console.log(`${"─".repeat(60)}\n`);
 
   const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
@@ -1264,7 +1264,7 @@ export function errorsActions(dbPath: string = defaultDbPath()): void {
 }
 
 /**
- * `tdai-memory-mcp errors severity` — Error severity distribution.
+ * `remem-mcp errors severity` — Error severity distribution.
  * Shows errors classified as blocker/critical/major/minor.
  * (SRE pattern: prioritize by business impact, not just frequency)
  */
@@ -1277,7 +1277,7 @@ export function errorsSeverity(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp errors severity — Impact Classification\n");
+  console.log("remem-mcp errors severity — Impact Classification\n");
   console.log(`${"─".repeat(60)}\n`);
 
   const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
@@ -1405,7 +1405,7 @@ export function errorsSeverity(dbPath: string = defaultDbPath()): void {
 }
 
 /**
- * `tdai-memory-mcp errors templates` — Fix template extraction report.
+ * `remem-mcp errors templates` — Fix template extraction report.
  * Shows reusable fix patterns extracted from 3+ similar resolved errors.
  * (Moves from specific fixes to generalizable principles)
  */
@@ -1418,7 +1418,7 @@ export function errorsTemplates(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp errors templates — Fix Template Extraction\n");
+  console.log("remem-mcp errors templates — Fix Template Extraction\n");
   console.log(`${"─".repeat(60)}\n`);
 
   const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
@@ -1506,7 +1506,7 @@ export function errorsTemplates(dbPath: string = defaultDbPath()): void {
 }
 
 /**
- * `tdai-memory-mcp errors correlations` — Error correlation report.
+ * `remem-mcp errors correlations` — Error correlation report.
  * Shows sequential error patterns: when E1 occurs, E2 often follows.
  * (SRE pattern: incident correlation / cascading failure detection)
  */
@@ -1519,7 +1519,7 @@ export function errorsCorrelations(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp errors correlations — Sequential Error Patterns\n");
+  console.log("remem-mcp errors correlations — Sequential Error Patterns\n");
   console.log(`${"─".repeat(60)}\n`);
 
   const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
@@ -1621,7 +1621,7 @@ export function errorsCorrelations(dbPath: string = defaultDbPath()): void {
 }
 
 /**
- * `tdai-memory-mcp errors playbooks` — Recovery pattern library.
+ * `remem-mcp errors playbooks` — Recovery pattern library.
  * Shows structured recovery playbooks extracted from resolved errors.
  * (SRE pattern: runbooks / incident playbooks for agents)
  */
@@ -1634,7 +1634,7 @@ export function errorsPlaybooks(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp errors playbooks — Recovery Pattern Library\n");
+  console.log("remem-mcp errors playbooks — Recovery Pattern Library\n");
   console.log(`${"─".repeat(60)}\n`);
 
   const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
@@ -1715,7 +1715,7 @@ export function errorsPlaybooks(dbPath: string = defaultDbPath()): void {
 }
 
 /**
- * `tdai-memory-mcp errors stale` — Fix staleness report.
+ * `remem-mcp errors stale` — Fix staleness report.
  * Shows resolved fixes that are older than the staleness threshold.
  * (Knowledge freshness: fixes can become invalid as codebase evolves)
  */
@@ -1728,7 +1728,7 @@ export function errorsStale(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp errors stale — Fix Staleness Report\n");
+  console.log("remem-mcp errors stale — Fix Staleness Report\n");
   console.log(`${"─".repeat(60)}\n`);
 
   const stalenessDays = Number(process.env.TDAI_FIX_STALENESS_DAYS ?? 180);
@@ -1822,7 +1822,7 @@ export function errorsStale(dbPath: string = defaultDbPath()): void {
 }
 
 /**
- * `tdai-memory-mcp errors escalations` — Escalation policy report.
+ * `remem-mcp errors escalations` — Escalation policy report.
  * Shows errors that have been auto-escalated due to high recurrence.
  * (PagerDuty pattern: recurrence → escalation → stronger intervention)
  */
@@ -1835,7 +1835,7 @@ export function errorsEscalations(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp errors escalations — Escalation Policy Report\n");
+  console.log("remem-mcp errors escalations — Escalation Policy Report\n");
   console.log(`${"─".repeat(60)}\n`);
 
   const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
@@ -1945,7 +1945,7 @@ export function errorsEscalations(dbPath: string = defaultDbPath()): void {
 }
 
 /**
- * `tdai-memory-mcp errors context` — Error context enrichment report.
+ * `remem-mcp errors context` — Error context enrichment report.
  * Shows git context (branch, commits, changed files) captured at error time.
  * (LoopX evidence logs pattern: record context during failure)
  */
@@ -1958,7 +1958,7 @@ export function errorsContext(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp errors context — Error Context Enrichment\n");
+  console.log("remem-mcp errors context — Error Context Enrichment\n");
   console.log(`${"─".repeat(60)}\n`);
 
   const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
@@ -2046,7 +2046,7 @@ export function errorsContext(dbPath: string = defaultDbPath()): void {
 }
 
 /**
- * `tdai-memory-mcp errors inherited` — Cross-project fix inheritance report.
+ * `remem-mcp errors inherited` — Cross-project fix inheritance report.
  * Shows fixes that were auto-inherited from other projects.
  * (LoopX capability routes pattern: learn once, apply everywhere)
  */
@@ -2059,7 +2059,7 @@ export function errorsInherited(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp errors inherited — Cross-Project Fix Inheritance\n");
+  console.log("remem-mcp errors inherited — Cross-Project Fix Inheritance\n");
   console.log(`${"─".repeat(60)}\n`);
 
   const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
@@ -2146,7 +2146,7 @@ export function errorsInherited(dbPath: string = defaultDbPath()): void {
 }
 
 /**
- * `tdai-memory-mcp errors provenance` — Fix provenance chain report.
+ * `remem-mcp errors provenance` — Fix provenance chain report.
  * Shows where fixes came from: auto_captured, inherited, template_extracted.
  * (Midas source-traceable recall pattern: provenance affects trust)
  */
@@ -2159,7 +2159,7 @@ export function errorsProvenance(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp errors provenance — Fix Provenance Chain\n");
+  console.log("remem-mcp errors provenance — Fix Provenance Chain\n");
   console.log(`${"─".repeat(60)}\n`);
 
   const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
@@ -2243,7 +2243,7 @@ export function errorsProvenance(dbPath: string = defaultDbPath()): void {
 }
 
 /**
- * `tdai-memory-mcp errors persona` — Error persona per project.
+ * `remem-mcp errors persona` — Error persona per project.
  * Auto-builds an error profile: most common types, branches, severity,
  * resolution rate, top anti-patterns. (TencentDB L3 Persona layer pattern)
  */
@@ -2256,7 +2256,7 @@ export function errorsPersona(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp errors persona — Error Profile per Project\n");
+  console.log("remem-mcp errors persona — Error Profile per Project\n");
   console.log(`${"─".repeat(60)}\n`);
 
   const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
@@ -2412,7 +2412,7 @@ export function errorsPersona(dbPath: string = defaultDbPath()): void {
 // ==================================================================
 
 /**
- * `tdai-memory-mcp decisions` — Decision dashboard.
+ * `remem-mcp decisions` — Decision dashboard.
  * Shows captured decisions, follow rate, top choices.
  */
 export function decisionsDashboard(dbPath: string = defaultDbPath()): void {
@@ -2424,7 +2424,7 @@ export function decisionsDashboard(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp decisions — Decision Learning Dashboard\n");
+  console.log("remem-mcp decisions — Decision Learning Dashboard\n");
   console.log(`${"─".repeat(60)}\n`);
 
   const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
@@ -2504,7 +2504,7 @@ export function decisionsDashboard(dbPath: string = defaultDbPath()): void {
 }
 
 /**
- * `tdai-memory-mcp decisions retro` — Decision retrospective.
+ * `remem-mcp decisions retro` — Decision retrospective.
  * Shows follow rate, ignored decisions, repeated decisions.
  */
 export function decisionsRetro(dbPath: string = defaultDbPath()): void {
@@ -2516,7 +2516,7 @@ export function decisionsRetro(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp decisions retro — Decision Retrospective\n");
+  console.log("remem-mcp decisions retro — Decision Retrospective\n");
   console.log(`${"─".repeat(60)}\n`);
 
   const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
@@ -2597,7 +2597,7 @@ export function decisionsRetro(dbPath: string = defaultDbPath()): void {
 // ==================================================================
 
 /**
- * `tdai-memory-mcp patterns` — Pattern dashboard.
+ * `remem-mcp patterns` — Pattern dashboard.
  * Shows captured code patterns, adoption rate, top patterns.
  */
 export function patternsDashboard(dbPath: string = defaultDbPath()): void {
@@ -2609,7 +2609,7 @@ export function patternsDashboard(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp patterns — Pattern Learning Dashboard\n");
+  console.log("remem-mcp patterns — Pattern Learning Dashboard\n");
   console.log(`${"─".repeat(60)}\n`);
 
   const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
@@ -2698,7 +2698,7 @@ export function patternsDashboard(dbPath: string = defaultDbPath()): void {
 }
 
 /**
- * `tdai-memory-mcp patterns retro` — Pattern retrospective.
+ * `remem-mcp patterns retro` — Pattern retrospective.
  * Shows adoption rate, ignored patterns, most/least followed.
  */
 export function patternsRetro(dbPath: string = defaultDbPath()): void {
@@ -2710,7 +2710,7 @@ export function patternsRetro(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp patterns retro — Pattern Retrospective\n");
+  console.log("remem-mcp patterns retro — Pattern Retrospective\n");
   console.log(`${"─".repeat(60)}\n`);
 
   const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
@@ -2780,7 +2780,7 @@ export function patternsRetro(dbPath: string = defaultDbPath()): void {
 // ==================================================================
 
 /**
- * `tdai-memory-mcp decisions conflicts` — Show contradictory decisions.
+ * `remem-mcp decisions conflicts` — Show contradictory decisions.
  */
 export function decisionsConflicts(dbPath: string = defaultDbPath()): void {
   let db: Database.Database;
@@ -2791,7 +2791,7 @@ export function decisionsConflicts(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp decisions conflicts — Decision Conflict Report\n");
+  console.log("remem-mcp decisions conflicts — Decision Conflict Report\n");
   console.log(`${"─".repeat(60)}\n`);
 
   const conflicts = db
@@ -2840,7 +2840,7 @@ export function decisionsConflicts(dbPath: string = defaultDbPath()): void {
 }
 
 /**
- * `tdai-memory-mcp decisions inherited` — Cross-project decision inheritance report.
+ * `remem-mcp decisions inherited` — Cross-project decision inheritance report.
  */
 export function decisionsInherited(dbPath: string = defaultDbPath()): void {
   let db: Database.Database;
@@ -2851,7 +2851,7 @@ export function decisionsInherited(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp decisions inherited — Cross-Project Decision Inheritance\n");
+  console.log("remem-mcp decisions inherited — Cross-Project Decision Inheritance\n");
   console.log(`${"─".repeat(60)}\n`);
 
   const inherited = db
@@ -2897,7 +2897,7 @@ export function decisionsInherited(dbPath: string = defaultDbPath()): void {
 }
 
 /**
- * `tdai-memory-mcp patterns conflicts` — Show contradictory patterns.
+ * `remem-mcp patterns conflicts` — Show contradictory patterns.
  */
 export function patternsConflicts(dbPath: string = defaultDbPath()): void {
   let db: Database.Database;
@@ -2908,7 +2908,7 @@ export function patternsConflicts(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp patterns conflicts — Pattern Conflict Report\n");
+  console.log("remem-mcp patterns conflicts — Pattern Conflict Report\n");
   console.log(`${"─".repeat(60)}\n`);
 
   const conflicts = db
@@ -2958,7 +2958,7 @@ export function patternsConflicts(dbPath: string = defaultDbPath()): void {
 }
 
 /**
- * `tdai-memory-mcp patterns templates` — Show extracted pattern templates.
+ * `remem-mcp patterns templates` — Show extracted pattern templates.
  */
 export function patternsTemplates(dbPath: string = defaultDbPath()): void {
   let db: Database.Database;
@@ -2969,7 +2969,7 @@ export function patternsTemplates(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp patterns templates — Pattern Template Extraction\n");
+  console.log("remem-mcp patterns templates — Pattern Template Extraction\n");
   console.log(`${"─".repeat(60)}\n`);
 
   const templates = db
@@ -3026,7 +3026,7 @@ export function patternsTemplates(dbPath: string = defaultDbPath()): void {
 }
 
 /**
- * `tdai-memory-mcp patterns inherited` — Cross-project pattern inheritance report.
+ * `remem-mcp patterns inherited` — Cross-project pattern inheritance report.
  */
 export function patternsInherited(dbPath: string = defaultDbPath()): void {
   let db: Database.Database;
@@ -3037,7 +3037,7 @@ export function patternsInherited(dbPath: string = defaultDbPath()): void {
     process.exit(1);
   }
 
-  console.log("tdai-memory-mcp patterns inherited — Cross-Project Pattern Inheritance\n");
+  console.log("remem-mcp patterns inherited — Cross-Project Pattern Inheritance\n");
   console.log(`${"─".repeat(60)}\n`);
 
   const inherited = db

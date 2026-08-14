@@ -18,7 +18,7 @@ const TMP = join(
   process.env.HOME ?? "/tmp",
   ".local",
   "share",
-  "tdai-memory-mcp",
+  "remem-mcp",
   "test-codegraph",
 );
 
