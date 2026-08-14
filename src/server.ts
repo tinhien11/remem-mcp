@@ -45,15 +45,15 @@ import {
 
 /** Default session key: hash of the current working directory. */
 function defaultSessionKey(): string {
-  // TDAI_SESSION_KEY overrides the default hash(cwd) — use for single global session
-  if (process.env.TDAI_SESSION_KEY) return process.env.TDAI_SESSION_KEY;
+  // REMEM_SESSION_KEY overrides the default hash(cwd) — use for single global session
+  if (process.env.REMEM_SESSION_KEY) return process.env.REMEM_SESSION_KEY;
   const cwd = process.cwd();
   return createHash("sha256").update(cwd).digest("hex").slice(0, 16);
 }
 
 /** Global session key for cross-project memory (rules, learnings). */
 function globalSessionKey(): string | null {
-  return process.env.TDAI_GLOBAL_SESSION_KEY ?? null;
+  return process.env.REMEM_GLOBAL_SESSION_KEY ?? null;
 }
 
 /** Detect the agent ID from environment variables. */
@@ -145,6 +145,13 @@ const TOOLS: Tool[] = [
           default: "hybrid",
           description: "The search mode.",
         },
+        format: {
+          type: "string",
+          enum: ["text", "json"],
+          default: "text",
+          description:
+            "The response format. Use 'json' for structured data (e.g. benchmarks). Defaults to 'text'.",
+        },
         ...TENANT_PARAMS,
       },
       required: ["query"],
@@ -153,7 +160,7 @@ const TOOLS: Tool[] = [
   {
     name: "capture",
     description:
-      "Save a decision, a learning, or a task outcome to memory. " +
+      "Store a decision, a learning, or a task outcome to memory. " +
       "Call this tool after you complete a non-trivial task, make a decision, or fix a bug with a known root cause. " +
       "You can capture a single text string, or a list of role-based conversation messages.",
     inputSchema: {
@@ -883,7 +890,7 @@ const TOOLS: Tool[] = [
 ];
 
 /**
- * All tools available by default. Set TDAI_CORE_ONLY=1 to reduce token
+ * All tools available by default. Set REMEM_CORE_ONLY=1 to reduce token
  * overhead by excluding CodeGraph, Wiki, Knowledge, and Skill tools.
  */
 const CORE_TOOL_NAMES = new Set([
@@ -899,7 +906,7 @@ const CORE_TOOL_NAMES = new Set([
 ]);
 
 function getTools(): Tool[] {
-  const coreOnly = process.env.TDAI_CORE_ONLY === "1" || process.env.TDAI_CORE_ONLY === "true";
+  const coreOnly = process.env.REMEM_CORE_ONLY === "1" || process.env.REMEM_CORE_ONLY === "true";
   if (coreOnly) return TOOLS.filter((t) => CORE_TOOL_NAMES.has(t.name));
   return TOOLS;
 }
@@ -1087,6 +1094,7 @@ async function handleRecall(
   const offset = (args.offset as number) ?? 0;
   const tokenCap = Math.min((args.max_tokens as number) ?? opts.maxTokensRecall, 8000);
   const mode = (args.mode as SearchMode) ?? "hybrid";
+  const format = (args.format as "text" | "json") ?? "text";
   const { teamId, userId, taskId } = extractTenant(args);
   const agentId = (args.agent_id as string) ?? undefined;
 
@@ -1101,7 +1109,7 @@ async function handleRecall(
     }
   }
 
-  // If TDAI_GLOBAL_SESSION_KEY is set and session_key wasn't explicitly provided,
+  // If REMEM_GLOBAL_SESSION_KEY is set and session_key wasn't explicitly provided,
   // search both global and project session keys, global first.
   const globalKey = globalSessionKey();
   const useGlobalFallback = globalKey && !args.session_key && globalKey !== sessionKey;
@@ -1138,6 +1146,29 @@ async function handleRecall(
   }
 
   let text = formatResults(results);
+
+  // JSON format: return a structured array (mirrors the search tool). Used by
+  // programmatic consumers (e.g. benchmark adapters) that parse the response.
+  if (format === "json") {
+    const jsonResults = results.map((r) => ({
+      id: r.entry.id,
+      content: r.entry.content,
+      score: r.score,
+      type: r.entry.type,
+      tags: r.entry.tags,
+      created_at: new Date(r.entry.createdAt).toISOString(),
+      trust_state: r.entry.trustState ?? "candidate",
+    }));
+    const jsonText = JSON.stringify(jsonResults);
+    opts.audit.log({
+      tool: "recall",
+      argsHash: AuditLogger.hashArgs({ query, limit, offset, mode, teamId, userId, taskId }),
+      resultLen: jsonText.length,
+      quotaHit: false,
+      redacted: false,
+    });
+    return { content: [{ type: "text", text: jsonText }] };
+  }
 
   // Augment with CodeGraph symbols if available
   try {
