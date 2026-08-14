@@ -71,7 +71,7 @@ import { installHooks, uninstallHooks } from "./hooks.js";
 import { importData } from "./import.js";
 import { installMcpServer } from "./install-mcp.js";
 import { installSkill } from "./install-skill.js";
-import { AtomPipeline } from "./pipeline/atom.js";
+import { AtomPipeline, RuleBasedAtomPipeline } from "./pipeline/atom.js";
 import { OpenAILLMClient } from "./pipeline/llm.js";
 import { NoopPipeline } from "./pipeline/noop.js";
 import type { PipelineStage } from "./pipeline/types.js";
@@ -1095,6 +1095,11 @@ To install the skill (Devin CLI only):
     });
     pipeline = new AtomPipeline();
     (pipeline as unknown as { _llmClient: unknown })._llmClient = llmClient;
+  } else if (config.pipeline === "noop") {
+    // Use rule-based atom extraction for conversations even without LLM.
+    // This extracts current-state facts from migration patterns so old values
+    // (e.g., "SQLite" in "Migrated from SQLite to Turso") don't leak into search.
+    pipeline = new RuleBasedAtomPipeline();
   } else {
     pipeline = new NoopPipeline();
   }

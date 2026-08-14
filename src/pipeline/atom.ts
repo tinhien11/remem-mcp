@@ -74,6 +74,67 @@ interface ParsedFact {
   confidence: number;
 }
 
+/**
+ * Rule-based atom extraction pipeline for conversations (no LLM required).
+ *
+ * Detects migration/upgrade patterns and extracts current-state facts,
+ * stripping the old value so it doesn't leak into search results.
+ * Example: "Migrated database from SQLite to Turso" → "Migrated database to Turso"
+ */
+export class RuleBasedAtomPipeline implements PipelineStage {
+  readonly name = "rule-atom";
+  readonly requiresLLM = false;
+
+  async process(input: CaptureInput, ctx: PipelineContext): Promise<PipelineOutput> {
+    if (input.type !== "conversation") {
+      return {};
+    }
+
+    const facts = extractMigrationFacts(input.content);
+    if (facts.length === 0) {
+      return {};
+    }
+
+    for (const fact of facts) {
+      await ctx.storage.putAtom({
+        id: generateId(),
+        captureId: input.id,
+        fact: fact.text,
+        confidence: fact.confidence,
+        createdAt: Date.now(),
+        teamId: input.teamId,
+        agentId: undefined,
+        userId: input.userId,
+      });
+    }
+
+    return {
+      atoms: facts.map((f) => ({
+        captureId: input.id,
+        fact: f.text,
+        confidence: f.confidence,
+      })),
+    };
+  }
+}
+
+/** Extract current-state facts from migration/upgrade sentences using regex. */
+function extractMigrationFacts(content: string): ParsedFact[] {
+  const facts: ParsedFact[] = [];
+
+  // Pattern: "from <old_value> to <new_value>" — remove the old value.
+  // Matches: "Migrated database from SQLite to Turso", "Migrated from Heroku to AWS ECS"
+  const fromToPattern = /\bfrom\s+[A-Za-z0-9][A-Za-z0-9._]*(?:\s+[A-Za-z0-9._]+)*\s+to\b/gi;
+  if (fromToPattern.test(content)) {
+    const cleaned = content.replace(fromToPattern, "to").replace(/\s+/g, " ").trim();
+    if (cleaned !== content && cleaned.length > 10) {
+      facts.push({ text: cleaned, confidence: 0.85 });
+    }
+  }
+
+  return facts;
+}
+
 /** Parse the LLM response into a list of facts. */
 function parseFacts(response: string, sourceId: string): ParsedFact[] {
   const lines = response.trim().split("\n");

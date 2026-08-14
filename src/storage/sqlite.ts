@@ -462,10 +462,11 @@ export class SQLiteBackend implements StorageBackend {
 
     // In hybrid mode, use different candidate pool sizes for each channel:
     // - BM25: tight pool (limit*2) for high precision — only best keyword matches
-    // - Vector: broad pool (limit*5, cap 200) for high recall — semantic matches
-    // This prevents OR-semantics BM25 noise from drowning out vector results at scale.
+    // - Vector: very broad pool (limit*10, cap 1000) for high recall at scale
+    // This ensures seed memories stored among 1000+ distractors are still found.
+    // RRF fusion with weighted vector search filters out BM25 noise.
     const bm25CandidateLimit = mode === "hybrid" ? limit * 2 : limit * 2;
-    const vecCandidateLimit = mode === "hybrid" ? Math.min(Math.max(limit * 5, 50), 200) : limit * 2;
+    const vecCandidateLimit = mode === "hybrid" ? Math.min(Math.max(limit * 10, 100), 1000) : limit * 2;
 
     // BM25 search (FTS5)
     if (mode === "hybrid" || mode === "keyword") {
@@ -658,10 +659,12 @@ export class SQLiteBackend implements StorageBackend {
       stale: 0.1,
       rejected: 0,
     };
-    // For temporal-intent queries, use a much stronger recency boost (0.5 vs 0.05).
+    // For temporal-intent queries, use a much stronger recency boost (0.5 vs 0.3).
     // This ensures "what database do we currently use" returns the most recent fact,
     // even when an older fact has a better BM25 keyword match.
-    const recencyWeight = temporalIntent ? 0.5 : 0.05;
+    // Non-temporal queries still get a moderate recency boost (0.3) to help
+    // recently-stored seeds rank above older distractors at scale (Layer 3).
+    const recencyWeight = temporalIntent ? 0.5 : 0.3;
     return results
       .map((r) => {
         const row = rowMap.get(r.id);
@@ -678,7 +681,7 @@ export class SQLiteBackend implements StorageBackend {
         // For temporal-intent queries ("currently", "now", "latest"), use a much faster
         // decay (1s vs 1min) so even memories stored milliseconds apart are differentiated,
         // and a stronger weight (0.5 vs 0.05) so recency dominates keyword match score.
-        const recencyDecayMs = temporalIntent ? 1000 : 60000;
+        const recencyDecayMs = temporalIntent ? 1000 : 10000;
         const recencyBias = 1 / (1 + ageMs / recencyDecayMs);
         const biasedScore = finalScore >= 0
           ? finalScore * (1 + recencyBias * recencyWeight)
@@ -704,15 +707,35 @@ export class SQLiteBackend implements StorageBackend {
   }
 
   /** Escape a query string for FTS5 MATCH.
-   *  Uses AND semantics (all tokens must match) for high precision.
-   *  At scale (1K+ memories), OR semantics introduces too much BM25 noise
-   *  that drowns out vector search results in RRF fusion.
-   *  Semantic recall is handled by the vector search channel instead.
+   *  Uses OR semantics with stopword removal for high recall.
+   *  AND semantics (all tokens must match) is too strict for natural language
+   *  questions — a 15-word query rarely has every token in a single capture,
+   *  causing BM25 to return zero results. OR semantics lets BM25 rank by
+   *  relevance (documents matching more terms rank higher) while still
+   *  returning partial matches. RRF fusion with weighted vector search
+   *  filters out BM25 noise.
    */
   private escapeFtsQuery(query: string): string {
+    const FTS_STOPWORDS = new Set([
+      "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+      "have", "has", "had", "do", "does", "did", "will", "would", "could",
+      "should", "may", "might", "must", "can", "shall",
+      "i", "you", "he", "she", "it", "we", "they", "me", "him", "her", "us", "them",
+      "my", "your", "his", "its", "our", "their",
+      "this", "that", "these", "those",
+      "and", "or", "but", "not", "no", "nor", "so", "yet",
+      "in", "on", "at", "to", "for", "of", "with", "by", "from", "as",
+      "about", "into", "through", "during", "before", "after",
+      "what", "when", "where", "which", "who", "how", "why",
+      "since", "because", "if", "then", "than",
+    ]);
     const tokens = query.trim().split(/\s+/).filter(Boolean);
     if (tokens.length === 0) return "";
-    return tokens.map((t) => `"${t.replace(/"/g, '""')}"`).join(" ");
+    // Remove stopwords to reduce noise, but keep all tokens if none remain
+    // (e.g., a query that is entirely stopwords should still search).
+    const filtered = tokens.filter((t) => !FTS_STOPWORDS.has(t.toLowerCase()));
+    const finalTokens = filtered.length > 0 ? filtered : tokens;
+    return finalTokens.map((t) => `"${t.replace(/"/g, '""')}"`).join(" OR ");
   }
 
   async delete(id: string): Promise<DeleteResult> {

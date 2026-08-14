@@ -1425,7 +1425,7 @@ async function handleSearch(
         task_id?: string;
       }
     | undefined;
-  const limit = Math.min((args.limit as number) ?? 20, 100);
+  const limit = Math.min((args.limit as number) ?? 20, 500);
 
   let queryEmbedding: number[] | null = null;
   let vectorDegraded = false;
@@ -1458,9 +1458,22 @@ async function handleSearch(
   });
 
   if (format === "json") {
+    // Atom-aware search: if atoms exist for a capture, use the atom fact as
+    // content instead of the raw capture. This ensures current-state facts
+    // (e.g., "Migrated database to Turso") replace raw migration text that
+    // contains old values (e.g., "from SQLite to Turso").
+    const atomMap = new Map<string, string>();
+    for (const r of results) {
+      try {
+        const atoms = await opts.pipelineCtx.storage.listAtoms({ captureId: r.entry.id, limit: 5 });
+        if (atoms.length > 0) {
+          atomMap.set(r.entry.id, atoms.map((a) => a.fact).join(" | "));
+        }
+      } catch {}
+    }
     const jsonResults = results.map((r) => ({
       id: r.entry.id,
-      content: r.entry.content,
+      content: atomMap.get(r.entry.id) ?? r.entry.content,
       score: r.score,
       type: r.entry.type,
       tags: r.entry.tags,
