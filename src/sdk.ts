@@ -137,6 +137,11 @@ export class Memory {
     });
   }
 
+  /** Compute the embedding vector for a piece of text using the configured embedder. */
+  async embed(text: string): Promise<number[]> {
+    return this.embedder.embed(text);
+  }
+
   /** Delete a capture by ID. */
   async forget(id: string): Promise<DeleteResult> {
     return this.storage.delete(id);
