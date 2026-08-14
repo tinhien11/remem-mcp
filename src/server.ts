@@ -1332,10 +1332,12 @@ async function handleCapture(
 
   // Conflict detection: find similar captures in the same session.
   let conflictInfo = "";
+  let conflictIds: string[] = [];
   if (embedding) {
     try {
-      const conflicts = await opts.storage.findConflicts(embedding, sessionKey, 0.3);
+      const conflicts = await opts.storage.findConflicts(embedding, sessionKey, 0.8);
       const filtered = conflicts.filter((c) => c.id !== id);
+      conflictIds = filtered.map((c) => c.id);
       if (filtered.length > 0) {
         const conflictList = filtered
           .map(
@@ -1382,6 +1384,7 @@ async function handleCapture(
             created_at: new Date(entry.createdAt).toISOString(),
             verified: trustState === "verified",
             conflicts: conflictInfo ? conflictInfo.trim() : undefined,
+            conflict_ids: conflictIds.length > 0 ? conflictIds : undefined,
           }),
         },
       ],
@@ -1462,6 +1465,7 @@ async function handleSearch(
       type: r.entry.type,
       tags: r.entry.tags,
       created_at: new Date(r.entry.createdAt).toISOString(),
+      trust_state: r.entry.trustState ?? "candidate",
     }));
     const jsonText = JSON.stringify(jsonResults);
     opts.audit.log({

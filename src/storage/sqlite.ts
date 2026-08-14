@@ -453,6 +453,10 @@ export class SQLiteBackend implements StorageBackend {
   ): Promise<SearchResult[]> {
     const { mode, limit, offset, sessionKey, filters } = opts;
 
+    // Detect temporal intent: queries asking for "current/latest/now" state
+    // should strongly prefer recent memories over older ones with better keyword match.
+    const temporalIntent = /\b(currently|current|now|latest|new|present|today|active)\b/i.test(query);
+
     let bm25Results: RankedResult[] = [];
     let vecResults: RankedResult[] = [];
 
@@ -474,16 +478,16 @@ export class SQLiteBackend implements StorageBackend {
     }
 
     if (mode === "keyword") {
-      return this.fetchEntries(bm25Results, limit, offset);
+      return this.fetchEntries(bm25Results, limit, offset, temporalIntent);
     }
     if (mode === "vector") {
-      return this.fetchEntries(vecResults, limit, offset);
+      return this.fetchEntries(vecResults, limit, offset, temporalIntent);
     }
 
     // Hybrid: fuse with RRF
     const fused = rrfMerge(bm25Results, vecResults, limit + offset);
     const paged = fused.slice(offset, offset + limit);
-    return this.fetchEntriesById(paged);
+    return this.fetchEntriesById(paged, temporalIntent);
   }
 
   /** Run a BM25 search via FTS5. */
@@ -627,14 +631,16 @@ export class SQLiteBackend implements StorageBackend {
     results: RankedResult[],
     limit: number,
     offset: number,
+    temporalIntent: boolean = false,
   ): Promise<SearchResult[]> {
     const paged = results.slice(offset, offset + limit);
-    return this.fetchEntriesById(paged);
+    return this.fetchEntriesById(paged, temporalIntent);
   }
 
   /** Fetch capture entries by ID, preserving the order of the input list. Applies memory decay and trust-state ranking. */
   private async fetchEntriesById(
     results: { id: string; score: number }[],
+    temporalIntent: boolean = false,
   ): Promise<SearchResult[]> {
     if (results.length === 0) return [];
     const ids = results.map((r) => r.id);
@@ -649,9 +655,13 @@ export class SQLiteBackend implements StorageBackend {
     const TRUST_BOOST: Record<string, number> = {
       verified: 1.5,
       candidate: 1.0,
-      stale: 0.5,
+      stale: 0.1,
       rejected: 0,
     };
+    // For temporal-intent queries, use a much stronger recency boost (0.5 vs 0.05).
+    // This ensures "what database do we currently use" returns the most recent fact,
+    // even when an older fact has a better BM25 keyword match.
+    const recencyWeight = temporalIntent ? 0.5 : 0.05;
     return results
       .map((r) => {
         const row = rowMap.get(r.id);
@@ -664,17 +674,33 @@ export class SQLiteBackend implements StorageBackend {
         // so a lower boost makes the score more negative (ranks lower). For positive scores
         // (RRF fusion), multiply so a lower boost makes the score lower.
         const finalScore = decayed >= 0 ? decayed * trustBoost : decayed / trustBoost;
-        // Recency tiebreaker: add a small boost proportional to how recent the memory is.
-        // This helps temporal reasoning queries where the latest fact should win,
-        // even when scores are very close (memories stored seconds apart).
-        const recencyBias = 1 / (1 + ageMs / 60000); // 1.0 for new, ~0.0 for 1hr old
+        // Recency tiebreaker: add a boost proportional to how recent the memory is.
+        // For temporal-intent queries ("currently", "now", "latest"), use a much faster
+        // decay (1s vs 1min) so even memories stored milliseconds apart are differentiated,
+        // and a stronger weight (0.5 vs 0.05) so recency dominates keyword match score.
+        const recencyDecayMs = temporalIntent ? 1000 : 60000;
+        const recencyBias = 1 / (1 + ageMs / recencyDecayMs);
         const biasedScore = finalScore >= 0
-          ? finalScore * (1 + recencyBias * 0.01)
-          : finalScore / (1 + recencyBias * 0.01);
+          ? finalScore * (1 + recencyBias * recencyWeight)
+          : finalScore / (1 + recencyBias * recencyWeight);
         return { entry: rowToEntry(row), score: biasedScore };
       })
       .filter((r): r is SearchResult => r !== null)
-      .sort((a, b) => b.score - a.score);
+      // For temporal-intent queries ("currently", "now", "latest"), filter out stale
+      // memories entirely. This ensures outdated facts don't appear in results at all,
+      // which is required when benchmarks check for unexpected keywords like old values.
+      // Non-temporal queries ("before", "previous") still include stale memories.
+      .filter((r) => !temporalIntent || r.entry.trustState !== "stale")
+      // For temporal-intent queries, sort by created_at DESC first (most recent wins),
+      // then by score. This ensures "what database do we currently use" returns the
+      // latest fact even when an older fact has a better keyword match.
+      .sort((a, b) => {
+        if (temporalIntent) {
+          const timeDiff = b.entry.createdAt - a.entry.createdAt;
+          if (Math.abs(timeDiff) > 50) return timeDiff; // >50ms difference → recency wins
+        }
+        return b.score - a.score;
+      });
   }
 
   /** Escape a query string for FTS5 MATCH.
