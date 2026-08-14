@@ -1,7 +1,7 @@
 FROM node:22-slim
 
-LABEL org.opencontainers.image.source=https://github.com/tinhien11/tdai-memory-mcp
-LABEL org.opencontainers.image.description="tdai-memory-mcp — long-term memory for coding agents"
+LABEL org.opencontainers.image.source=https://github.com/tinhien11/remem-mcp
+LABEL org.opencontainers.image.description="remem-mcp — long-term memory for coding agents"
 LABEL org.opencontainers.image.licenses=MIT
 
 WORKDIR /app

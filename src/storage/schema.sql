@@ -1,4 +1,4 @@
--- Schema for tdai-memory-mcp
+-- Schema for remem-mcp
 -- Version: 6
 --
 -- This file runs on the first start. It creates all tables, triggers, and indexes.

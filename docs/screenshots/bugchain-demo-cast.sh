@@ -3,9 +3,9 @@
 # Uses real React concepts (fiber reconciler, hooks, suspense)
 # Real SDK calls, real SQLite, real hook-recall. Simulated agent dialogue.
 
-DB="/tmp/tdai-react-demo/memory.db"
-PROJECT="/data/projects/tdai-memory-mcp"
-rm -rf /tmp/tdai-react-demo && mkdir -p /tmp/tdai-react-demo
+DB="/tmp/remem-react-demo/memory.db"
+PROJECT="/data/projects/remem-mcp"
+rm -rf /tmp/remem-react-demo && mkdir -p /tmp/remem-react-demo
 
 cd "$PROJECT"
 
@@ -23,7 +23,7 @@ clear
 echo ""
 echo "  ╔═══════════════════════════════════════════════════════════════╗"
 echo "  ║                                                               ║"
-echo "  ║   tdai-memory-mcp                                             ║"
+echo "  ║   remem-mcp                                             ║"
 echo "  ║   Bug fix chain: 3 sessions, 3 React bugs, 1 memory           ║"
 echo "  ║                                                               ║"
 echo "  ║   Session 1: Agent fixes useState batching → captures         ║"

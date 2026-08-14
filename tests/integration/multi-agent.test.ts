@@ -6,7 +6,7 @@
  * - Devin CLI hooks install/uninstall (JSON config)
  * - Codex CLI hooks install/uninstall (TOML config)
  * - Read-only DB fallback (recall works, capture fails gracefully)
- * - Global + project hybrid recall (TDAI_GLOBAL_SESSION_KEY)
+ * - Global + project hybrid recall (REMEM_GLOBAL_SESSION_KEY)
  */
 import { execSync } from "node:child_process";
 import {
@@ -354,7 +354,7 @@ describe("Regression: read-only DB fallback", () => {
     const output = execSync(`node ${BIN} hook-recall`, {
       input: stdin,
       encoding: "utf-8",
-      env: { ...process.env, TDAI_DB_PATH: dbPath },
+      env: { ...process.env, REMEM_DB_PATH: dbPath },
       timeout: 10000,
     });
 
@@ -432,15 +432,15 @@ describe("Regression: global + project hybrid recall", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("hook-recall injects global captures when TDAI_GLOBAL_SESSION_KEY is set", () => {
+  it("hook-recall injects global captures when REMEM_GLOBAL_SESSION_KEY is set", () => {
     const stdin = JSON.stringify({ session_id: "project-abc123", cwd: "/tmp" });
     const output = execSync(`node ${BIN} hook-recall`, {
       input: stdin,
       encoding: "utf-8",
       env: {
         ...process.env,
-        TDAI_DB_PATH: dbPath,
-        TDAI_GLOBAL_SESSION_KEY: "global",
+        REMEM_DB_PATH: dbPath,
+        REMEM_GLOBAL_SESSION_KEY: "global",
       },
       timeout: 10000,
     });
@@ -459,8 +459,8 @@ describe("Regression: global + project hybrid recall", () => {
       encoding: "utf-8",
       env: {
         ...process.env,
-        TDAI_DB_PATH: dbPath,
-        TDAI_GLOBAL_SESSION_KEY: "global",
+        REMEM_DB_PATH: dbPath,
+        REMEM_GLOBAL_SESSION_KEY: "global",
       },
       timeout: 10000,
     });

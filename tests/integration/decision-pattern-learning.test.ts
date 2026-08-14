@@ -165,7 +165,7 @@ describe("Moat 2: Decision Learning", () => {
     });
     db.close();
 
-    const output = runCli("decisions", { TDAI_DB_PATH: dbPath });
+    const output = runCli("decisions", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Decision Learning Dashboard");
     expect(output).toContain("Chose to use react");
@@ -175,7 +175,7 @@ describe("Moat 2: Decision Learning", () => {
   });
 
   it("DECISIONS: clean DB shows no decisions message", () => {
-    const output = runCli("decisions", { TDAI_DB_PATH: dbPath });
+    const output = runCli("decisions", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("No decisions captured");
   });
@@ -193,7 +193,7 @@ describe("Moat 2: Decision Learning", () => {
     });
     db.close();
 
-    const output = runCli("decisions retro", { TDAI_DB_PATH: dbPath });
+    const output = runCli("decisions retro", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Decision Retrospective");
     expect(output).toContain("Repeated decisions");
@@ -209,7 +209,7 @@ describe("Moat 2: Decision Learning", () => {
       tool_response: { stdout: "added 1 package", exit_code: 0 },
       cwd: tmpDir,
     });
-    runHook("hook-post-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    runHook("hook-post-tool-use", stdin, { REMEM_DB_PATH: dbPath });
 
     const db = require("better-sqlite3")(dbPath, { readonly: true });
     const decisions = db
@@ -230,7 +230,7 @@ describe("Moat 2: Decision Learning", () => {
       tool_response: { stdout: "build success", exit_code: 0 },
       cwd: tmpDir,
     });
-    runHook("hook-post-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    runHook("hook-post-tool-use", stdin, { REMEM_DB_PATH: dbPath });
 
     const db = require("better-sqlite3")(dbPath, { readonly: true });
     const decisions = db.prepare("SELECT type FROM captures WHERE type = 'decision'").all();
@@ -258,7 +258,7 @@ describe("Moat 2: Decision Learning", () => {
       tool_input: { command: "npm install zod" },
       cwd: tmpDir,
     });
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
 
@@ -285,7 +285,7 @@ describe("Moat 2: Decision Learning", () => {
       tool_input: { command: "npm install axios" },
       cwd: tmpDir,
     });
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
 
@@ -320,7 +320,7 @@ describe("Moat 3: Pattern Learning", () => {
     });
     db.close();
 
-    const output = runCli("patterns", { TDAI_DB_PATH: dbPath });
+    const output = runCli("patterns", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Pattern Learning Dashboard");
     expect(output).toContain("Function pattern: fetchData(url)");
@@ -330,7 +330,7 @@ describe("Moat 3: Pattern Learning", () => {
   });
 
   it("PATTERNS: clean DB shows no patterns message", () => {
-    const output = runCli("patterns", { TDAI_DB_PATH: dbPath });
+    const output = runCli("patterns", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("No patterns captured");
   });
@@ -349,7 +349,7 @@ describe("Moat 3: Pattern Learning", () => {
     });
     db.close();
 
-    const output = runCli("patterns retro", { TDAI_DB_PATH: dbPath });
+    const output = runCli("patterns retro", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Pattern Retrospective");
     expect(output).toContain("Most seen patterns");
@@ -367,7 +367,7 @@ describe("Moat 3: Pattern Learning", () => {
       },
       cwd: tmpDir,
     });
-    runHook("hook-post-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    runHook("hook-post-tool-use", stdin, { REMEM_DB_PATH: dbPath });
 
     const db = require("better-sqlite3")(dbPath, { readonly: true });
     const patterns = db
@@ -391,7 +391,7 @@ describe("Moat 3: Pattern Learning", () => {
       },
       cwd: tmpDir,
     });
-    runHook("hook-post-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    runHook("hook-post-tool-use", stdin, { REMEM_DB_PATH: dbPath });
 
     const db = require("better-sqlite3")(dbPath, { readonly: true });
     const patterns = db.prepare("SELECT type FROM captures WHERE type = 'pattern'").all();
@@ -423,7 +423,7 @@ describe("Moat 3: Pattern Learning", () => {
       },
       cwd: tmpDir,
     });
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
 
@@ -470,7 +470,7 @@ describe("Moat 2/3: Advanced Features", () => {
       tool_response: { stdout: "added 1 package", exit_code: 0 },
       cwd: tmpDir,
     });
-    runHook("hook-post-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    runHook("hook-post-tool-use", stdin, { REMEM_DB_PATH: dbPath });
 
     // Check that the new decision has a conflict_warning
     const db2 = require("better-sqlite3")(dbPath);
@@ -505,7 +505,7 @@ describe("Moat 2/3: Advanced Features", () => {
     ).run();
     db.close();
 
-    const output = runCli("decisions conflicts", { TDAI_DB_PATH: dbPath });
+    const output = runCli("decisions conflicts", { REMEM_DB_PATH: dbPath });
     expect(output).toContain("Decision Conflict Report");
     expect(output).toContain("CONFLICT");
   });
@@ -531,7 +531,7 @@ describe("Moat 2/3: Advanced Features", () => {
       tool_input: { command: "npm install something" },
       cwd: tmpDir, // different from "other-project-key"
     });
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
 
@@ -563,7 +563,7 @@ describe("Moat 2/3: Advanced Features", () => {
     });
     db.close();
 
-    const output = runCli("decisions inherited", { TDAI_DB_PATH: dbPath });
+    const output = runCli("decisions inherited", { REMEM_DB_PATH: dbPath });
     expect(output).toContain("Cross-Project Decision Inheritance");
     expect(output).toContain("react");
   });
@@ -593,7 +593,7 @@ describe("Moat 2/3: Advanced Features", () => {
       },
       cwd: tmpDir,
     });
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
 
@@ -629,7 +629,7 @@ describe("Moat 2/3: Advanced Features", () => {
       },
       cwd: tmpDir,
     });
-    runHook("hook-post-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    runHook("hook-post-tool-use", stdin, { REMEM_DB_PATH: dbPath });
 
     // Check that the new pattern has a conflict_warning
     const db2 = require("better-sqlite3")(dbPath);
@@ -665,7 +665,7 @@ describe("Moat 2/3: Advanced Features", () => {
     ).run();
     db.close();
 
-    const output = runCli("patterns conflicts", { TDAI_DB_PATH: dbPath });
+    const output = runCli("patterns conflicts", { REMEM_DB_PATH: dbPath });
     expect(output).toContain("Pattern Conflict Report");
     expect(output).toContain("CONFLICT");
   });
@@ -689,7 +689,7 @@ describe("Moat 2/3: Advanced Features", () => {
     ).run();
     db.close();
 
-    const output = runCli("patterns templates", { TDAI_DB_PATH: dbPath });
+    const output = runCli("patterns templates", { REMEM_DB_PATH: dbPath });
     expect(output).toContain("Pattern Template Extraction");
     expect(output).toContain("validateInput");
   });
@@ -720,26 +720,26 @@ describe("Moat 2/3: Advanced Features", () => {
     });
     db.close();
 
-    const output = runCli("patterns inherited", { TDAI_DB_PATH: dbPath });
+    const output = runCli("patterns inherited", { REMEM_DB_PATH: dbPath });
     expect(output).toContain("Cross-Project Pattern Inheritance");
     expect(output).toContain("fetchData");
   });
 
   // 10. Clean DB reports
   it("ADVANCED: clean DB shows no conflicts/templates/inherited", () => {
-    const conflictsOutput = runCli("decisions conflicts", { TDAI_DB_PATH: dbPath });
+    const conflictsOutput = runCli("decisions conflicts", { REMEM_DB_PATH: dbPath });
     expect(conflictsOutput).toContain("No decision conflicts detected");
 
-    const inheritedOutput = runCli("decisions inherited", { TDAI_DB_PATH: dbPath });
+    const inheritedOutput = runCli("decisions inherited", { REMEM_DB_PATH: dbPath });
     expect(inheritedOutput).toContain("No cross-project decision inheritance");
 
-    const patConflictsOutput = runCli("patterns conflicts", { TDAI_DB_PATH: dbPath });
+    const patConflictsOutput = runCli("patterns conflicts", { REMEM_DB_PATH: dbPath });
     expect(patConflictsOutput).toContain("No pattern conflicts detected");
 
-    const patTemplatesOutput = runCli("patterns templates", { TDAI_DB_PATH: dbPath });
+    const patTemplatesOutput = runCli("patterns templates", { REMEM_DB_PATH: dbPath });
     expect(patTemplatesOutput).toContain("No pattern templates extracted");
 
-    const patInheritedOutput = runCli("patterns inherited", { TDAI_DB_PATH: dbPath });
+    const patInheritedOutput = runCli("patterns inherited", { REMEM_DB_PATH: dbPath });
     expect(patInheritedOutput).toContain("No cross-project pattern inheritance");
   }, 30000);
 });

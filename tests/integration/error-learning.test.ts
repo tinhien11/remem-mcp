@@ -213,7 +213,7 @@ describe("Integration: error learning — PostToolUse capture", () => {
       },
     });
 
-    const output = runHook("hook-post-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-post-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
 
     // Should inject reflection prompt
@@ -247,7 +247,7 @@ describe("Integration: error learning — PostToolUse capture", () => {
       },
     });
 
-    const output = runHook("hook-post-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-post-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
 
     // No additionalContext for successful commands
@@ -291,7 +291,7 @@ describe("Integration: error learning — PostToolUse capture", () => {
       },
     });
 
-    runHook("hook-post-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    runHook("hook-post-tool-use", stdin, { REMEM_DB_PATH: dbPath });
 
     // Verify the previous error was upvoted and fix recorded
     const Database = require("better-sqlite3");
@@ -341,9 +341,9 @@ describe("Integration: error learning — PreToolUse injection", () => {
       cwd: tmpDir,
     });
 
-    // Need to set TDAI_DB_PATH and the session key must match
+    // Need to set REMEM_DB_PATH and the session key must match
     // session_key = hashPath(cwd), so we need to use the same cwd
-    // But we inserted with "test-session" — let's use TDAI_DB_PATH directly
+    // But we inserted with "test-session" — let's use REMEM_DB_PATH directly
     // The hook uses hashPath(cwd) for session_key, so we need to match
     // Let's just set the session key in the DB to match hashPath(tmpDir)
     const Database = require("better-sqlite3");
@@ -354,7 +354,7 @@ describe("Integration: error learning — PreToolUse injection", () => {
     db2.prepare("UPDATE captures SET session_key = ? WHERE id = 'err-1'").run(realSessionKey);
     db2.close();
 
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
 
     expect(parsed.hookSpecificOutput).toBeDefined();
@@ -388,7 +388,7 @@ describe("Integration: error learning — PreToolUse injection", () => {
       cwd: tmpDir,
     });
 
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
 
     expect(parsed.hookSpecificOutput).toBeDefined();
@@ -434,7 +434,7 @@ describe("Integration: error learning — PreToolUse injection", () => {
       cwd: tmpDir,
     });
 
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
 
     expect(parsed.hookSpecificOutput).toBeDefined();
@@ -461,13 +461,13 @@ describe("Integration: error learning — PreToolUse injection", () => {
       cwd: tmpDir,
     });
 
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
 
     expect(parsed.hookSpecificOutput).toBeUndefined();
   });
 
-  it("PreToolUse injects cross-project errors when TDAI_GLOBAL_ERRORS=1", () => {
+  it("PreToolUse injects cross-project errors when REMEM_GLOBAL_ERRORS=1", () => {
     const db = makeErrorDb(dbPath);
 
     // Insert error in a DIFFERENT session key (another project)
@@ -489,8 +489,8 @@ describe("Integration: error learning — PreToolUse injection", () => {
 
     // With global errors enabled, should inject even though session key doesn't match
     const output = runHook("hook-pre-tool-use", stdin, {
-      TDAI_DB_PATH: dbPath,
-      TDAI_GLOBAL_ERRORS: "1",
+      REMEM_DB_PATH: dbPath,
+      REMEM_GLOBAL_ERRORS: "1",
     });
     const parsed = JSON.parse(output);
 
@@ -544,7 +544,7 @@ describe("Integration: error learning — errors CLI dashboard", () => {
     });
     db.close();
 
-    const output = runCli(`errors`, { TDAI_DB_PATH: dbPath });
+    const output = runCli(`errors`, { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Error Learning Dashboard");
     expect(output).toContain("Total errors captured: 3");
@@ -558,7 +558,7 @@ describe("Integration: error learning — errors CLI dashboard", () => {
   it("errors dashboard handles empty database gracefully", () => {
     makeErrorDb(dbPath);
 
-    const output = runCli(`errors`, { TDAI_DB_PATH: dbPath });
+    const output = runCli(`errors`, { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Error Learning Dashboard");
     expect(output).toContain("Total errors captured: 0");
@@ -587,7 +587,7 @@ describe("Integration: error learning — errors CLI dashboard", () => {
     });
     db.close();
 
-    const output = runCli(`errors`, { TDAI_DB_PATH: dbPath });
+    const output = runCli(`errors`, { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Recurring error patterns");
     expect(output).toContain("npm run build");
@@ -641,7 +641,7 @@ describe("Integration: error learning — cross-project pattern detection", () =
       },
     });
 
-    const output = runHook("hook-post-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-post-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
 
     expect(parsed.hookSpecificOutput).toBeDefined();
@@ -680,7 +680,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       cwd: tmpDir,
       tool_response: { stdout, stderr, exit_code: exitCode },
     });
-    return runHook("hook-post-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    return runHook("hook-post-tool-use", stdin, { REMEM_DB_PATH: dbPath });
   }
 
   /** Helper: run PreToolUse before a command. */
@@ -690,7 +690,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       tool_input: { command },
       cwd: tmpDir,
     });
-    return runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath, ...env });
+    return runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath, ...env });
   }
 
   /** Helper: get all error captures from DB. */
@@ -973,7 +973,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
 
     // === Verify the agent has LEARNED ===
     // The errors dashboard should show 2 resolved errors with 100% resolution rate
-    const dashOut = runCli("errors", { TDAI_DB_PATH: dbPath });
+    const dashOut = runCli("errors", { REMEM_DB_PATH: dbPath });
     expect(dashOut).toContain("Total errors captured: 2");
     expect(dashOut).toContain("Resolved: 2");
     expect(dashOut).toContain("100.0% resolution rate");
@@ -1096,7 +1096,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
         error: "Build failed: Cannot find module ./missing.js",
       },
     });
-    const out = runHook("hook-post-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const out = runHook("hook-post-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(out);
 
     // Should capture the error
@@ -1258,7 +1258,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     // Actually: the PreToolUse query filters `json_extract(metadata, '$.resolved') IS NOT true`
     // So a resolved error won't appear in the warning list at all.
     // The "Previously resolved" label appears when meta.resolved is true but the error
-    // still shows up — this can happen with TDAI_GLOBAL_ERRORS when another project
+    // still shows up — this can happen with REMEM_GLOBAL_ERRORS when another project
     // has the same error resolved but this project doesn't.
     // Let's test: insert a resolved error from another project with global errors on
     const meta = {
@@ -1302,11 +1302,11 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     // but the query still returns it because of a different session_key with global errors)
     // This is actually not possible with the current query.
     // The label IS reachable if we insert an error with resolved=true but
-    // the query doesn't filter it — which happens when TDAI_GLOBAL_ERRORS=1
+    // the query doesn't filter it — which happens when REMEM_GLOBAL_ERRORS=1
     // and the session filter is removed, but the resolved filter still applies.
     // So the label is actually unreachable code.
     // Let's just verify the label doesn't crash anything.
-    const output = preToolUse("npm run lint", { TDAI_GLOBAL_ERRORS: "1" });
+    const output = preToolUse("npm run lint", { REMEM_GLOBAL_ERRORS: "1" });
     const parsed = JSON.parse(output);
 
     // Should not crash — may or may not have content
@@ -1378,7 +1378,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
         exit_code: 1,
       },
     });
-    const output = runHook("hook-post-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-post-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
 
@@ -1400,7 +1400,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       cwd: tmpDir,
     });
     // Should not crash — returns empty JSON
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: badDbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: badDbPath });
     const parsed = JSON.parse(output);
     expect(parsed).toEqual({});
   });
@@ -1418,7 +1418,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       cwd: tmpDir,
       tool_response: { stdout: "", stderr: "", exit_code: 0 },
     });
-    const output = runHook("hook-post-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-post-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     expect(parsed).toEqual({});
     expect(getErrors().length).toBe(0);
@@ -1430,7 +1430,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       cwd: tmpDir,
       tool_response: { stdout: "", stderr: "some error", exit_code: 1 },
     });
-    const output2 = runHook("hook-post-tool-use", stdin2, { TDAI_DB_PATH: dbPath });
+    const output2 = runHook("hook-post-tool-use", stdin2, { REMEM_DB_PATH: dbPath });
     const parsed2 = JSON.parse(output2);
     expect(parsed2).toEqual({});
     expect(getErrors().length).toBe(0);
@@ -1591,7 +1591,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
         exit_code: 1,
       },
     });
-    const output = runHook("hook-post-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-post-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
 
@@ -1926,7 +1926,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       tool_input: { command: "git push --force" },
       cwd: tmpDir,
     });
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
 
@@ -1944,7 +1944,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       tool_input: { command: "git push --force origin main" },
       cwd: tmpDir,
     });
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
 
@@ -1963,7 +1963,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       tool_input: { command: "rm -rf /" },
       cwd: tmpDir,
     });
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
 
@@ -1980,7 +1980,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       tool_input: { command: "rm -rf ./dist" },
       cwd: tmpDir,
     });
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
 
     // Should NOT have danger warning (./dist is safe)
@@ -1998,7 +1998,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       tool_input: { command: "psql -c 'DROP TABLE users;'" },
       cwd: tmpDir,
     });
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
 
@@ -2016,7 +2016,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       tool_input: { command: "psql -c 'DELETE FROM users;'" },
       cwd: tmpDir,
     });
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
 
@@ -2034,7 +2034,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       tool_input: { command: "npm publish" },
       cwd: tmpDir,
     });
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
 
@@ -2052,7 +2052,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       tool_input: { command: "docker system prune -a" },
       cwd: tmpDir,
     });
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
 
@@ -2069,7 +2069,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       tool_input: { command: "kubectl delete namespace production" },
       cwd: tmpDir,
     });
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
 
@@ -2086,7 +2086,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       tool_input: { command: "npm run build" },
       cwd: tmpDir,
     });
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
 
@@ -2116,7 +2116,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     }
     db.close();
 
-    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors retro", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Session Retrospective");
     expect(output).toContain("Failure loops");
@@ -2130,7 +2130,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
   it("RETRO: no failure loops detected on clean DB", () => {
     makeErrorDb(dbPath);
 
-    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors retro", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Session Retrospective");
     expect(output).toContain("No failure loops detected");
@@ -2153,7 +2153,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors retro", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Wasted effort");
     expect(output).toContain("Missing dependency");
@@ -2179,7 +2179,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors retro", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Resolved errors that recurred");
     expect(output).toContain("Type error in utils");
@@ -2206,7 +2206,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors retro", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Harmful fixes");
     expect(output).toContain("Build failed");
@@ -2232,7 +2232,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     }
     db.close();
 
-    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors retro", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Most expensive commands");
     expect(output).toContain("npm run lint");
@@ -2265,7 +2265,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors retro", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Retrospective scorecard");
     expect(output).toContain("Total errors:        2");
@@ -2292,7 +2292,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     }
     db.close();
 
-    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors retro", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Recommendations:");
     expect(output).toContain("failure loop(s) detected");
@@ -2304,16 +2304,16 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
   it("RETRO: clean DB shows no issues detected", () => {
     makeErrorDb(dbPath);
 
-    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors retro", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("No issues detected");
     expect(output).toContain("Error learning is working well");
   });
 
   // ------------------------------------------------------------------
-  // Test 51: errors retro — TDAI_RETRO_DAYS changes window
+  // Test 51: errors retro — REMEM_RETRO_DAYS changes window
   // ------------------------------------------------------------------
-  it("RETRO: TDAI_RETRO_DAYS changes the analysis window", () => {
+  it("RETRO: REMEM_RETRO_DAYS changes the analysis window", () => {
     const db = makeErrorDb(dbPath);
 
     // Insert an old error (10 days ago)
@@ -2330,13 +2330,13 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     db.close();
 
     // With default 7-day window, old error should NOT appear
-    const output7 = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+    const output7 = runCli("errors retro", { REMEM_DB_PATH: dbPath });
     expect(output7).toContain("Total errors:        0");
 
     // With 30-day window, old error SHOULD appear
     const output30 = runCli("errors retro", {
-      TDAI_DB_PATH: dbPath,
-      TDAI_RETRO_DAYS: "30",
+      REMEM_DB_PATH: dbPath,
+      REMEM_RETRO_DAYS: "30",
     });
     expect(output30).toContain("Total errors:        1");
   });
@@ -2359,7 +2359,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors drift", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors drift", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Drift Detection Report");
     expect(output).toContain("Drift violations");
@@ -2374,7 +2374,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
   it("DRIFT: clean DB shows no drift violations", () => {
     makeErrorDb(dbPath);
 
-    const output = runCli("errors drift", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors drift", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Drift Detection Report");
     expect(output).toContain("No drift violations");
@@ -2399,7 +2399,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors drift", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors drift", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("●●●");
     expect(output).toContain("High (3+ drifts)");
@@ -2435,7 +2435,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors drift", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors drift", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Drift scorecard");
     expect(output).toContain("Total errors:          5");
@@ -2472,7 +2472,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors drift", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors drift", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Low drift rate");
     expect(output).toContain("injection is mostly effective");
@@ -2515,7 +2515,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors drift", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors drift", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("High drift rate");
     expect(output).toContain("Review the injection format");
@@ -2539,7 +2539,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors retro", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Drift violations");
     expect(output).toContain("Ignored warning");
@@ -2553,7 +2553,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
   it("DRIFT: errors retro clean DB shows 0 drift violations", () => {
     makeErrorDb(dbPath);
 
-    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors retro", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Drift violations:    0");
   });
@@ -2576,16 +2576,16 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors retro", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("drift violation(s)");
     expect(output).toContain("Review injection format");
   });
 
   // ------------------------------------------------------------------
-  // Test 61: DRIFT — TDAI_RETRO_DAYS affects drift window
+  // Test 61: DRIFT — REMEM_RETRO_DAYS affects drift window
   // ------------------------------------------------------------------
-  it("DRIFT: TDAI_RETRO_DAYS affects drift analysis window", () => {
+  it("DRIFT: REMEM_RETRO_DAYS affects drift analysis window", () => {
     const db = makeErrorDb(dbPath);
 
     // Old drift (10 days ago)
@@ -2604,13 +2604,13 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     db.close();
 
     // Default 7-day window: old drift should NOT appear
-    const output7 = runCli("errors drift", { TDAI_DB_PATH: dbPath });
+    const output7 = runCli("errors drift", { REMEM_DB_PATH: dbPath });
     expect(output7).toContain("No drift violations");
 
     // 30-day window: old drift SHOULD appear
     const output30 = runCli("errors drift", {
-      TDAI_DB_PATH: dbPath,
-      TDAI_RETRO_DAYS: "30",
+      REMEM_DB_PATH: dbPath,
+      REMEM_RETRO_DAYS: "30",
     });
     expect(output30).toContain("Old drift");
     expect(output30).toContain("[drift=1]");
@@ -2651,7 +2651,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     );
     db.close();
 
-    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors retro", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Fix effectiveness");
     expect(output).toContain("Most durable fixes");
@@ -2692,7 +2692,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     );
     db.close();
 
-    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors retro", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Fragile fixes");
     expect(output).toContain("Lint error");
@@ -2705,7 +2705,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
   it("FIX-EFF: scorecard shows durable and fragile fix counts", () => {
     makeErrorDb(dbPath);
 
-    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors retro", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Durable fixes:       0");
     expect(output).toContain("Fragile fixes:       0");
@@ -2741,7 +2741,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors lineage", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors lineage", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Fix Lineage Chains");
     expect(output).toContain("Original error");
@@ -2755,7 +2755,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
   it("LINEAGE: clean DB shows no fix lineage chains", () => {
     makeErrorDb(dbPath);
 
-    const output = runCli("errors lineage", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors lineage", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("No fix lineage chains");
   });
@@ -2793,7 +2793,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors lineage", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors lineage", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Max chain depth:       3");
   });
@@ -2830,7 +2830,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors by-goal", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors by-goal", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Goal-Linked Error Report");
     expect(output).toContain("goal-auth");
@@ -2846,10 +2846,10 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
   it("GOAL: no goal-linked errors shows helpful message", () => {
     makeErrorDb(dbPath);
 
-    const output = runCli("errors by-goal", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors by-goal", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("No goal-linked errors");
-    expect(output).toContain("TDAI_GOAL_ID");
+    expect(output).toContain("REMEM_GOAL_ID");
   });
 
   // ------------------------------------------------------------------
@@ -2878,7 +2878,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors by-goal", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors by-goal", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Goals with errors:     1");
     expect(output).toContain("Total goal errors:     2");
@@ -2905,7 +2905,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors actions", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors actions", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Action Item Tracker");
     expect(output).toContain("Verified fixes");
@@ -2933,7 +2933,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors actions", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors actions", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Open action items");
     expect(output).toContain("Lint error");
@@ -2962,7 +2962,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors actions", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors actions", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Recurring action items");
     expect(output).toContain("Recurring build error");
@@ -2977,7 +2977,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
   it("ACTIONS: clean DB shows no resolved errors message", () => {
     makeErrorDb(dbPath);
 
-    const output = runCli("errors actions", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors actions", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("No resolved errors with fixes");
   });
@@ -3007,8 +3007,8 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       cwd: tmpDir,
     });
     const output = runHook("hook-pre-tool-use", stdin, {
-      TDAI_DB_PATH: dbPath,
-      TDAI_PREDICTIVE_ERRORS: "1",
+      REMEM_DB_PATH: dbPath,
+      REMEM_PREDICTIVE_ERRORS: "1",
     });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
@@ -3019,9 +3019,9 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
   });
 
   // ------------------------------------------------------------------
-  // Test 76: PREDICT: PreToolUse does NOT inject when TDAI_PREDICTIVE_ERRORS not set
+  // Test 76: PREDICT: PreToolUse does NOT inject when REMEM_PREDICTIVE_ERRORS not set
   // ------------------------------------------------------------------
-  it("PREDICT: PreToolUse does NOT inject when TDAI_PREDICTIVE_ERRORS not set", () => {
+  it("PREDICT: PreToolUse does NOT inject when REMEM_PREDICTIVE_ERRORS not set", () => {
     const db = makeErrorDb(dbPath);
     const hashPath = (p: string) => createHash("sha256").update(p).digest("hex").slice(0, 16);
 
@@ -3042,8 +3042,8 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       cwd: tmpDir,
     });
     const output = runHook("hook-pre-tool-use", stdin, {
-      TDAI_DB_PATH: dbPath,
-      // TDAI_PREDICTIVE_ERRORS not set
+      REMEM_DB_PATH: dbPath,
+      // REMEM_PREDICTIVE_ERRORS not set
     });
     const parsed = JSON.parse(output);
 
@@ -3063,8 +3063,8 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       cwd: tmpDir,
     });
     const output = runHook("hook-pre-tool-use", stdin, {
-      TDAI_DB_PATH: dbPath,
-      TDAI_PREDICTIVE_ERRORS: "1",
+      REMEM_DB_PATH: dbPath,
+      REMEM_PREDICTIVE_ERRORS: "1",
     });
     const parsed = JSON.parse(output);
 
@@ -3111,7 +3111,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors severity", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors severity", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Impact Classification");
     expect(output).toContain("blocker");
@@ -3130,7 +3130,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
   it("SEVERITY: clean DB shows no errors message", () => {
     makeErrorDb(dbPath);
 
-    const output = runCli("errors severity", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors severity", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("No errors in the last");
   });
@@ -3151,7 +3151,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors severity", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors severity", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("blocker(s)");
     expect(output).toContain("Fix first");
@@ -3192,7 +3192,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       tool_input: { command: "npm run build" },
       cwd: tmpDir,
     });
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
 
@@ -3224,7 +3224,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors templates", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors templates", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Fix Template Extraction");
     expect(output).toContain("missing import");
@@ -3238,7 +3238,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
   it("TEMPLATES: clean DB shows no templates message", () => {
     makeErrorDb(dbPath);
 
-    const output = runCli("errors templates", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors templates", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("No fix templates extracted");
   });
@@ -3267,7 +3267,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors correlations", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors correlations", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Sequential Error Patterns");
     expect(output).toContain("build → test");
@@ -3281,7 +3281,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
   it("CORRELATIONS: clean DB shows no correlations message", () => {
     makeErrorDb(dbPath);
 
-    const output = runCli("errors correlations", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors correlations", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("No error correlations detected");
   });
@@ -3303,7 +3303,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors retro", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Most stubborn errors");
     expect(output).toContain("Stubborn build error");
@@ -3316,7 +3316,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
   it("ATTEMPTS: retro with no stubborn errors does not show stubborn section", () => {
     makeErrorDb(dbPath);
 
-    const output = runCli("errors retro", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors retro", { REMEM_DB_PATH: dbPath });
 
     expect(output).not.toContain("Most stubborn errors");
   });
@@ -3350,7 +3350,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors playbooks", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors playbooks", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Recovery Pattern Library");
     expect(output).toContain("Build error");
@@ -3367,7 +3367,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
   it("PLAYBOOKS: clean DB shows no playbooks message", () => {
     makeErrorDb(dbPath);
 
-    const output = runCli("errors playbooks", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors playbooks", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("No recovery playbooks");
   });
@@ -3393,7 +3393,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors stale", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors stale", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Fix Staleness Report");
     expect(output).toContain("Old build fix");
@@ -3407,15 +3407,15 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
   it("STALE: clean DB shows no stale fixes message", () => {
     makeErrorDb(dbPath);
 
-    const output = runCli("errors stale", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors stale", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("No stale fixes found");
   });
 
   // ------------------------------------------------------------------
-  // Test 92: STALE: TDAI_FIX_STALENESS_DAYS changes threshold
+  // Test 92: STALE: REMEM_FIX_STALENESS_DAYS changes threshold
   // ------------------------------------------------------------------
-  it("STALE: TDAI_FIX_STALENESS_DAYS=10 makes 30-day-old fix stale", () => {
+  it("STALE: REMEM_FIX_STALENESS_DAYS=10 makes 30-day-old fix stale", () => {
     const db = makeErrorDb(dbPath);
 
     // Insert a resolved fix from 30 days ago
@@ -3435,8 +3435,8 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
 
     // With threshold=10, 30-day-old fix is stale
     const output = runCli("errors stale", {
-      TDAI_DB_PATH: dbPath,
-      TDAI_FIX_STALENESS_DAYS: "10",
+      REMEM_DB_PATH: dbPath,
+      REMEM_FIX_STALENESS_DAYS: "10",
     });
 
     expect(output).toContain("Staleness threshold: 10 days");
@@ -3473,7 +3473,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       tool_input: { command: "npm run build" },
       cwd: tmpDir,
     });
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
 
@@ -3512,7 +3512,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors escalations", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors escalations", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Escalation Policy Report");
     expect(output).toContain("Stubborn build error");
@@ -3530,7 +3530,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
   it("ESCALATION: clean DB shows no escalations message", () => {
     makeErrorDb(dbPath);
 
-    const output = runCli("errors escalations", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors escalations", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("No escalated errors");
     expect(output).toContain("Level 1 (ELEVATED): 3+ attempts");
@@ -3563,7 +3563,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       tool_input: { command: "npm run build" },
       cwd: tmpDir,
     });
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
 
@@ -3599,7 +3599,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       tool_input: { command: "npm run build" },
       cwd: tmpDir,
     });
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
 
@@ -3629,7 +3629,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors context", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors context", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Error Context Enrichment");
     expect(output).toContain("Build error on feature branch");
@@ -3645,7 +3645,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
   it("CONTEXT: clean DB shows no context message", () => {
     makeErrorDb(dbPath);
 
-    const output = runCli("errors context", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors context", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("No errors with git context");
   });
@@ -3678,7 +3678,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       tool_input: { command: "npm run build" },
       cwd: tmpDir,
     });
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
 
@@ -3716,7 +3716,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors inherited", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors inherited", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Cross-Project Fix Inheritance");
     expect(output).toContain("Build fix in proj A");
@@ -3731,7 +3731,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
   it("INHERITED: clean DB shows no fixes message", () => {
     makeErrorDb(dbPath);
 
-    const output = runCli("errors inherited", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors inherited", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("No resolved fixes");
   });
@@ -3765,7 +3765,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       tool_input: { command: "npm run build" },
       cwd: tmpDir,
     });
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
 
@@ -3805,7 +3805,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors provenance", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors provenance", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Fix Provenance Chain");
     expect(output).toContain("auto_captured");
@@ -3819,7 +3819,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
   it("PROVENANCE: clean DB shows no provenance message", () => {
     makeErrorDb(dbPath);
 
-    const output = runCli("errors provenance", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors provenance", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("No fixes with provenance data");
   });
@@ -3851,7 +3851,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       tool_input: { command: "npm run build" },
       cwd: tmpDir,
     });
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
 
@@ -3891,7 +3891,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
       tool_input: { command: "npm run build" },
       cwd: tmpDir,
     });
-    const output = runHook("hook-pre-tool-use", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-tool-use", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
     const ctx = parsed.hookSpecificOutput?.additionalContext ?? "";
 
@@ -3929,7 +3929,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors lineage", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors lineage", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Mermaid canvas");
     expect(output).toContain("```mermaid");
@@ -3954,7 +3954,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors lineage", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors lineage", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("No fix lineage chains");
     expect(output).not.toContain("```mermaid");
@@ -3995,7 +3995,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors persona", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors persona", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Error Profile per Project");
     expect(output).toContain("proj-a-hash");
@@ -4012,7 +4012,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
   it("PERSONA: clean DB shows no persona message", () => {
     makeErrorDb(dbPath);
 
-    const output = runCli("errors persona", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors persona", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("No errors in the last");
   });
@@ -4051,7 +4051,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     });
     db.close();
 
-    const output = runCli("errors persona", { TDAI_DB_PATH: dbPath });
+    const output = runCli("errors persona", { REMEM_DB_PATH: dbPath });
 
     expect(output).toContain("Top branches:");
     expect(output).toContain("feature/auth (2)");

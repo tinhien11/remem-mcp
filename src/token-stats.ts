@@ -30,7 +30,7 @@ function countTokens(text: string): number {
  */
 export function tokenStats(dbPath: string): void {
   const logPath =
-    process.env.TDAI_HOOK_LOG_PATH ??
+    process.env.REMEM_HOOK_LOG_PATH ??
     join(homedir(), ".local", "share", "remem-mcp", "session.log");
 
   // ─── Read DB for capture stats ────────────────────────────────

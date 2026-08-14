@@ -125,7 +125,7 @@ async function runHook(
     const distDir = dirname(fileURLToPath(import.meta.url));
     const indexPath = join(distDir, "index.js");
     const child = spawn("node", [indexPath, hookName], {
-      env: { ...process.env, TDAI_DB_PATH: dbPath },
+      env: { ...process.env, REMEM_DB_PATH: dbPath },
       stdio: ["pipe", "pipe", "pipe"],
     });
 
@@ -715,7 +715,7 @@ export async function demoCodegraph(): Promise<void> {
 
   // Use the real DB so viewer can show it
   const dbPath =
-    process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "remem-mcp", "memory.db");
+    process.env.REMEM_DB_PATH ?? join(homedir(), ".local", "share", "remem-mcp", "memory.db");
   const distDir = dirname(fileURLToPath(import.meta.url));
   const indexPath = join(distDir, "index.js");
 
@@ -729,7 +729,7 @@ export async function demoCodegraph(): Promise<void> {
   // Start viewer in background
   line(`  ${C.gray}Starting viewer at localhost:7331...${C.reset}`);
   const viewer = spawn("node", [indexPath, "viewer", "7331"], {
-    env: { ...process.env, TDAI_DB_PATH: dbPath },
+    env: { ...process.env, REMEM_DB_PATH: dbPath },
     stdio: "ignore",
     detached: true,
   });

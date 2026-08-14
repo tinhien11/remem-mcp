@@ -86,7 +86,7 @@ import { findOutdatedPages, ingestDirectory, searchWiki } from "./wiki/engine.js
 /** Default DB path. */
 function defaultDbPath(): string {
   return (
-    process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "remem-mcp", "memory.db")
+    process.env.REMEM_DB_PATH ?? join(homedir(), ".local", "share", "remem-mcp", "memory.db")
   );
 }
 
@@ -622,13 +622,13 @@ async function main(): Promise<void> {
     return;
   }
   if (arg === "viewer") {
-    const port = Number(process.argv[4] ?? process.env.TDAI_VIEWER_PORT ?? 7331);
+    const port = Number(process.argv[4] ?? process.env.REMEM_VIEWER_PORT ?? 7331);
     startViewer(defaultDbPath(), port);
     return;
   }
   if (arg === "backup") {
     const dbPath = defaultDbPath();
-    const auditPath = process.env.TDAI_AUDIT_LOG_PATH ?? join(dirname(dbPath), "audit.jsonl");
+    const auditPath = process.env.REMEM_AUDIT_LOG_PATH ?? join(dirname(dbPath), "audit.jsonl");
     const outputDir = process.argv[3] ?? "-";
     backup(dbPath, auditPath, outputDir);
     return;
@@ -975,13 +975,13 @@ Error learning (deep loop, 41 features):
   remem-mcp errors retro        Session retrospective (failure loops, wasted effort)
   remem-mcp errors drift        Drift: injected warnings that were ignored
   remem-mcp errors lineage      Fix lineage chains: E1→F1→E2→F2
-  remem-mcp errors by-goal      Error distribution by goal (set TDAI_GOAL_ID)
+  remem-mcp errors by-goal      Error distribution by goal (set REMEM_GOAL_ID)
   remem-mcp errors actions      Action items from resolved errors
   remem-mcp errors severity     Severity distribution (blocker/critical/major/minor)
   remem-mcp errors templates    Fix templates from 3+ similar resolved errors
   remem-mcp errors correlations Sequential error patterns (E1→E2 within 10 min)
   remem-mcp errors playbooks    Recovery playbooks (step-by-step)
-  remem-mcp errors stale        Fix staleness (older than TDAI_FIX_STALENESS_DAYS)
+  remem-mcp errors stale        Fix staleness (older than REMEM_FIX_STALENESS_DAYS)
   remem-mcp errors escalations  Auto-escalated errors (3+ recurrences)
   remem-mcp errors context      Error context (git branch, commits, changed files)
   remem-mcp errors inherited    Cross-project fix inheritance
@@ -1026,7 +1026,7 @@ Data:
   remem-mcp sync-export    Export memory to .remem-mcp/ in project root
   remem-mcp sync-import    Import memory from .remem-mcp/ (auto on startup)
 
-L1-L3 pipeline (require TDAI_LLM_API_KEY for extract):
+L1-L3 pipeline (require REMEM_LLM_API_KEY for extract):
   remem-mcp extract        Run L1 atom extraction on existing captures
   remem-mcp atoms          List or search L1 atoms
   remem-mcp scenarios      List L2 scenarios

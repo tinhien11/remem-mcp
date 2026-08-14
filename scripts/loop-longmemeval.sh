@@ -9,7 +9,7 @@ set -uo pipefail
 # ─── Config ────────────────────────────────────────────────────
 MAX_ITER="${1:-30}"
 VARIANT="${2:-oracle}"
-PROJECT_ROOT="/data/projects/tdai-memory-mcp"
+PROJECT_ROOT="/Users/tin/a/remem-mcp"
 BENCH_SCRIPT="/tmp/longmemeval/longmemeval-bench.ts"
 LOG_DIR="/tmp/longmemeval-loop-logs"
 PROMPT_FILE="/tmp/longmemeval-loop-prompt.md"
@@ -42,7 +42,7 @@ for iter in $(seq $START_ITER $MAX_ITER); do
   BENCH_EXIT=$?
 
   # 2. Parse score
-  SCORE=$(grep "LONGMEMEVAL_SCORE" "$BENCH_LOG" | grep -oP '\d+' || echo "0")
+  SCORE=$(grep "LONGMEMEVAL_SCORE" "$BENCH_LOG" | grep -oE '[0-9]+' || echo "0")
   log "LongMemEval score: $SCORE / 100  (target: $TARGET)"
 
   # 3. Check pass
@@ -80,7 +80,7 @@ except Exception as e:
   cat > "$PROMPT_FILE" << EOF
 # LongMemEval Fix Task — Iteration $iter
 
-You are working on tdai-memory-mcp at $PROJECT_ROOT.
+You are working on remem-mcp at $PROJECT_ROOT.
 Goal: Pass LongMemEval benchmark with score >= $TARGET.
 
 ## Current Score

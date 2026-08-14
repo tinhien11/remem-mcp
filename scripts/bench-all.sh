@@ -18,7 +18,7 @@ TARGET_LOCOMO="${TARGET_LOCOMO:-76}"
 TARGET_PERSONAMEM="${TARGET_PERSONAMEM:-76}"
 
 # ─── Paths ─────────────────────────────────────────────────────
-PROJECT_ROOT="/data/projects/tdai-memory-mcp"
+PROJECT_ROOT="/Users/tin/a/remem-mcp"
 AMB_REPO="/tmp/amb-repo"
 LOCOMO_BENCH="/tmp/locomo-bench"
 LOCOMO_DATA="/tmp/locomo/data/locomo10.json"
@@ -30,8 +30,8 @@ PERSONAMEM_RESULTS="$PERSONAMEM_BENCH/results.json"
 # ─── Helpers ───────────────────────────────────────────────────
 log() { echo "[bench] $*" >&2; }
 
-# ─── Build tdai-memory-mcp ─────────────────────────────────────
-log "Building tdai-memory-mcp..."
+# ─── Build remem-mcp ─────────────────────────────────────
+log "Building remem-mcp..."
 cd "$PROJECT_ROOT"
 npm run build 2>&1 | tail -1
 log "Build OK"
@@ -39,20 +39,20 @@ log "Build OK"
 # ─── AMB Layer 1 ───────────────────────────────────────────────
 log "Running AMB Layer 1..."
 cd "$AMB_REPO"
-L1_OUTPUT=$(npx tsx src/cli.ts --provider tdai-memory --layer 1 --no-delay --verbose --output "$AMB_RESULTS" 2>&1)
-L1=$(echo "$L1_OUTPUT" | grep '^🏆 Layer 1 Score:' | grep -oP 'Score: \K[0-9]+' || echo "0")
+L1_OUTPUT=$(npx tsx src/cli.ts --provider mcp --mcp-command "npx -y remem-mcp" --layer 1 --no-delay --verbose --output "$AMB_RESULTS" 2>&1)
+L1=$(echo "$L1_OUTPUT" | grep '^🏆 Layer 1 Score:' | grep -oE 'Score: [0-9]+' | grep -oE '[0-9]+' || echo "0")
 log "L1=$L1"
 
 # ─── AMB Layer 2 ───────────────────────────────────────────────
 log "Running AMB Layer 2..."
-L2_OUTPUT=$(npx tsx src/cli.ts --provider tdai-memory --layer 2 --no-delay --verbose --output "$AMB_RESULTS" 2>&1)
-L2=$(echo "$L2_OUTPUT" | grep '^🏆 Layer 2 Score:' | grep -oP 'Score: \K[0-9]+' || echo "0")
+L2_OUTPUT=$(npx tsx src/cli.ts --provider mcp --mcp-command "npx -y remem-mcp" --layer 2 --no-delay --verbose --output "$AMB_RESULTS" 2>&1)
+L2=$(echo "$L2_OUTPUT" | grep '^🏆 Layer 2 Score:' | grep -oE 'Score: [0-9]+' | grep -oE '[0-9]+' || echo "0")
 log "L2=$L2"
 
 # ─── AMB Layer 3 ───────────────────────────────────────────────
 log "Running AMB Layer 3 (1K memories)..."
-L3_OUTPUT=$(npx tsx src/cli.ts --provider tdai-memory --layer 3 --no-delay --verbose --output "$AMB_RESULTS" 2>&1)
-L3=$(echo "$L3_OUTPUT" | grep '^🏆 Layer 3 Score' | grep -oP 'Score.*?: \K[0-9]+' | head -1 || echo "0")
+L3_OUTPUT=$(npx tsx src/cli.ts --provider mcp --mcp-command "npx -y remem-mcp" --layer 3 --no-delay --verbose --output "$AMB_RESULTS" 2>&1)
+L3=$(echo "$L3_OUTPUT" | grep '^🏆 Layer 3 Score' | grep -oE 'Score.*?: [0-9]+' | grep -oE '[0-9]+' | head -1 || echo "0")
 log "L3=$L3"
 
 # ─── LoCoMo ────────────────────────────────────────────────────
@@ -62,8 +62,8 @@ if [ "${1:-}" != "--quick" ] && [ -f "$LOCOMO_DATA" ]; then
   cd "$LOCOMO_BENCH"
 
   # Clean previous data to avoid stale memories
-  rm -rf "$LOCOMO_BENCH/tdai-data"
-  mkdir -p "$LOCOMO_BENCH/tdai-data"
+  rm -rf "$LOCOMO_BENCH/remem-data"
+  mkdir -p "$LOCOMO_BENCH/remem-data"
 
   # Run LoCoMo ingest + search
   npx tsx run.ts 2>&1 | tail -5
@@ -104,7 +104,7 @@ if [ "${1:-}" != "--quick" ] && [ -f "$PERSONAMEM_BENCH/personamem-bench.ts" ]; 
   cd "$PERSONAMEM_BENCH"
   PERSONAMEM_SAMPLE="${PERSONAMEM_SAMPLE:-50}"
   npx tsx personamem-bench.ts --sample=$PERSONAMEM_SAMPLE 2>&1 | tail -20
-  PERSONAMEM=$(grep "PERSONAMEM_SCORE" /tmp/personamem-bench-output.log 2>/dev/null | grep -oP '\d+' || echo "0")
+  PERSONAMEM=$(grep "PERSONAMEM_SCORE" /tmp/personamem-bench-output.log 2>/dev/null | grep -oE '[0-9]+' || echo "0")
   # Parse from results.json if score line not captured
   if [ "$PERSONAMEM" = "0" ] && [ -f "$PERSONAMEM_RESULTS" ]; then
     PERSONAMEM=$(python3 -c "import json; print(json.load(open('$PERSONAMEM_RESULTS'))['score'])" 2>/dev/null || echo "0")
@@ -115,7 +115,7 @@ fi
 # ─── Output ────────────────────────────────────────────────────
 echo ""
 echo "═══════════════════════════════════════════════════════════"
-echo "  BENCHMARK RESULTS — tdai-memory-mcp"
+echo "  BENCHMARK RESULTS — remem-mcp"
 echo "═══════════════════════════════════════════════════════════"
 echo "  AMB Layer 1:  $L1 / 100  (target: $TARGET_L1)"
 echo "  AMB Layer 2:  $L2 / 100  (target: $TARGET_L2)"

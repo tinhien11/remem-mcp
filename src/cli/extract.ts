@@ -11,17 +11,17 @@ import type { CaptureEntry } from "../storage/types.js";
  * Usage:
  *   remem-mcp extract [--team-id <id>] [--limit <n>] [--capture-id <id>]
  *
- * Requires TDAI_LLM_API_KEY (or OPENAI_API_KEY) environment variable.
+ * Requires REMEM_LLM_API_KEY (or OPENAI_API_KEY) environment variable.
  */
 export async function extractCommand(dbPath: string, flags: Record<string, string>): Promise<void> {
-  const apiKey = process.env.TDAI_LLM_API_KEY ?? process.env.OPENAI_API_KEY;
+  const apiKey = process.env.REMEM_LLM_API_KEY ?? process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    console.error("Error: Set TDAI_LLM_API_KEY (or OPENAI_API_KEY) to run atom extraction.");
+    console.error("Error: Set REMEM_LLM_API_KEY (or OPENAI_API_KEY) to run atom extraction.");
     process.exit(1);
   }
 
-  const baseUrl = process.env.TDAI_LLM_BASE_URL ?? "https://api.openai.com/v1";
-  const model = process.env.TDAI_LLM_MODEL ?? "gpt-4o-mini";
+  const baseUrl = process.env.REMEM_LLM_BASE_URL ?? "https://api.openai.com/v1";
+  const model = process.env.REMEM_LLM_MODEL ?? "gpt-4o-mini";
 
   const storage = new SQLiteBackend(dbPath);
   try {

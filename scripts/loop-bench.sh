@@ -13,7 +13,7 @@ set -uo pipefail
 
 # ─── Config ────────────────────────────────────────────────────
 MAX_ITER="${1:-50}"
-PROJECT_ROOT="/data/projects/tdai-memory-mcp"
+PROJECT_ROOT="/Users/tin/a/remem-mcp"
 BENCH_SCRIPT="$PROJECT_ROOT/scripts/bench-all.sh"
 LOG_DIR="/tmp/bench-loop-logs"
 PROMPT_FILE="/tmp/bench-loop-prompt.md"
@@ -56,11 +56,11 @@ for iter in $(seq $START_ITER $MAX_ITER); do
 
   # 2. Parse scores
   RESULT_LINE=$(grep "BENCH_RESULT" "$BENCH_LOG" || echo "BENCH_RESULT L1=0 L2=0 L3=0 LOCOMO=N/A PERSONAMEM=N/A")
-  L1=$(echo "$RESULT_LINE" | grep -oP 'L1=\K[0-9]+' || echo "0")
-  L2=$(echo "$RESULT_LINE" | grep -oP 'L2=\K[0-9]+' || echo "0")
-  L3=$(echo "$RESULT_LINE" | grep -oP 'L3=\K[0-9]+' || echo "0")
-  LOCOMO=$(echo "$RESULT_LINE" | grep -oP 'LOCOMO=\K[0-9]+' || echo "N/A")
-  PERSONAMEM=$(echo "$RESULT_LINE" | grep -oP 'PERSONAMEM=\K[0-9]+' || echo "N/A")
+  L1=$(echo "$RESULT_LINE" | grep -oE 'L1=[0-9]+' | grep -oE '[0-9]+' || echo "0")
+  L2=$(echo "$RESULT_LINE" | grep -oE 'L2=[0-9]+' | grep -oE '[0-9]+' || echo "0")
+  L3=$(echo "$RESULT_LINE" | grep -oE 'L3=[0-9]+' | grep -oE '[0-9]+' || echo "0")
+  LOCOMO=$(echo "$RESULT_LINE" | grep -oE 'LOCOMO=[0-9]+' | grep -oE '[0-9]+' || echo "N/A")
+  PERSONAMEM=$(echo "$RESULT_LINE" | grep -oE 'PERSONAMEM=[0-9]+' | grep -oE '[0-9]+' || echo "N/A")
 
   log "Scores: L1=$L1 L2=$L2 L3=$L3 LOCOMO=$LOCOMO PERSONAMEM=$PERSONAMEM"
 
@@ -84,7 +84,7 @@ for iter in $(seq $START_ITER $MAX_ITER); do
   cat > "$PROMPT_FILE" << EOF
 # Benchmark Fix Task — Iteration $iter
 
-You are working on tdai-memory-mcp at $PROJECT_ROOT.
+You are working on remem-mcp at $PROJECT_ROOT.
 Goal: Pass ALL benchmarks with scores >= TencentDB.
 
 ## Current Scores vs Targets
@@ -124,7 +124,7 @@ Read: $BENCH_LOG
 - LoCoMo = long conversation QA (19 sessions, 400+ turns, multi-hop questions).
 - PersonaMem = personalization benchmark (588 questions, 20 personas, multiple-choice QA).
   TencentDB scores 76% on PersonaMem. Our adapter at /tmp/personamem/personamem-bench.ts
-  ingests conversation context into tdai-memory-mcp, then searches with the question
+  ingests conversation context into remem-mcp, then searches with the question
   and checks if search results contain unique keywords from the correct answer.
   Current score: $PERSONAMEM/100. Target: 76.
 - AtomPipeline exists but only runs for decision/learning/error — NOT conversation.

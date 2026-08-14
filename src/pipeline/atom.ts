@@ -12,7 +12,7 @@ export class AtomPipeline implements PipelineStage {
 
   async process(input: CaptureInput, ctx: PipelineContext): Promise<PipelineOutput> {
     if (!ctx.llmClient) {
-      throw new Error("Atom pipeline requires an LLM client. Set TDAI_LLM_API_KEY.");
+      throw new Error("Atom pipeline requires an LLM client. Set REMEM_LLM_API_KEY.");
     }
 
     // Only extract atoms from decision, learning, and error types

@@ -73,10 +73,10 @@ describeOrSkip("Smoke test: full server over stdio", () => {
       stdio: ["pipe", "pipe", "pipe"],
       env: {
         ...process.env,
-        TDAI_DB_PATH: dbPath,
-        TDAI_AUDIT_LOG_PATH: auditPath,
-        TDAI_AUDIT_LOG: "true",
-        TDAI_REDACT_SECRETS: "true",
+        REMEM_DB_PATH: dbPath,
+        REMEM_AUDIT_LOG_PATH: auditPath,
+        REMEM_AUDIT_LOG: "true",
+        REMEM_REDACT_SECRETS: "true",
       },
     });
 

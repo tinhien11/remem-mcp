@@ -88,7 +88,7 @@ function initDb(dbPath: string): void {
   mkdirSync(dbDir, { recursive: true });
   execSync(`node ${BIN} init`, {
     encoding: "utf-8",
-    env: { ...process.env, TDAI_DB_PATH: dbPath },
+    env: { ...process.env, REMEM_DB_PATH: dbPath },
     timeout: 10000,
   });
 }
@@ -126,7 +126,7 @@ function runClaudePrint(prompt: string, home: string, dbPath: string, timeout = 
       env: {
         ...process.env,
         HOME: home,
-        TDAI_DB_PATH: dbPath,
+        REMEM_DB_PATH: dbPath,
       },
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -257,7 +257,7 @@ describe.skipIf(!CLAUDE_AVAILABLE)("E2E: Claude CLI round-trip (capture → reca
     const recallOutput = execSync(`node ${BIN} hook-recall`, {
       input: recallStdin,
       encoding: "utf-8",
-      env: { ...process.env, TDAI_DB_PATH: dbPath },
+      env: { ...process.env, REMEM_DB_PATH: dbPath },
       timeout: 10000,
     });
 
@@ -314,7 +314,7 @@ describe.skipIf(!DEVIN_AVAILABLE)("E2E: Devin CLI hook smoke test", () => {
     execSync(`node ${BIN} hook-session-end`, {
       input: stdin,
       encoding: "utf-8",
-      env: { ...process.env, TDAI_DB_PATH: dbPath, DEVIN_TRANSCRIPTS_DIR: transcriptDir },
+      env: { ...process.env, REMEM_DB_PATH: dbPath, DEVIN_TRANSCRIPTS_DIR: transcriptDir },
       timeout: 10000,
     });
 
@@ -341,7 +341,7 @@ describe.skipIf(!DEVIN_AVAILABLE)("E2E: Devin CLI hook smoke test", () => {
     execSync(`node ${BIN} hook-session-end`, {
       input: stdin,
       encoding: "utf-8",
-      env: { ...process.env, TDAI_DB_PATH: dbPath, DEVIN_TRANSCRIPTS_DIR: transcriptDir },
+      env: { ...process.env, REMEM_DB_PATH: dbPath, DEVIN_TRANSCRIPTS_DIR: transcriptDir },
       timeout: 10000,
     });
 

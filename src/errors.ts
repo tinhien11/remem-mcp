@@ -5,7 +5,7 @@ import Database from "better-sqlite3";
 /** Default DB path (matches index.ts). */
 function defaultDbPath(): string {
   return (
-    process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "remem-mcp", "memory.db")
+    process.env.REMEM_DB_PATH ?? join(homedir(), ".local", "share", "remem-mcp", "memory.db")
   );
 }
 
@@ -167,7 +167,7 @@ export function errors(dbPath: string = defaultDbPath()): void {
   console.log("  5. Old errors decay via Ebbinghaus curve (0.95^days)");
   console.log("  6. Cross-project patterns detected and alerted");
   console.log();
-  console.log("Set TDAI_GLOBAL_ERRORS=1 to inject errors from ALL projects.");
+  console.log("Set REMEM_GLOBAL_ERRORS=1 to inject errors from ALL projects.");
 
   db.close();
 }
@@ -191,8 +191,8 @@ export function errorsRetro(dbPath: string = defaultDbPath()): void {
   console.log("remem-mcp errors retro — Session Retrospective\n");
   console.log(`${"─".repeat(60)}\n`);
 
-  // Time window: last 7 days by default (configurable via TDAI_RETRO_DAYS)
-  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  // Time window: last 7 days by default (configurable via REMEM_RETRO_DAYS)
+  const days = Number(process.env.REMEM_RETRO_DAYS ?? 7);
   const windowClause = `created_at > datetime('now', '-${days} days')`;
 
   // 1. Failure loops — same error recurring 3+ times (downvoted but not pruned)
@@ -631,7 +631,7 @@ export function errorsRetro(dbPath: string = defaultDbPath()): void {
     console.log("  ✓ No issues detected. Error learning is working well.");
   }
   console.log();
-  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+  console.log("Set REMEM_RETRO_DAYS=N to change the analysis window (default: 7).");
 
   db.close();
 }
@@ -655,7 +655,7 @@ export function errorsDrift(dbPath: string = defaultDbPath()): void {
   console.log("remem-mcp errors drift — Drift Detection Report\n");
   console.log(`${"─".repeat(60)}\n`);
 
-  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const days = Number(process.env.REMEM_RETRO_DAYS ?? 7);
   const windowClause = `created_at > datetime('now', '-${days} days')`;
 
   // 1. Drift violations — errors with drift_count > 0
@@ -786,7 +786,7 @@ export function errorsDrift(dbPath: string = defaultDbPath()): void {
   console.log("Legend: ● = 1 drift, ●● = 2 drifts, ●●● = 3+ drifts");
   console.log("Drift = error was injected by PreToolUse but agent still failed.");
   console.log();
-  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+  console.log("Set REMEM_RETRO_DAYS=N to change the analysis window (default: 7).");
 
   db.close();
 }
@@ -809,7 +809,7 @@ export function errorsLineage(dbPath: string = defaultDbPath()): void {
   console.log("remem-mcp errors lineage — Fix Lineage Chains\n");
   console.log(`${"─".repeat(60)}\n`);
 
-  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const days = Number(process.env.REMEM_RETRO_DAYS ?? 7);
   const windowClause = `created_at > datetime('now', '-${days} days')`;
 
   // Find all errors that have a caused_by_error_id (they're the "child" in a chain)
@@ -1018,14 +1018,14 @@ export function errorsLineage(dbPath: string = defaultDbPath()): void {
     console.log();
   }
 
-  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+  console.log("Set REMEM_RETRO_DAYS=N to change the analysis window (default: 7).");
 
   db.close();
 }
 
 /**
  * `remem-mcp errors by-goal` — Goal-linked error report.
- * Shows error distribution by goal_id (set via TDAI_GOAL_ID env var).
+ * Shows error distribution by goal_id (set via REMEM_GOAL_ID env var).
  * (LoopX-inspired: link errors to the goals they block)
  */
 export function errorsByGoal(dbPath: string = defaultDbPath()): void {
@@ -1040,7 +1040,7 @@ export function errorsByGoal(dbPath: string = defaultDbPath()): void {
   console.log("remem-mcp errors by-goal — Goal-Linked Error Report\n");
   console.log(`${"─".repeat(60)}\n`);
 
-  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const days = Number(process.env.REMEM_RETRO_DAYS ?? 7);
   const windowClause = `created_at > datetime('now', '-${days} days')`;
 
   // Group errors by goal_id
@@ -1067,7 +1067,7 @@ export function errorsByGoal(dbPath: string = defaultDbPath()): void {
 
   if (byGoal.length === 0) {
     console.log(`No goal-linked errors in the last ${days} days.`);
-    console.log("Set TDAI_GOAL_ID=<goal-id> to tag errors with a goal.\n");
+    console.log("Set REMEM_GOAL_ID=<goal-id> to tag errors with a goal.\n");
     db.close();
     return;
   }
@@ -1098,8 +1098,8 @@ export function errorsByGoal(dbPath: string = defaultDbPath()): void {
   const worst = byGoal[0];
   console.log(`Most error-prone goal: ${worst.goal_id} (${worst.error_count} errors)`);
   console.log();
-  console.log("Set TDAI_GOAL_ID=<goal-id> to tag new errors with a goal.");
-  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+  console.log("Set REMEM_GOAL_ID=<goal-id> to tag new errors with a goal.");
+  console.log("Set REMEM_RETRO_DAYS=N to change the analysis window (default: 7).");
 
   db.close();
 }
@@ -1121,7 +1121,7 @@ export function errorsActions(dbPath: string = defaultDbPath()): void {
   console.log("remem-mcp errors actions — Action Item Tracker\n");
   console.log(`${"─".repeat(60)}\n`);
 
-  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const days = Number(process.env.REMEM_RETRO_DAYS ?? 7);
   const windowClause = `created_at > datetime('now', '-${days} days')`;
 
   // Resolved errors with fixes = potential action items
@@ -1258,7 +1258,7 @@ export function errorsActions(dbPath: string = defaultDbPath()): void {
     console.log("  ✓ All fixes are verified and stable.");
   }
   console.log();
-  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+  console.log("Set REMEM_RETRO_DAYS=N to change the analysis window (default: 7).");
 
   db.close();
 }
@@ -1280,7 +1280,7 @@ export function errorsSeverity(dbPath: string = defaultDbPath()): void {
   console.log("remem-mcp errors severity — Impact Classification\n");
   console.log(`${"─".repeat(60)}\n`);
 
-  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const days = Number(process.env.REMEM_RETRO_DAYS ?? 7);
   const windowClause = `created_at > datetime('now', '-${days} days')`;
 
   // Count by severity
@@ -1399,7 +1399,7 @@ export function errorsSeverity(dbPath: string = defaultDbPath()): void {
   console.log("Severity: blocker > critical > major > minor");
   console.log("PreToolUse injects blockers first, then critical, then major.");
   console.log();
-  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+  console.log("Set REMEM_RETRO_DAYS=N to change the analysis window (default: 7).");
 
   db.close();
 }
@@ -1421,7 +1421,7 @@ export function errorsTemplates(dbPath: string = defaultDbPath()): void {
   console.log("remem-mcp errors templates — Fix Template Extraction\n");
   console.log(`${"─".repeat(60)}\n`);
 
-  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const days = Number(process.env.REMEM_RETRO_DAYS ?? 7);
   const windowClause = `created_at > datetime('now', '-${days} days')`;
 
   // Find errors that have a fix_template extracted
@@ -1500,7 +1500,7 @@ export function errorsTemplates(dbPath: string = defaultDbPath()): void {
   }
   console.log();
   console.log("Templates are auto-extracted when 3+ similar errors share the same fix pattern.");
-  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+  console.log("Set REMEM_RETRO_DAYS=N to change the analysis window (default: 7).");
 
   db.close();
 }
@@ -1522,7 +1522,7 @@ export function errorsCorrelations(dbPath: string = defaultDbPath()): void {
   console.log("remem-mcp errors correlations — Sequential Error Patterns\n");
   console.log(`${"─".repeat(60)}\n`);
 
-  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const days = Number(process.env.REMEM_RETRO_DAYS ?? 7);
   const windowClause = `created_at > datetime('now', '-${days} days')`;
 
   // Find errors that have error_correlations recorded
@@ -1615,7 +1615,7 @@ export function errorsCorrelations(dbPath: string = defaultDbPath()): void {
   }
   console.log();
   console.log("Correlations are detected when different error types occur within 10 minutes.");
-  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+  console.log("Set REMEM_RETRO_DAYS=N to change the analysis window (default: 7).");
 
   db.close();
 }
@@ -1637,7 +1637,7 @@ export function errorsPlaybooks(dbPath: string = defaultDbPath()): void {
   console.log("remem-mcp errors playbooks — Recovery Pattern Library\n");
   console.log(`${"─".repeat(60)}\n`);
 
-  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const days = Number(process.env.REMEM_RETRO_DAYS ?? 7);
   const windowClause = `created_at > datetime('now', '-${days} days')`;
 
   // Find errors that have a recovery_pattern extracted
@@ -1709,7 +1709,7 @@ export function errorsPlaybooks(dbPath: string = defaultDbPath()): void {
   }
   console.log();
   console.log("Playbooks are auto-extracted when errors with 2+ attempts are resolved.");
-  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+  console.log("Set REMEM_RETRO_DAYS=N to change the analysis window (default: 7).");
 
   db.close();
 }
@@ -1731,7 +1731,7 @@ export function errorsStale(dbPath: string = defaultDbPath()): void {
   console.log("remem-mcp errors stale — Fix Staleness Report\n");
   console.log(`${"─".repeat(60)}\n`);
 
-  const stalenessDays = Number(process.env.TDAI_FIX_STALENESS_DAYS ?? 180);
+  const stalenessDays = Number(process.env.REMEM_FIX_STALENESS_DAYS ?? 180);
   const stalenessClause = `datetime('now', '-${stalenessDays} days')`;
 
   // Find resolved fixes older than threshold
@@ -1774,7 +1774,7 @@ export function errorsStale(dbPath: string = defaultDbPath()): void {
     )
     .get() as { count: number };
 
-  console.log(`Staleness threshold: ${stalenessDays} days (TDAI_FIX_STALENESS_DAYS)`);
+  console.log(`Staleness threshold: ${stalenessDays} days (REMEM_FIX_STALENESS_DAYS)`);
   console.log();
 
   if (stale.length === 0) {
@@ -1816,7 +1816,7 @@ export function errorsStale(dbPath: string = defaultDbPath()): void {
   }
   console.log();
   console.log("Stale fixes are still injected but with a [STALE — verify before applying] tag.");
-  console.log("Set TDAI_FIX_STALENESS_DAYS=N to change the threshold (default: 180).");
+  console.log("Set REMEM_FIX_STALENESS_DAYS=N to change the threshold (default: 180).");
 
   db.close();
 }
@@ -1838,9 +1838,9 @@ export function errorsEscalations(dbPath: string = defaultDbPath()): void {
   console.log("remem-mcp errors escalations — Escalation Policy Report\n");
   console.log(`${"─".repeat(60)}\n`);
 
-  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const days = Number(process.env.REMEM_RETRO_DAYS ?? 7);
   const windowClause = `created_at > datetime('now', '-${days} days')`;
-  const threshold = Number(process.env.TDAI_ESCALATION_THRESHOLD ?? 3);
+  const threshold = Number(process.env.REMEM_ESCALATION_THRESHOLD ?? 3);
 
   // Find escalated errors
   const escalated = db
@@ -1872,8 +1872,8 @@ export function errorsEscalations(dbPath: string = defaultDbPath()): void {
     resolved: string;
   }[];
 
-  console.log(`Escalation threshold: ${threshold} attempts (TDAI_ESCALATION_THRESHOLD)`);
-  console.log(`Analysis window: last ${days} days (TDAI_RETRO_DAYS)`);
+  console.log(`Escalation threshold: ${threshold} attempts (REMEM_ESCALATION_THRESHOLD)`);
+  console.log(`Analysis window: last ${days} days (REMEM_RETRO_DAYS)`);
   console.log();
 
   if (escalated.length === 0) {
@@ -1938,8 +1938,8 @@ export function errorsEscalations(dbPath: string = defaultDbPath()): void {
   }
   console.log();
   console.log("Escalated errors get stronger warning text in PreToolUse injections.");
-  console.log("Set TDAI_ESCALATION_THRESHOLD=N to change the trigger (default: 3).");
-  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+  console.log("Set REMEM_ESCALATION_THRESHOLD=N to change the trigger (default: 3).");
+  console.log("Set REMEM_RETRO_DAYS=N to change the analysis window (default: 7).");
 
   db.close();
 }
@@ -1961,7 +1961,7 @@ export function errorsContext(dbPath: string = defaultDbPath()): void {
   console.log("remem-mcp errors context — Error Context Enrichment\n");
   console.log(`${"─".repeat(60)}\n`);
 
-  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const days = Number(process.env.REMEM_RETRO_DAYS ?? 7);
   const windowClause = `created_at > datetime('now', '-${days} days')`;
 
   // Find errors with context_enrichment
@@ -2040,7 +2040,7 @@ export function errorsContext(dbPath: string = defaultDbPath()): void {
   }
   console.log();
   console.log("Context is auto-captured when errors occur in a git repository.");
-  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+  console.log("Set REMEM_RETRO_DAYS=N to change the analysis window (default: 7).");
 
   db.close();
 }
@@ -2062,7 +2062,7 @@ export function errorsInherited(dbPath: string = defaultDbPath()): void {
   console.log("remem-mcp errors inherited — Cross-Project Fix Inheritance\n");
   console.log(`${"─".repeat(60)}\n`);
 
-  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const days = Number(process.env.REMEM_RETRO_DAYS ?? 7);
   const windowClause = `created_at > datetime('now', '-${days} days')`;
 
   // Find resolved fixes with provenance = inherited
@@ -2140,7 +2140,7 @@ export function errorsInherited(dbPath: string = defaultDbPath()): void {
   console.log(
     "Fixes are auto-inherited when PreToolUse finds validated fixes from other projects.",
   );
-  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+  console.log("Set REMEM_RETRO_DAYS=N to change the analysis window (default: 7).");
 
   db.close();
 }
@@ -2162,7 +2162,7 @@ export function errorsProvenance(dbPath: string = defaultDbPath()): void {
   console.log("remem-mcp errors provenance — Fix Provenance Chain\n");
   console.log(`${"─".repeat(60)}\n`);
 
-  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const days = Number(process.env.REMEM_RETRO_DAYS ?? 7);
   const windowClause = `created_at > datetime('now', '-${days} days')`;
 
   // Count by provenance
@@ -2237,7 +2237,7 @@ export function errorsProvenance(dbPath: string = defaultDbPath()): void {
   }
   console.log();
   console.log("Provenance is auto-tagged: auto_captured > inherited > template_extracted.");
-  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+  console.log("Set REMEM_RETRO_DAYS=N to change the analysis window (default: 7).");
 
   db.close();
 }
@@ -2259,7 +2259,7 @@ export function errorsPersona(dbPath: string = defaultDbPath()): void {
   console.log("remem-mcp errors persona — Error Profile per Project\n");
   console.log(`${"─".repeat(60)}\n`);
 
-  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const days = Number(process.env.REMEM_RETRO_DAYS ?? 7);
   const windowClause = `created_at > datetime('now', '-${days} days')`;
 
   // Group by session_key (project)
@@ -2402,7 +2402,7 @@ export function errorsPersona(dbPath: string = defaultDbPath()): void {
   console.log(`  Total resolved:       ${totalResolved}`);
   console.log();
   console.log("Error personas are auto-built from captured errors.");
-  console.log("Set TDAI_RETRO_DAYS=N to change the analysis window (default: 7).");
+  console.log("Set REMEM_RETRO_DAYS=N to change the analysis window (default: 7).");
 
   db.close();
 }
@@ -2427,7 +2427,7 @@ export function decisionsDashboard(dbPath: string = defaultDbPath()): void {
   console.log("remem-mcp decisions — Decision Learning Dashboard\n");
   console.log(`${"─".repeat(60)}\n`);
 
-  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const days = Number(process.env.REMEM_RETRO_DAYS ?? 7);
   const windowClause = `created_at > datetime('now', '-${days} days')`;
 
   const decisions = db
@@ -2498,7 +2498,7 @@ export function decisionsDashboard(dbPath: string = defaultDbPath()): void {
   console.log(
     "Decisions are auto-captured from dependency installs, config creation, and commit messages.",
   );
-  console.log("Set TDAI_RETRO_DAYS=N to change the window (default: 7).");
+  console.log("Set REMEM_RETRO_DAYS=N to change the window (default: 7).");
 
   db.close();
 }
@@ -2519,7 +2519,7 @@ export function decisionsRetro(dbPath: string = defaultDbPath()): void {
   console.log("remem-mcp decisions retro — Decision Retrospective\n");
   console.log(`${"─".repeat(60)}\n`);
 
-  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const days = Number(process.env.REMEM_RETRO_DAYS ?? 7);
   const windowClause = `created_at > datetime('now', '-${days} days')`;
 
   const decisions = db
@@ -2587,7 +2587,7 @@ export function decisionsRetro(dbPath: string = defaultDbPath()): void {
       : "0";
   console.log(`  Follow rate:         ${followRate}%`);
   console.log();
-  console.log("Set TDAI_RETRO_DAYS=N to change the window (default: 7).");
+  console.log("Set REMEM_RETRO_DAYS=N to change the window (default: 7).");
 
   db.close();
 }
@@ -2612,7 +2612,7 @@ export function patternsDashboard(dbPath: string = defaultDbPath()): void {
   console.log("remem-mcp patterns — Pattern Learning Dashboard\n");
   console.log(`${"─".repeat(60)}\n`);
 
-  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const days = Number(process.env.REMEM_RETRO_DAYS ?? 7);
   const windowClause = `created_at > datetime('now', '-${days} days')`;
 
   const patterns = db
@@ -2692,7 +2692,7 @@ export function patternsDashboard(dbPath: string = defaultDbPath()): void {
   console.log(`  High confidence:    ${highConf} (seen 3+ times)`);
   console.log();
   console.log("Patterns are auto-captured from Write/Edit tools.");
-  console.log("Set TDAI_RETRO_DAYS=N to change the window (default: 7).");
+  console.log("Set REMEM_RETRO_DAYS=N to change the window (default: 7).");
 
   db.close();
 }
@@ -2713,7 +2713,7 @@ export function patternsRetro(dbPath: string = defaultDbPath()): void {
   console.log("remem-mcp patterns retro — Pattern Retrospective\n");
   console.log(`${"─".repeat(60)}\n`);
 
-  const days = Number(process.env.TDAI_RETRO_DAYS ?? 7);
+  const days = Number(process.env.REMEM_RETRO_DAYS ?? 7);
   const windowClause = `created_at > datetime('now', '-${days} days')`;
 
   const patterns = db
@@ -2770,7 +2770,7 @@ export function patternsRetro(dbPath: string = defaultDbPath()): void {
     patterns.length > 0 ? ((adoptedCount / patterns.length) * 100).toFixed(0) : "0";
   console.log(`  Adoption rate:      ${adoptionRate}%`);
   console.log();
-  console.log("Set TDAI_RETRO_DAYS=N to change the window (default: 7).");
+  console.log("Set REMEM_RETRO_DAYS=N to change the window (default: 7).");
 
   db.close();
 }

@@ -167,7 +167,7 @@
 </div>
 
 <h2 id="setup">Setup</h2>
-<pre><code>npx tdai-memory-mcp setup</code></pre>
+<pre><code>npx remem-mcp setup</code></pre>
 <p>One command. Registers the MCP server + lifecycle hooks for Claude Code, Cursor, Devin, Codex. No API key, no cloud — SQLite on your machine.</p>
 <p>
   I tested it on <strong>honojs/hono</strong> — a TypeScript web framework with 326 source files, 4,769 tests. The task: fix <a href="https://github.com/honojs/hono/issues/4992">issue #4992</a>, a real open bug about Set-Cookie headers being lost when middleware and handlers both set cookies.
@@ -198,7 +198,7 @@
 
 <h2 id="trace">Tracing the code with CodeGraph</h2>
 <p>
-  I used tdai-memory's CodeGraph to index the codebase: 470 symbols, 1,855 calls from 309 TypeScript files in 3 seconds. Then I listed symbols in <code>src/context.ts</code>:
+  I used remem-mcp's CodeGraph to index the codebase: 470 symbols, 1,855 calls from 309 TypeScript files in 3 seconds. Then I listed symbols in <code>src/context.ts</code>:
 </p>
 <pre><code>codegraph_list({ file_path: "src/context.ts" })
 → Found 23 symbol(s): Context class (L293-793), res getter (L403-407), res setter (L414-434), ...</code></pre>
@@ -306,7 +306,7 @@ Test Files  1 failed (1)
 
 <h2 id="memory">What the memory layer did</h2>
 <p>
-  I captured the following to tdai-memory during this work:
+  I captured the following to remem-mcp during this work:
 </p>
 <ul>
   <li><strong>Learning:</strong> The design conflict between <code>#preparedHeaders</code> and raw Response merging — captured with full context so a future session doesn't re-derive it.</li>
@@ -411,16 +411,16 @@ Test Files  1 failed (1)
 
 <h2 id="try">Try it</h2>
 <div class="cta">
-<pre><code>npx tdai-memory-mcp setup</code></pre>
+<pre><code>npx remem-mcp setup</code></pre>
 </div>
-<pre><code>npx tdai-memory-mcp status    # See everything at a glance
-npx tdai-memory-mcp viewer    # Web UI at localhost:7331
-npx tdai-memory-mcp demo      # 30-second live demo</code></pre>
+<pre><code>npx remem-mcp status    # See everything at a glance
+npx remem-mcp viewer    # Web UI at localhost:7331
+npx remem-mcp demo      # 30-second live demo</code></pre>
 
 <hr>
 <div class="footer">
   <p>Tested on <a href="https://github.com/honojs/hono">honojs/hono</a> (commit 329b6f4). Real bug: <a href="https://github.com/honojs/hono/issues/4992">#4992</a>. 4,769 tests pass after fix. Scenario A documented as design conflict. 1 dogfood bug found and fixed (sqliteVec in Stop hook). Full verification: <a href="VERIFY-RESULTS.md">VERIFY-RESULTS.md</a>.</p>
-  <p>tdai-memory-mcp is <a href="https://github.com/tinhien11/tdai-memory-mcp">open source</a> (MIT).</p>
+  <p>remem-mcp is <a href="https://github.com/tinhien11/remem-mcp">open source</a> (MIT).</p>
 </div>
 
 </body>

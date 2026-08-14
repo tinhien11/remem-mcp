@@ -58,7 +58,7 @@ export class Memory {
     this.embedder = new LocalEmbedder();
     this.sessionKey =
       opts?.sessionKey ??
-      process.env.TDAI_SESSION_KEY ??
+      process.env.REMEM_SESSION_KEY ??
       createHash("sha256").update(process.cwd()).digest("hex").slice(0, 16);
     this.redactSecrets = opts?.redactSecrets ?? true;
   }

@@ -6,8 +6,8 @@ import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 
 /** Whether to show visible feedback on stderr when memory is injected.
- * Set TDAI_QUIET=1 to suppress. Default: show feedback. */
-const SHOW_FEEDBACK = process.env.TDAI_QUIET !== "1";
+ * Set REMEM_QUIET=1 to suppress. Default: show feedback. */
+const SHOW_FEEDBACK = process.env.REMEM_QUIET !== "1";
 
 /** Print a short visible feedback line to stderr so the user can see
  *  that memory was injected. Does NOT interfere with stdout JSON. */
@@ -32,7 +32,7 @@ function feedback(emoji: string, message: string): void {
 /** Default log path: ~/.local/share/remem-mcp/session.log */
 function defaultLogPath(): string {
   return (
-    process.env.TDAI_HOOK_LOG_PATH ??
+    process.env.REMEM_HOOK_LOG_PATH ??
     join(homedir(), ".local", "share", "remem-mcp", "session.log")
   );
 }
@@ -451,8 +451,8 @@ export function hookRecall(dbPath: string): void {
         created_at: number;
       }[] = [];
 
-      // If TDAI_GLOBAL_SESSION_KEY is set, include global memory first
-      const globalKey = process.env.TDAI_GLOBAL_SESSION_KEY;
+      // If REMEM_GLOBAL_SESSION_KEY is set, include global memory first
+      const globalKey = process.env.REMEM_GLOBAL_SESSION_KEY;
       if (globalKey) {
         const globalErrors = db
           .prepare(`${errorSql} AND session_key = ? ORDER BY created_at DESC LIMIT 3`)
@@ -1252,7 +1252,7 @@ export function hookPostToolUse(dbPath: string): void {
           // PagerDuty pattern: recurrence → escalation → stronger intervention.
           // Level 0: normal, Level 1: elevated (3+ attempts), Level 2: critical (5+),
           // Level 3: blocker (7+). Bump severity and add escalated_at timestamp.
-          const escalationThreshold = Number(process.env.TDAI_ESCALATION_THRESHOLD ?? 3);
+          const escalationThreshold = Number(process.env.REMEM_ESCALATION_THRESHOLD ?? 3);
           if (meta.attempt_count >= escalationThreshold) {
             const newLevel = meta.attempt_count >= 7 ? 3 : meta.attempt_count >= 5 ? 2 : 1;
             const prevLevel = meta.escalation_level ?? 0;
@@ -1414,7 +1414,7 @@ export function hookPostToolUse(dbPath: string): void {
           // [Fix Lineage] Link to the resolved error whose fix may have caused this
           caused_by_error_id: causedByErrorId ?? undefined,
           // [Goal-Linked Errors] Tag with current goal ID if set via env
-          goal_id: process.env.TDAI_GOAL_ID ?? undefined,
+          goal_id: process.env.REMEM_GOAL_ID ?? undefined,
           // [Fix Attempt Counter] Track how many attempts to fix (1 = first occurrence)
           attempt_count: 1,
           // [Fix Provenance Chain] Track where this error record came from
@@ -1572,7 +1572,7 @@ export function hookPreToolUse(dbPath: string): void {
       // (TDAD pattern: predict errors from file change history)
       if (toolName === "Write" || toolName === "Edit" || toolName === "MultiEdit") {
         const filePath = toolInput.file_path ?? toolInput.path ?? "";
-        if (filePath && process.env.TDAI_PREDICTIVE_ERRORS === "1") {
+        if (filePath && process.env.REMEM_PREDICTIVE_ERRORS === "1") {
           const cwd = input.cwd ?? toolInput.workdir ?? process.cwd();
           const sessionKey = hashPath(cwd);
           try {
@@ -1786,8 +1786,8 @@ export function hookPreToolUse(dbPath: string): void {
       }
 
       // [Feature 2] k=1-2 optimal retrieval (ReasoningBank finding)
-      // [Feature 5] Global error injection — query all projects when TDAI_GLOBAL_ERRORS=1
-      const globalErrors = process.env.TDAI_GLOBAL_ERRORS === "1";
+      // [Feature 5] Global error injection — query all projects when REMEM_GLOBAL_ERRORS=1
+      const globalErrors = process.env.REMEM_GLOBAL_ERRORS === "1";
       const sessionFilter = globalErrors ? "" : `AND session_key = ?`;
       const params = globalErrors ? [] : [sessionKey];
 
@@ -2119,7 +2119,7 @@ export function hookPreToolUse(dbPath: string): void {
       if (resolvedFixes.length > 0) {
         lines.push("");
         lines.push("Proven fixes from past resolved errors:");
-        const stalenessDays = Number(process.env.TDAI_FIX_STALENESS_DAYS ?? 180);
+        const stalenessDays = Number(process.env.REMEM_FIX_STALENESS_DAYS ?? 180);
         const stalenessMs = stalenessDays * 86400000;
         for (const fix of resolvedFixes) {
           const fixAgeMs = Date.now() - new Date(fix.resolvedAt).getTime();

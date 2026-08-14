@@ -11,9 +11,9 @@
 #
 set -euo pipefail
 
-PROJECT_ROOT="/data/projects/tdai-memory-mcp"
+PROJECT_ROOT="/Users/tin/a/remem-mcp"
 BENCH_ROOT="/tmp/memory-benchmarks"
-HTTP_SERVER="/tmp/tdai-http-server.js"
+HTTP_SERVER="/tmp/remem-http-server.js"
 RESULTS_DIR="/tmp/mem0-bench-results"
 ITER_FILE="$RESULTS_DIR/last-iter.txt"
 SCORE_FILE="$RESULTS_DIR/scores.json"
@@ -48,9 +48,9 @@ start_http_server() {
     log "HTTP server already running"
     return 0
   fi
-  log "Starting tdai-memory HTTP server..."
-  pkill -9 -f "tdai-http-server" 2>/dev/null || true
-  pkill -9 -f "node.*tdai-memory-mcp/dist" 2>/dev/null || true
+  log "Starting remem-mcp HTTP server..."
+  pkill -9 -f "remem-http-server" 2>/dev/null || true
+  pkill -9 -f "node.*remem-mcp/dist" 2>/dev/null || true
   sleep 2
   node "$HTTP_SERVER" 8888 &
   HTTP_PID=$!
@@ -67,9 +67,9 @@ start_http_server() {
 run_locomo_predict() {
   log "Running LoCoMo predict (10 conversations)..."
   cd "$BENCH_ROOT"
-  rm -rf "results/locomo/predicted_tdai-loop"
+  rm -rf "results/locomo/predicted_remem-loop"
   python3 -m benchmarks.locomo.run \
-    --project-name tdai-loop \
+    --project-name remem-loop \
     --backend oss \
     --mem0-host http://127.0.0.1:8888 \
     --provider devin \
@@ -83,14 +83,14 @@ run_locomo_judge() {
   log "Running LoCoMo judge (n=$LOCOMO_SAMPLE, $WORKERS workers)..."
   cd "$BENCH_ROOT"
   python3 parallel_judge.py \
-    results/locomo/predicted_tdai-loop/ \
+    results/locomo/predicted_remem-loop/ \
     --n $LOCOMO_SAMPLE \
     --top-k 50 \
     --workers $WORKERS \
     2>&1 | tee "$RESULTS_DIR/locomo-judge-$ITER.txt"
 
   # Extract overall score
-  local score=$(grep "^Overall:" "$RESULTS_DIR/locomo-judge-$ITER.txt" | grep -oP '[\d.]+')
+  local score=$(grep "^Overall:" "$RESULTS_DIR/locomo-judge-$ITER.txt" | grep -oE '[0-9.]+')
   echo "$score"
 }
 
@@ -98,9 +98,9 @@ run_locomo_judge() {
 run_longmemeval_predict() {
   log "Running LongMemEval predict..."
   cd "$BENCH_ROOT"
-  rm -rf "results/longmemeval/predicted_tdai-loop"
+  rm -rf "results/longmemeval/predicted_remem-loop"
   python3 -m benchmarks.longmemeval.run \
-    --project-name tdai-loop \
+    --project-name remem-loop \
     --backend oss \
     --mem0-host http://127.0.0.1:8888 \
     --provider devin \
@@ -114,13 +114,13 @@ run_longmemeval_judge() {
   log "Running LongMemEval judge (n=$LONGMEMEVAL_SAMPLE, $WORKERS workers)..."
   cd "$BENCH_ROOT"
   python3 parallel_judge.py \
-    results/longmemeval/predicted_tdai-loop/ \
+    results/longmemeval/predicted_remem-loop/ \
     --n $LONGMEMEVAL_SAMPLE \
     --top-k 50 \
     --workers $WORKERS \
     2>&1 | tee "$RESULTS_DIR/longmemeval-judge-$ITER.txt"
 
-  local score=$(grep "^Overall:" "$RESULTS_DIR/longmemeval-judge-$ITER.txt" | grep -oP '[\d.]+')
+  local score=$(grep "^Overall:" "$RESULTS_DIR/longmemeval-judge-$ITER.txt" | grep -oE '[0-9.]+')
   echo "$score"
 }
 
@@ -167,7 +167,7 @@ ask_devin_fix() {
 
   log "Asking Devin to fix gaps..."
 
-  local prompt="You are improving tdai-memory-mcp to beat Mem0's benchmark scores.
+  local prompt="You are improving remem-mcp to beat Mem0's benchmark scores.
 
 CURRENT SCORES (iter $ITER):
 - LoCoMo: $locomo_score / $TARGET_LOCOMO (Mem0 target)
@@ -177,7 +177,7 @@ GAP ANALYSIS:
 $gaps
 
 PROJECT: $PROJECT_ROOT
-HTTP ADAPTER: /tmp/tdai-http-server.js (Mem0 OSS-compatible REST API on port 8888)
+HTTP ADAPTER: /tmp/remem-http-server.js (Mem0 OSS-compatible REST API on port 8888)
 BENCHMARK: $BENCH_ROOT (Mem0's official memory-benchmarks repo)
 
 KEY FILES:
@@ -185,7 +185,7 @@ KEY FILES:
 - src/storage/sqlite.ts — SQLite storage + vector search
 - src/utils/rrf.ts — Reciprocal Rank Fusion (hybrid search)
 - src/security/redactor.ts — Content processing
-- /tmp/tdai-http-server.js — HTTP wrapper (adds [Date: YYYY-MM-DD] prefix to captures)
+- /tmp/remem-http-server.js — HTTP wrapper (adds [Date: YYYY-MM-DD] prefix to captures)
 
 WHAT TO FIX (prioritized by gap size):
 1. Temporal reasoning: extract dates from text, store as metadata, boost temporal queries
@@ -290,14 +290,14 @@ main() {
     ask_devin_fix "$GAPS" "$LOCOMO_SCORE" "$LONGMEMEVAL_SCORE"
 
     # 8. Rebuild
-    log "Rebuilding tdai-memory-mcp..."
+    log "Rebuilding remem-mcp..."
     cd "$PROJECT_ROOT"
     npm run build 2>&1 | tail -3 | tee -a "$LOG_FILE"
 
     # 9. Restart HTTP server with new build
     log "Restarting HTTP server with new build..."
-    pkill -9 -f "tdai-http-server" 2>/dev/null || true
-    pkill -9 -f "node.*tdai-memory-mcp/dist" 2>/dev/null || true
+    pkill -9 -f "remem-http-server" 2>/dev/null || true
+    pkill -9 -f "node.*remem-mcp/dist" 2>/dev/null || true
     sleep 2
 
     log "Iteration $ITER complete. Scores: LoCoMo=$LOCOMO_SCORE, LongMemEval=$LONGMEMEVAL_SCORE"

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Demo recording script for tdai-memory-mcp viewer
+# Demo recording script for remem-mcp viewer
 # Uses Chrome DevTools Protocol (CDP) for full Retina screenshots
 # Requires: Chrome running with --remote-debugging-port=9222
 #           Viewer running at http://localhost:7331/
@@ -51,7 +51,7 @@ rm -f "$FRAMES_DIR"/*.png
 
 echo "=== Recording demo frames via CDP ==="
 echo "Make sure Chrome is running: bash ~/bin/start-chrome-debug.sh"
-echo "Make sure viewer is running: tdai-memory-mcp viewer"
+echo "Make sure viewer is running: remem-mcp viewer"
 echo ""
 
 # Set viewport to 1512x982 @ 2x DPR (3024x1964 full Retina)

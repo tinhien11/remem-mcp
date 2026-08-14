@@ -47,7 +47,7 @@ all_events = []
 
 # ── Intro ──
 all_events.extend(make_panel([
-    "\x1b[1m\x1b[36m  tdai-memory-mcp\x1b[0m",
+    "\x1b[1m\x1b[36m  remem-mcp\x1b[0m",
     "\x1b[90m  ────────────────────────────────────────────\x1b[0m",
     "",
     "\x1b[90m  Watch a coding agent learn from its mistakes.\x1b[0m",
@@ -66,7 +66,7 @@ all_events.extend(e1)
 
 # ── Hook fires (natural terminal output) ──
 all_events.extend(make_panel([
-    "\x1b[90m  [tdai-memory] PostToolUse: auto-captured typecheck error\x1b[0m",
+    "\x1b[90m  [remem-mcp] PostToolUse: auto-captured typecheck error\x1b[0m",
     "\x1b[90m    confidence=1  resolved=false\x1b[0m",
     "\x1b[90m    saved to memory.db\x1b[0m",
 ], pause=2.5))
@@ -84,8 +84,8 @@ all_events.extend(e2)
 
 # ── Hook fires (natural) ──
 all_events.extend(make_panel([
-    "\x1b[90m  [tdai-memory] PreToolUse: injected 1 past error(s) before: npm run build\x1b[0m",
-    "\x1b[90m  [tdai-memory] PostToolUse: success correlation — upvoted error\x1b[0m",
+    "\x1b[90m  [remem-mcp] PreToolUse: injected 1 past error(s) before: npm run build\x1b[0m",
+    "\x1b[90m  [remem-mcp] PostToolUse: success correlation — upvoted error\x1b[0m",
     "\x1b[90m    confidence: 1 → 5  resolved=true  fix recorded\x1b[0m",
 ], pause=2.5))
 
@@ -103,13 +103,13 @@ all_events.extend(e3)
 
 # ── Hook fires (natural) ──
 all_events.extend(make_panel([
-    "\x1b[90m  [tdai-memory] PreToolUse: 0 unresolved errors — nothing to inject\x1b[0m",
-    "\x1b[90m  [tdai-memory] PostToolUse: build passed, confidence upvoted to 5\x1b[0m",
+    "\x1b[90m  [remem-mcp] PreToolUse: 0 unresolved errors — nothing to inject\x1b[0m",
+    "\x1b[90m  [remem-mcp] PostToolUse: build passed, confidence upvoted to 5\x1b[0m",
 ], pause=2.5))
 
 # ── Outro: real DB state ──
 all_events.extend(make_panel([
-    "\x1b[1m\x1b[36m  tdai-memory-mcp status\x1b[0m",
+    "\x1b[1m\x1b[36m  remem-mcp status\x1b[0m",
     "\x1b[90m  ════════════════════════════════════════════\x1b[0m",
     "",
     "\x1b[1m  Errors captured:    \x1b[32m1\x1b[0m",

@@ -330,7 +330,7 @@ export function startViewer(dbPath: string, port: number): Server {
     if (url.pathname === "/api/token-stats") {
       try {
         const logPath =
-          process.env.TDAI_HOOK_LOG_PATH ??
+          process.env.REMEM_HOOK_LOG_PATH ??
           join(homedir(), ".local", "share", "remem-mcp", "session.log");
 
         const captures = db

@@ -86,7 +86,7 @@ describe("Integration: hook-recall", () => {
       source: "startup",
     });
 
-    const output = runHook("hook-recall", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-recall", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
 
     expect(parsed.hookSpecificOutput).toBeDefined();
@@ -105,7 +105,7 @@ describe("Integration: hook-recall", () => {
       source: "startup",
     });
 
-    const output = runHook("hook-recall", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-recall", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
 
     expect(parsed).toEqual({});
@@ -114,7 +114,7 @@ describe("Integration: hook-recall", () => {
   it("outputs empty JSON on invalid stdin", () => {
     makeDb(dbPath, []);
 
-    const output = runHook("hook-recall", "not valid json", { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-recall", "not valid json", { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
 
     expect(parsed).toEqual({});
@@ -129,7 +129,7 @@ describe("Integration: hook-recall", () => {
       session_id: "test-session-123",
     });
 
-    const output = runHook("hook-recall", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-recall", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
 
     // Content should be truncated
@@ -151,7 +151,7 @@ describe("Integration: hook-recall", () => {
       session_id: "test-session-123",
     });
 
-    const output = runHook("hook-recall", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-recall", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
 
     expect(parsed.hookSpecificOutput.additionalContext).toContain("Important decision");
@@ -212,7 +212,7 @@ describe("Integration: hook-session-end", () => {
 
     const stdin = JSON.stringify({ hook_event_name: "SessionEnd", session_id: sessionId });
     runHook("hook-session-end", stdin, {
-      TDAI_DB_PATH: dbPath,
+      REMEM_DB_PATH: dbPath,
       DEVIN_TRANSCRIPTS_DIR: transcriptDir,
     });
 
@@ -238,7 +238,7 @@ describe("Integration: hook-session-end", () => {
 
     const stdin = JSON.stringify({ hook_event_name: "SessionEnd", session_id: sessionId });
     runHook("hook-session-end", stdin, {
-      TDAI_DB_PATH: dbPath,
+      REMEM_DB_PATH: dbPath,
       DEVIN_TRANSCRIPTS_DIR: transcriptDir,
     });
 
@@ -253,7 +253,7 @@ describe("Integration: hook-session-end", () => {
   it("skips when transcript not found", () => {
     const stdin = JSON.stringify({ hook_event_name: "SessionEnd", session_id: "nonexistent" });
     const output = runHook("hook-session-end", stdin, {
-      TDAI_DB_PATH: dbPath,
+      REMEM_DB_PATH: dbPath,
       DEVIN_TRANSCRIPTS_DIR: transcriptDir,
     });
 
@@ -275,11 +275,11 @@ describe("Integration: hook-session-end", () => {
 
     // Run twice
     runHook("hook-session-end", stdin, {
-      TDAI_DB_PATH: dbPath,
+      REMEM_DB_PATH: dbPath,
       DEVIN_TRANSCRIPTS_DIR: transcriptDir,
     });
     runHook("hook-session-end", stdin, {
-      TDAI_DB_PATH: dbPath,
+      REMEM_DB_PATH: dbPath,
       DEVIN_TRANSCRIPTS_DIR: transcriptDir,
     });
 
@@ -319,7 +319,7 @@ describe("Integration: hook-session-end", () => {
       reason: "other",
     });
 
-    runHook("hook-session-end", stdin, { TDAI_DB_PATH: dbPath });
+    runHook("hook-session-end", stdin, { REMEM_DB_PATH: dbPath });
 
     const Database = require("better-sqlite3");
     const db = new Database(dbPath, { readonly: true });
@@ -459,7 +459,7 @@ describe("Integration: hook-pre-compact", () => {
       session_id: "test-compact-session",
     });
 
-    const output = runHook("hook-pre-compact", stdin, { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-compact", stdin, { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
 
     // Should return PreCompact hook output with recovery context
@@ -481,7 +481,7 @@ describe("Integration: hook-pre-compact", () => {
   });
 
   it("handles empty stdin gracefully", () => {
-    const output = runHook("hook-pre-compact", "", { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-compact", "", { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
 
     expect(parsed.hookSpecificOutput).toBeDefined();
@@ -489,7 +489,7 @@ describe("Integration: hook-pre-compact", () => {
   });
 
   it("handles invalid JSON without crashing", () => {
-    const output = runHook("hook-pre-compact", "not valid json", { TDAI_DB_PATH: dbPath });
+    const output = runHook("hook-pre-compact", "not valid json", { REMEM_DB_PATH: dbPath });
     const parsed = JSON.parse(output);
 
     // Should return empty JSON (not crash)

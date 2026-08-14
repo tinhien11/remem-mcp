@@ -131,7 +131,7 @@ export async function doctor(): Promise<void> {
 
   // 5. Database
   const dbPath =
-    process.env.TDAI_DB_PATH ?? join(homedir(), ".local", "share", "remem-mcp", "memory.db");
+    process.env.REMEM_DB_PATH ?? join(homedir(), ".local", "share", "remem-mcp", "memory.db");
   if (existsSync(dbPath)) {
     try {
       const mem = new Memory({ dbPath });

@@ -107,12 +107,12 @@ export function loadConfig(): Config {
   const env = process.env;
 
   const apiKey =
-    env.TDAI_LLM_API_KEY ?? ((file?.llm as Record<string, unknown>)?.apiKey as string | undefined);
+    env.REMEM_LLM_API_KEY ?? ((file?.llm as Record<string, unknown>)?.apiKey as string | undefined);
   const baseUrl =
-    env.TDAI_LLM_BASE_URL ??
+    env.REMEM_LLM_BASE_URL ??
     ((file?.llm as Record<string, unknown>)?.baseUrl as string | undefined);
   const model =
-    env.TDAI_LLM_MODEL ?? ((file?.llm as Record<string, unknown>)?.model as string | undefined);
+    env.REMEM_LLM_MODEL ?? ((file?.llm as Record<string, unknown>)?.model as string | undefined);
 
   const llm: LlmConfig | undefined = apiKey
     ? {
@@ -125,29 +125,29 @@ export function loadConfig(): Config {
   const fileSecurity = (file?.security as Record<string, unknown>) ?? {};
 
   return {
-    storage: (env.TDAI_STORAGE ?? (file?.storage as string) ?? "sqlite") as Config["storage"],
-    pipeline: (env.TDAI_PIPELINE ?? (file?.pipeline as string) ?? "noop") as Config["pipeline"],
-    dbPath: env.TDAI_DB_PATH ?? (file?.dbPath as string) ?? defaultDbPath,
-    auditLogPath: env.TDAI_AUDIT_LOG_PATH ?? (file?.auditLogPath as string) ?? defaultAuditPath,
+    storage: (env.REMEM_STORAGE ?? (file?.storage as string) ?? "sqlite") as Config["storage"],
+    pipeline: (env.REMEM_PIPELINE ?? (file?.pipeline as string) ?? "noop") as Config["pipeline"],
+    dbPath: env.REMEM_DB_PATH ?? (file?.dbPath as string) ?? defaultDbPath,
+    auditLogPath: env.REMEM_AUDIT_LOG_PATH ?? (file?.auditLogPath as string) ?? defaultAuditPath,
     llm,
     security: {
       redactSecrets: parseBool(
-        env.TDAI_REDACT_SECRETS,
+        env.REMEM_REDACT_SECRETS,
         (fileSecurity.redactSecrets as boolean) ?? true,
       ),
       maxTokensRecall: parseEnvInt(
-        env.TDAI_MAX_TOKENS_RECALL,
+        env.REMEM_MAX_TOKENS_RECALL,
         (fileSecurity.maxTokensRecall as number) ?? 4000,
       ),
       maxTokensSearch: parseEnvInt(
-        env.TDAI_MAX_TOKENS_SEARCH,
+        env.REMEM_MAX_TOKENS_SEARCH,
         (fileSecurity.maxTokensSearch as number) ?? 8000,
       ),
       maxContentLength: parseEnvInt(
-        env.TDAI_MAX_CONTENT_LENGTH,
+        env.REMEM_MAX_CONTENT_LENGTH,
         (fileSecurity.maxContentLength as number) ?? 50000,
       ),
-      auditLog: parseBool(env.TDAI_AUDIT_LOG, (fileSecurity.auditLog as boolean) ?? true),
+      auditLog: parseBool(env.REMEM_AUDIT_LOG, (fileSecurity.auditLog as boolean) ?? true),
     },
   };
 }

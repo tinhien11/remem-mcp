@@ -60,7 +60,7 @@ npx remem-mcp install-hooks
 <details>
 <summary>Cursor</summary>
 
-[![Install in Cursor](https://img.shields.io/badge/Cursor-Install-blue)](cursor://anysphere.cursor-deeplink/mcp/install?name=remem-mcp&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsInRkYWktbWVtb3J5LW1jcCJdfQ==)
+[![Install in Cursor](https://img.shields.io/badge/Cursor-Install-blue)](cursor://anysphere.cursor-deeplink/mcp/install?name=remem-mcp&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsInJlbWVtLW1jcCJdfQ==)
 
 Or add to `~/.cursor/mcp.json`:
 ```json
@@ -91,7 +91,7 @@ command = "npx"
 args = ["-y", "remem-mcp"]
 
 [mcp_servers.remem-mcp.env]
-TDAI_GLOBAL_SESSION_KEY = "global"
+REMEM_GLOBAL_SESSION_KEY = "global"
 ```
 
 Then run `npx remem-mcp install-hooks`.
@@ -175,13 +175,13 @@ All settings have defaults. Config file is optional: `~/.config/remem-mcp/config
 
 | Setting | Env var | Default |
 |---|---|---|
-| DB path | `TDAI_DB_PATH` | `~/.local/share/remem-mcp/memory.db` |
-| Cross-project memory | `TDAI_GLOBAL_SESSION_KEY` | _(unset)_ |
-| Cross-project errors | `TDAI_GLOBAL_ERRORS` | _(unset, set to `1`)_ |
-| Suppress hook feedback | `TDAI_QUIET` | _(unset, set to `1`)_ |
-| Retro window (days) | `TDAI_RETRO_DAYS` | `7` |
-| Core-only mode (disable advanced tools) | `TDAI_CORE_ONLY` | _(unset, set to `1`)_ |
-| LLM API key (pipeline) | `TDAI_LLM_API_KEY` | _(unset)_ |
+| DB path | `REMEM_DB_PATH` | `~/.local/share/remem-mcp/memory.db` |
+| Cross-project memory | `REMEM_GLOBAL_SESSION_KEY` | _(unset)_ |
+| Cross-project errors | `REMEM_GLOBAL_ERRORS` | _(unset, set to `1`)_ |
+| Suppress hook feedback | `REMEM_QUIET` | _(unset, set to `1`)_ |
+| Retro window (days) | `REMEM_RETRO_DAYS` | `7` |
+| Core-only mode (disable advanced tools) | `REMEM_CORE_ONLY` | _(unset, set to `1`)_ |
+| LLM API key (pipeline) | `REMEM_LLM_API_KEY` | _(unset)_ |
 
 **Team sharing** — `npx remem-mcp sync-export` writes `.remem-mcp/memory-export.jsonl`. Commit it to git. Team members get the same memory on `git pull` (auto-imports on startup).
 

@@ -21,7 +21,7 @@ const MCP_SERVER_ENTRY_WITH_GLOBAL = {
   command: "npx",
   args: ["-y", "remem-mcp"],
   env: {
-    TDAI_GLOBAL_SESSION_KEY: "global",
+    REMEM_GLOBAL_SESSION_KEY: "global",
   },
 };
 
@@ -132,7 +132,7 @@ command = "npx"
 args = ["-y", "remem-mcp"]
 
 [mcp_servers.remem-mcp.env]
-TDAI_GLOBAL_SESSION_KEY = "global"
+REMEM_GLOBAL_SESSION_KEY = "global"
 `;
       writeFileSync(codexConfig, content + tomlEntry, "utf-8");
       console.log("  Codex CLI: MCP server registered.");

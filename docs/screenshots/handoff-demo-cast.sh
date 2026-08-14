@@ -7,9 +7,9 @@
 # Everything is real: real SDK calls, real SQLite, real hook-recall, real hook-capture.
 # The "agents" are simulated terminal sessions, but the memory operations are live.
 
-DB="/tmp/tdai-handoff-3session/memory.db"
-PROJECT="/Users/tin/a/tdai-memory-mcp"
-rm -rf /tmp/tdai-handoff-3session && mkdir -p /tmp/tdai-handoff-3session
+DB="/tmp/remem-handoff-3session/memory.db"
+PROJECT="/Users/tin/a/remem-mcp"
+rm -rf /tmp/remem-handoff-3session && mkdir -p /tmp/remem-handoff-3session
 
 cd "$PROJECT"
 
@@ -27,7 +27,7 @@ clear
 echo ""
 echo "  ╔═══════════════════════════════════════════════════════════════╗"
 echo "  ║                                                               ║"
-echo "  ║   tdai-memory-mcp                                             ║"
+echo "  ║   remem-mcp                                             ║"
 echo "  ║   3-session demo: auto-capture + cross-agent handoff          ║"
 echo "  ║                                                               ║"
 echo "  ║   Session 1: Claude Code  →  works, exits, Stop hook saves    ║"
@@ -64,7 +64,7 @@ echo "    Postgres would require a running server — that defeats the purpose."
 echo ""
 sleep 5
 
-echo "  [Claude Code calls tdai-memory capture]"
+echo "  [Claude Code calls remem-mcp capture]"
 echo ""
 sleep 2
 
@@ -97,7 +97,7 @@ echo "    INSERT INTO captures_fts(captures_fts) VALUES('rebuild');"
 echo ""
 sleep 5
 
-echo "  [Claude Code calls tdai-memory capture]"
+echo "  [Claude Code calls remem-mcp capture]"
 echo ""
 sleep 2
 
@@ -134,7 +134,7 @@ echo ""
 sleep 2
 
 # Real hook-capture (Stop hook)
-echo '{"session_id":"handoff-3session-s1","cwd":"/Users/tin/a/tdai-memory-mcp","transcript_path":"/dev/null"}' | \
+echo '{"session_id":"handoff-3session-s1","cwd":"/Users/tin/a/remem-mcp","transcript_path":"/dev/null"}' | \
   TDAI_DB_PATH="$DB" node dist/index.js hook-capture 2>&1 | \
   python3 -c "
 import json,sys
@@ -178,7 +178,7 @@ echo ""
 sleep 2
 
 # Real hook-recall
-echo '{"session_id":"handoff-3session-s2","cwd":"/Users/tin/a/tdai-memory-mcp"}' | \
+echo '{"session_id":"handoff-3session-s2","cwd":"/Users/tin/a/remem-mcp"}' | \
   TDAI_DB_PATH="$DB" node dist/index.js hook-recall 2>&1 | \
   python3 -c "
 import json,sys
@@ -203,7 +203,7 @@ echo "    > What database did we choose for the memory layer?"
 echo ""
 sleep 4
 
-echo "  [Devin calls tdai-memory recall]"
+echo "  [Devin calls remem-mcp recall]"
 echo ""
 sleep 2
 
@@ -239,7 +239,7 @@ echo "    > Any gotchas I should know about?"
 echo ""
 sleep 4
 
-echo "  [Devin calls tdai-memory recall]"
+echo "  [Devin calls remem-mcp recall]"
 echo ""
 sleep 2
 
@@ -299,7 +299,7 @@ echo "  [SessionStart hook fires — auto-injecting recent memory]"
 echo ""
 sleep 2
 
-echo '{"session_id":"handoff-3session-s3","cwd":"/Users/tin/a/tdai-memory-mcp"}' | \
+echo '{"session_id":"handoff-3session-s3","cwd":"/Users/tin/a/remem-mcp"}' | \
   TDAI_DB_PATH="$DB" node dist/index.js hook-recall 2>&1 | \
   python3 -c "
 import json,sys
@@ -325,7 +325,7 @@ echo "    when the schema changes. The fix is already documented:"
 echo ""
 sleep 4
 
-echo "  [Codex calls tdai-memory recall for the exact fix]"
+echo "  [Codex calls remem-mcp recall for the exact fix]"
 echo ""
 sleep 2
 
