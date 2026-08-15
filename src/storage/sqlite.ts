@@ -831,7 +831,14 @@ export class SQLiteBackend implements StorageBackend {
       .all(...ids) as DbRow[];
     const rowMap = new Map(rows.map((r) => [r.id, r]));
     const now = Date.now();
-    const HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+    // Configurable half-life: default 30 days. Set REMEM_HALF_LIFE_DAYS to override.
+    const halfLifeDays = Number(process.env.REMEM_HALF_LIFE_DAYS) || 30;
+    const HALF_LIFE_MS = halfLifeDays * 24 * 60 * 60 * 1000;
+    // Auto-stale threshold: captures older than this are treated as stale
+    // (trust boost 0.1) regardless of their stored trust_state. Default 90 days.
+    // Set REMEM_STALE_DAYS to override. Set to 0 to disable auto-stale.
+    const staleDays = Number(process.env.STALE_DAYS) || Number(process.env.REMEM_STALE_DAYS) || 90;
+    const STALE_MS = staleDays > 0 ? staleDays * 24 * 60 * 60 * 1000 : Infinity;
     // Trust-state multipliers: verified > candidate > stale
     const TRUST_BOOST: Record<string, number> = {
       verified: 1.5,
@@ -857,7 +864,12 @@ export class SQLiteBackend implements StorageBackend {
         if (!row) return null;
         const ageMs = now - row.created_at;
         const decay = 0.5 ** (ageMs / HALF_LIFE_MS);
-        const trustBoost = TRUST_BOOST[row.trust_state ?? "candidate"] ?? 1.0;
+        // Auto-stale: if capture is older than STALE_MS and not already verified,
+        // treat it as stale (0.1 trust boost) to naturally fade old memories.
+        const effectiveTrust = ageMs > STALE_MS && row.trust_state !== "verified"
+          ? "stale"
+          : (row.trust_state ?? "candidate");
+        const trustBoost = TRUST_BOOST[effectiveTrust] ?? 1.0;
         const decayed = Number.isNaN(r.score) ? 0 : r.score * decay;
         // BM25 scores are negative (lower = better). For negative scores, divide by boost
         // so a lower boost makes the score more negative (ranks lower). For positive scores

@@ -896,6 +896,23 @@ const TOOLS: Tool[] = [
       },
     },
   },
+  {
+    name: "stats",
+    description:
+      "Query memory statistics: total captures, breakdown by type, top tags, " +
+      "session count, date range, and database size. Use this to understand memory " +
+      "health and coverage. No arguments needed — returns a summary.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_key: {
+          type: "string",
+          description:
+            "Filter stats to a specific session. Default is hash(cwd). Use 'all' for all projects.",
+        },
+      },
+    },
+  },
 ];
 
 /**
@@ -912,6 +929,7 @@ const CORE_TOOL_NAMES = new Set([
   "adr",
   "update",
   "consolidate",
+  "stats",
 ]);
 
 function getTools(): Tool[] {
@@ -1066,6 +1084,8 @@ export function createServer(opts: ServerOptions): Server {
         return handleUpdate(args, opts);
       case "consolidate":
         return handleConsolidate(args, opts);
+      case "stats":
+        return handleStats(args, opts);
       default:
         return {
           content: [{ type: "text", text: `Error: Unknown tool "${name}".` }],
@@ -2207,6 +2227,110 @@ async function handleConsolidate(
       {
         type: "text",
         text: `Consolidated ${groups.length} group(s), merged ${merged} duplicate(s). Kept oldest capture in each group.`,
+      },
+    ],
+  };
+}
+
+/** Handle the stats tool — query memory statistics for agents. */
+async function handleStats(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  const sessionKey = (args.session_key as string) ?? defaultSessionKey();
+  const db = getDb(opts);
+
+  // Total captures (non-deleted)
+  const totalRow = db
+    .prepare("SELECT COUNT(*) as n FROM captures WHERE deleted_at IS NULL")
+    .get() as { n: number };
+
+  // By type
+  const typeRows = db
+    .prepare(
+      "SELECT type, COUNT(*) as n FROM captures WHERE deleted_at IS NULL GROUP BY type ORDER BY n DESC",
+    )
+    .all() as { type: string; n: number }[];
+
+  // Top tags
+  const tagRows = db
+    .prepare(
+      "SELECT tags FROM captures WHERE deleted_at IS NULL AND tags IS NOT NULL AND tags != '[]'",
+    )
+    .all() as { tags: string }[];
+  const tagCounts: Record<string, number> = {};
+  for (const row of tagRows) {
+    try {
+      const tags = JSON.parse(row.tags) as string[];
+      for (const t of tags) tagCounts[t] = (tagCounts[t] ?? 0) + 1;
+    } catch {
+      // skip malformed
+    }
+  }
+  const topTags = Object.entries(tagCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10);
+
+  // Session count
+  const sessionRow = db
+    .prepare("SELECT COUNT(DISTINCT session_key) as n FROM captures WHERE deleted_at IS NULL")
+    .get() as { n: number };
+
+  // Date range
+  const dateRow = db
+    .prepare(
+      "SELECT MIN(created_at) as oldest, MAX(created_at) as newest FROM captures WHERE deleted_at IS NULL",
+    )
+    .get() as { oldest: number | null; newest: number | null };
+
+  // DB file size
+  let dbSize = 0;
+  try {
+    const dbPath = db.name;
+    const stat = await import("node:fs").then((fs) => fs.statSync(dbPath));
+    dbSize = stat.size;
+  } catch {
+    // ignore
+  }
+
+  // Per-session stats if filtered
+  let sessionStats: { sessionKey: string; count: number }[] | null = null;
+  if (sessionKey !== "all") {
+    const sRow = db
+      .prepare(
+        "SELECT COUNT(*) as n FROM captures WHERE deleted_at IS NULL AND session_key = ?",
+      )
+      .get(sessionKey) as { n: number };
+    sessionStats = [{ sessionKey, count: sRow.n }];
+  } else {
+    sessionStats = (
+      db
+        .prepare(
+          "SELECT session_key, COUNT(*) as n FROM captures WHERE deleted_at IS NULL GROUP BY session_key ORDER BY n DESC LIMIT 10",
+        )
+        .all() as { session_key: string; n: number }[]
+    ).map((r) => ({ sessionKey: r.session_key, count: r.n }));
+  }
+
+  const result = {
+    totalCaptures: totalRow.n,
+    byType: Object.fromEntries(typeRows.map((r) => [r.type, r.n])),
+    topTags: topTags.map(([tag, count]) => ({ tag, count })),
+    sessionCount: sessionRow.n,
+    dateRange: {
+      oldest: dateRow.oldest ? new Date(dateRow.oldest).toISOString() : null,
+      newest: dateRow.newest ? new Date(dateRow.newest).toISOString() : null,
+    },
+    dbSizeBytes: dbSize,
+    dbSizeMB: Math.round((dbSize / 1024 / 1024) * 100) / 100,
+    sessions: sessionStats,
+  };
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(result, null, 2),
       },
     ],
   };

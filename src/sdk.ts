@@ -151,6 +151,139 @@ export class Memory {
     return this.storage.delete(id);
   }
 
+  /** Update an existing capture's content, tags, type, or trust state. */
+  async update(id: string, opts: {
+    content?: string;
+    tags?: string[];
+    type?: CaptureType;
+    verified?: boolean;
+  }): Promise<boolean> {
+    const existing = await this.storage.get(id);
+    if (!existing) return false;
+
+    const newContent = opts.content ?? existing.content;
+    const newTags = opts.tags ?? existing.tags;
+    const newType = opts.type ?? existing.type;
+    const newTrust = opts.verified ? "verified" : existing.trustState ?? "candidate";
+
+    // Recompute content hash
+    const contentHash = createHash("sha256").update(newContent).digest("hex");
+
+    // Use raw SQL update (matches server.ts handleUpdate logic)
+    const db = this.storage.getDatabase();
+    db.prepare(
+      "UPDATE captures SET content = ?, tags = ?, type = ?, trust_state = ?, content_hash = ? WHERE id = ?",
+    ).run(newContent, JSON.stringify(newTags), newType, newTrust, contentHash, id);
+
+    // Update FTS index
+    const rowid = db.prepare("SELECT rowid FROM captures WHERE id = ?").get(id)?.rowid as
+      | number
+      | undefined;
+    if (rowid) {
+      db.prepare(
+        "INSERT INTO captures_fts(captures_fts, rowid, content, tags, type) VALUES('delete', ?, '', '', '')",
+      ).run(rowid);
+      db.prepare(
+        "INSERT INTO captures_fts (rowid, id, content, tags, type) VALUES (?, ?, ?, ?, ?)",
+      ).run(rowid, id, newContent, JSON.stringify(newTags), newType);
+    }
+
+    // Re-embed if content changed
+    if (opts.content && opts.content !== existing.content) {
+      try {
+        const embedding = await this.embedder.embed(newContent);
+        await this.storage.putVector(id, embedding);
+      } catch {
+        // Embedding is optional
+      }
+    }
+
+    return true;
+  }
+
+  /** Find and optionally merge duplicate captures by content similarity (Jaccard). */
+  async consolidate(opts: {
+    threshold?: number;
+    confirm?: boolean;
+    sessionKey?: string;
+  }): Promise<{
+    groups: { ids: string[]; similarity: number; preview: string }[];
+    merged: number;
+  }> {
+    const threshold = opts.threshold ?? 0.75;
+    const confirm = opts.confirm ?? false;
+    const sessionKey = opts.sessionKey ?? this.sessionKey;
+
+    const db = this.storage.getDatabase();
+    let sql = "SELECT id, content, type, tags, created_at FROM captures WHERE deleted_at IS NULL";
+    const params: unknown[] = [];
+    if (sessionKey !== "all") {
+      sql += " AND session_key = ?";
+      params.push(sessionKey);
+    }
+    sql += " ORDER BY created_at DESC";
+    const rows = db.prepare(sql).all(...params) as {
+      id: string;
+      content: string;
+      type: string;
+      tags: string;
+      created_at: number;
+    }[];
+
+    if (rows.length < 2) return { groups: [], merged: 0 };
+
+    const groups: { ids: string[]; similarity: number; preview: string }[] = [];
+    const seen = new Set<string>();
+
+    for (let i = 0; i < rows.length; i++) {
+      if (seen.has(rows[i].id)) continue;
+      const words1 = new Set(rows[i].content.toLowerCase().split(/\s+/));
+      const group = [rows[i].id];
+
+      for (let j = i + 1; j < rows.length; j++) {
+        if (seen.has(rows[j].id)) continue;
+        const words2 = new Set(rows[j].content.toLowerCase().split(/\s+/));
+        const intersection = [...words1].filter((w) => words2.has(w)).length;
+        const union = new Set([...words1, ...words2]).size;
+        const sim = union > 0 ? intersection / union : 0;
+        if (sim >= threshold) {
+          group.push(rows[j].id);
+          seen.add(rows[j].id);
+        }
+      }
+
+      if (group.length > 1) {
+        seen.add(rows[i].id);
+        groups.push({
+          ids: group,
+          similarity: threshold,
+          preview: rows[i].content.slice(0, 80).replace(/\n/g, " "),
+        });
+      }
+    }
+
+    if (!confirm || groups.length === 0) {
+      return { groups, merged: 0 };
+    }
+
+    // Merge: keep oldest, soft-delete rest
+    let merged = 0;
+    for (const g of groups) {
+      const groupRows = g.ids
+        .map((id) => rows.find((r) => r.id === id))
+        .filter(Boolean)
+        .sort((a, b) => a!.created_at - b!.created_at);
+      const dups = groupRows.slice(1);
+      for (const dup of dups) {
+        db.prepare("UPDATE captures SET deleted_at = ? WHERE id = ?").run(Date.now(), dup!.id);
+        db.prepare("DELETE FROM captures_vec WHERE id = ?").run(dup!.id);
+        merged++;
+      }
+    }
+
+    return { groups, merged };
+  }
+
   /** Create a handoff packet for the next agent session. */
   async handoff(opts: {
     task: string;

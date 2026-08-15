@@ -4,6 +4,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
@@ -637,6 +638,67 @@ async function main(): Promise<void> {
     db.close();
     return;
   }
+  if (arg === "sessions") {
+    const db = new Database(defaultDbPath(), { readonly: true });
+    const rows = db
+      .prepare(
+        `SELECT session_key, COUNT(*) as cnt, MIN(created_at) as oldest, MAX(created_at) as newest
+         FROM captures WHERE deleted_at IS NULL
+         GROUP BY session_key ORDER BY cnt DESC`,
+      )
+      .all() as { session_key: string; cnt: number; oldest: number; newest: number }[];
+
+    // Try to resolve session keys to project paths
+    const cwdHash = createHash("sha256").update(process.cwd()).digest("hex").slice(0, 16);
+    const globalKey = process.env.REMEM_GLOBAL_SESSION_KEY ?? "global";
+
+    if (rows.length === 0) {
+      console.log("No sessions found.");
+    } else {
+      console.log("Sessions (by capture count):\n");
+      for (const r of rows) {
+        const oldestDate = new Date(r.oldest).toISOString().split("T")[0];
+        const newestDate = new Date(r.newest).toISOString().split("T")[0];
+        const isCurrent = r.session_key === cwdHash ? " ← current" : "";
+        const isGlobal = r.session_key === globalKey ? " (global)" : "";
+        console.log(
+          `  ${r.session_key}  ${String(r.cnt).padStart(4)} captures  ${oldestDate}→${newestDate}${isGlobal}${isCurrent}`,
+        );
+      }
+      console.log(`\n${rows.length} session(s). Current: ${cwdHash}`);
+    }
+    db.close();
+    return;
+  }
+  if (arg === "tags") {
+    const db = new Database(defaultDbPath(), { readonly: true });
+    const rows = db
+      .prepare(
+        "SELECT tags FROM captures WHERE deleted_at IS NULL AND tags IS NOT NULL AND tags != '[]'",
+      )
+      .all() as { tags: string }[];
+    const tagCounts: Record<string, number> = {};
+    for (const row of rows) {
+      try {
+        const tags = JSON.parse(row.tags) as string[];
+        for (const t of tags) tagCounts[t] = (tagCounts[t] ?? 0) + 1;
+      } catch {
+        // skip
+      }
+    }
+    const sorted = Object.entries(tagCounts).sort((a, b) => b[1] - a[1]);
+    if (sorted.length === 0) {
+      console.log("No tags found.");
+    } else {
+      console.log("Tags (by frequency):\n");
+      for (const [tag, count] of sorted) {
+        console.log(`  ${String(count).padStart(4)}  ${tag}`);
+      }
+      console.log(`\n${sorted.length} unique tag(s).`);
+    }
+    db.close();
+    return;
+  }
   if (arg === "stats") {
     const db = openDbWithSchema(defaultDbPath());
     const byType = db
@@ -1224,6 +1286,8 @@ Wiki:
 
 Data:
   remem-mcp stats          Memory statistics (by type, trust, size)
+  remem-mcp sessions       List all project sessions (by capture count)
+  remem-mcp tags           List all tags (by frequency)
   remem-mcp token-stats    Token savings report
   remem-mcp verify [query] A/B proof: shows what memory injects vs re-reading files
   remem-mcp recent [N]     Show N most recent captures (default: 20)
