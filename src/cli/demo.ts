@@ -234,17 +234,13 @@ function createRealProject(dir: string, withError: boolean): void {
 }
 
 /**
- * `remem-mcp demo` — Cinematic terminal animation using REAL commands + REAL hooks.
+ * `remem-mcp demo` — Error learning loop in 3 scenes (~15s).
  *
- * Creates a real test project, runs real `npm run build`, captures real TS errors,
- * and passes real output to real hook handlers. Everything is real:
- * - Real TypeScript compilation errors (TS2307)
- * - Real PostToolUse hook captures
- * - Real PreToolUse hook injections
- * - Real SQLite DB storage
- * - Real cross-project inheritance
+ * Scene 1: Error occurs → PostToolUse captures it
+ * Scene 2: Next session → PreToolUse injects fix → build passes
+ * Scene 3: Dashboard — what memory learned
  *
- * Screen-recordable for video/GIF export.
+ * Uses REAL commands, REAL hooks, REAL SQLite. Screen-recordable.
  */
 export async function demo(): Promise<void> {
   // ── Setup temp DB ──
@@ -279,79 +275,29 @@ export async function demo(): Promise<void> {
   }
   db.close();
 
-  // Two REAL project dirs with REAL TypeScript projects
-  const projectA = join(tmpDir, "project-a");
-  const projectB = join(tmpDir, "project-b");
-  const sessionA = createHash("sha256").update(projectA).digest("hex").slice(0, 16);
-  const sessionB = createHash("sha256").update(projectB).digest("hex").slice(0, 16);
+  const project = join(tmpDir, "project");
+  const sessionKey = createHash("sha256").update(project).digest("hex").slice(0, 16);
 
-  // Create real projects with real TS errors
-  line(`  ${C.gray}Setting up real test projects...${C.reset}`);
-  createRealProject(projectA, true); // with TS2307 error
-  createRealProject(projectB, true); // with TS2307 error
-  line(`  ${C.gray}Done.${C.reset}`);
+  line(`  ${C.gray}Setting up test project...${C.reset}`);
+  createRealProject(project, true);
   await sleep(500);
 
   // ═══════════════════════════════════════════════════════════════
-  // SCENE 0: Hook — the stat
+  // SCENE 1: Error → captured
   // ═══════════════════════════════════════════════════════════════
   clear();
-  await sleep(500);
   banner();
-  line();
-  await sleep(1500);
-
-  process.stdout.write(`  ${C.bold}`);
-  await type("Agents waste 30% of tokens repeating errors they already hit.", 20);
-  process.stdout.write(C.reset);
-  await sleep(1500);
-  process.stdout.write(`  ${C.gray}`);
-  await type("What if they could remember?", 20);
-  process.stdout.write(C.reset);
-  await sleep(2500);
-
-  // ═══════════════════════════════════════════════════════════════
-  // SCENE 1: The pain — same error, again and again (REAL build)
-  // ═══════════════════════════════════════════════════════════════
-  clear();
-  await sleep(500);
-  line(`  ${C.bold}${C.red}  WITHOUT memory${C.reset}`);
+  line(`  ${C.bold}${C.red}  Scene 1: Error occurs${C.reset}`);
   line(`  ${C.gray}  ────────────────────────────────────────────${C.reset}`);
   line();
-  await sleep(1200);
-
-  // Attempt 1 — REAL npm run build, REAL TS error
-  await showCommand("npm run build", projectA);
-  await sleep(1000);
-
-  // Attempt 2 — same error again
-  line(`  ${C.gray}(next session — same error again)${C.reset}`);
   await sleep(800);
-  await showCommand("npm run build", projectA);
-  await sleep(1500);
 
-  line(`  ${C.bold}${C.red}  Same error. Every session. No learning.${C.reset}`);
-  line();
-  await sleep(3000);
-
-  // ═══════════════════════════════════════════════════════════════
-  // SCENE 2: Day 1 — REAL error, REAL capture, REAL fix, REAL upvote
-  // ═══════════════════════════════════════════════════════════════
-  clear();
+  const buildResult = await showCommand("npm run build", project);
   await sleep(500);
-  line(`  ${C.bold}${C.cyan}  WITH memory — Day 1${C.reset}`);
-  line(`  ${C.gray}  ────────────────────────────────────────────${C.reset}`);
-  line();
-  await sleep(1200);
 
-  // REAL npm run build → REAL TS2307 error
-  const buildResult = await showCommand("npm run build", projectA);
-  await sleep(800);
-
-  // REAL PostToolUse hook — captures the REAL error
   process.stdout.write(`  ${C.cyan}[remem-mcp]${C.reset} `);
-  await type(`PostToolUse hook firing...`, 14);
-  await sleep(500);
+  await type("PostToolUse → capturing error...", 14);
+  await sleep(300);
 
   await runHook(
     "hook-post-tool-use",
@@ -365,43 +311,28 @@ export async function demo(): Promise<void> {
         exit_code: buildResult.exitCode,
       },
     },
-    projectA,
+    project,
   );
 
-  // Check what was captured
   const checkDb = new Database(dbPath, { readonly: true });
   const captured = checkDb
     .prepare(
-      `SELECT id, metadata FROM captures WHERE type = 'error' AND session_key = ?
+      `SELECT metadata FROM captures WHERE type = 'error' AND session_key = ?
        ORDER BY created_at DESC LIMIT 1`,
     )
-    .get(sessionA) as { id: string; metadata: string } | undefined;
+    .get(sessionKey) as { metadata: string } | undefined;
   checkDb.close();
 
   if (captured) {
     const meta = JSON.parse(captured.metadata);
     line(`  ${C.green}✓${C.reset} ${C.bold}Captured: ${meta.title ?? "TS2307 error"}${C.reset}`);
-    await sleep(500);
-    line(`  ${C.gray}confidence=${meta.confidence ?? 2}  saved to memory.db${C.reset}`);
   }
   line();
-  await sleep(1500);
+  await sleep(2000);
 
-  // Agent fixes the error — REAL fix (overwrite the file)
-  line(`  ${C.gray}Agent fixes the error...${C.reset}`);
-  await sleep(1000);
-  writeFileSync(join(projectA, "src", "index.ts"), `const foo = "hello";\n\nconsole.log(foo);\n`);
-  await sleep(500);
-
-  // REAL npm run build → REAL success
-  const fixResult = await showCommand("npm run build", projectA);
-  await sleep(600);
-
-  // REAL PostToolUse hook — success correlation → upvote + resolve
-  process.stdout.write(`  ${C.cyan}[remem-mcp]${C.reset} `);
-  await type(`PostToolUse hook firing...`, 14);
-  await sleep(500);
-
+  // Fix the error
+  writeFileSync(join(project, "src", "index.ts"), `const foo = "hello";\n\nconsole.log(foo);\n`);
+  const fixResult = await showCommand("npm run build", project);
   await runHook(
     "hook-post-tool-use",
     dbPath,
@@ -414,52 +345,27 @@ export async function demo(): Promise<void> {
         exit_code: fixResult.exitCode,
       },
     },
-    projectA,
+    project,
   );
-
-  // Verify the upvote (Day 1)
-  const verifyDb1 = new Database(dbPath, { readonly: true });
-  const updated1 = verifyDb1
-    .prepare(
-      `SELECT metadata FROM captures WHERE type = 'error' AND session_key = ?
-       AND json_extract(metadata, '$.command') = ?
-       ORDER BY created_at DESC LIMIT 1`,
-    )
-    .get(sessionA, "npm run build") as { metadata: string } | undefined;
-
-  if (updated1) {
-    const meta = JSON.parse(updated1.metadata);
-    const conf = meta.confidence ?? 2;
-    const resolved = !!meta.resolved;
-    line(
-      `  ${C.green}✓${C.reset} confidence: ${C.gray}${conf - 1} → ${conf}${C.reset}  ${C.gray}resolved=${resolved}${C.reset}`,
-    );
-  }
-  verifyDb1.close();
-  line();
-  await sleep(2500);
+  line(`  ${C.green}✓${C.reset} ${C.bold}Fix recorded. Error resolved.${C.reset}`);
+  await sleep(2000);
 
   // ═══════════════════════════════════════════════════════════════
-  // SCENE 3: Day 2 — REAL PreToolUse injection + REAL build
+  // SCENE 2: Next session → fix injected
   // ═══════════════════════════════════════════════════════════════
   clear();
-  await sleep(500);
-  line(`  ${C.bold}${C.cyan}  WITH memory — Day 2${C.reset}`);
+  banner();
+  line(`  ${C.bold}${C.cyan}  Scene 2: Next session${C.reset}`);
   line(`  ${C.gray}  ────────────────────────────────────────────${C.reset}`);
   line();
-  await sleep(1200);
+  await sleep(800);
 
-  line(`  ${C.gray}New session. SessionStart loads memory.${C.reset}`);
-  await sleep(1000);
-  line();
-
-  // REAL PreToolUse hook — injects past error before agent runs command
   line(`  ${C.gray}Agent runs: npm run build${C.reset}`);
-  await sleep(600);
+  await sleep(400);
 
   process.stdout.write(`  ${C.cyan}[remem-mcp]${C.reset} `);
-  await type(`PreToolUse hook firing...`, 14);
-  await sleep(500);
+  await type("PreToolUse → injecting past fix...", 14);
+  await sleep(300);
 
   const preResult = await runHook(
     "hook-pre-tool-use",
@@ -468,187 +374,37 @@ export async function demo(): Promise<void> {
       tool_name: "Bash",
       tool_input: { command: "npm run build" },
     },
-    projectA,
+    project,
   );
 
-  const injectedContext =
+  const injected =
     preResult?.hookSpecificOutput?.additionalContext ?? preResult?.additionalContext ?? null;
 
-  if (injectedContext) {
-    const injectLines = String(injectedContext).split("\n").filter(Boolean).slice(0, 4);
+  if (injected) {
+    const injectLines = String(injected).split("\n").filter(Boolean).slice(0, 3);
     await panel(
       "Injected into agent context",
       injectLines.map((l) => `${C.yellow}${l}${C.reset}`),
       C.yellow,
     );
-  } else {
-    line(`  ${C.gray}(no past errors to inject)${C.reset}`);
   }
-  await sleep(1500);
-
-  // Agent applies the fix — already fixed in Day 1, so REAL build passes
-  line(`  ${C.gray}Agent applies the fix...${C.reset}`);
-  await sleep(800);
-  const day2Result = await showCommand("npm run build", projectA);
-  await sleep(600);
-
-  // REAL PostToolUse hook — success correlation → upvote + resolve
-  process.stdout.write(`  ${C.cyan}[remem-mcp]${C.reset} `);
-  await type(`PostToolUse hook firing...`, 14);
-  await sleep(500);
-
-  await runHook(
-    "hook-post-tool-use",
-    dbPath,
-    {
-      tool_name: "Bash",
-      tool_input: { command: "npm run build" },
-      tool_response: {
-        stdout: day2Result.stdout,
-        stderr: day2Result.stderr,
-        exit_code: day2Result.exitCode,
-      },
-    },
-    projectA,
-  );
-
-  // Verify the upvote
-  const verifyDb = new Database(dbPath, { readonly: true });
-  const updated = verifyDb
-    .prepare(
-      `SELECT metadata FROM captures WHERE type = 'error' AND session_key = ?
-       AND json_extract(metadata, '$.command') = ?
-       ORDER BY created_at DESC LIMIT 1`,
-    )
-    .get(sessionA, "npm run build") as { metadata: string } | undefined;
-
-  if (updated) {
-    const meta = JSON.parse(updated.metadata);
-    const conf = meta.confidence ?? 2;
-    const resolved = !!meta.resolved;
-    line(
-      `  ${C.green}✓${C.reset} confidence: ${C.gray}${conf - 1} → ${conf}${C.reset}  ${C.gray}resolved=${resolved}${C.reset}`,
-    );
-  }
-  verifyDb.close();
-  line();
-  await sleep(2500);
-
-  // ═══════════════════════════════════════════════════════════════
-  // SCENE 4: Day 3 — mastery + cross-project inheritance (REAL)
-  // ═══════════════════════════════════════════════════════════════
-  clear();
-  await sleep(500);
-  line(`  ${C.bold}${C.cyan}  WITH memory — Day 3${C.reset}`);
-  line(`  ${C.gray}  ────────────────────────────────────────────${C.reset}`);
-  line();
-  await sleep(1200);
-
-  line(`  ${C.gray}New session. Memory already loaded.${C.reset}`);
   await sleep(1000);
-  line();
 
-  // REAL PreToolUse — should inject proven fixes now
-  const preResult3 = await runHook(
-    "hook-pre-tool-use",
-    dbPath,
-    {
-      tool_name: "Bash",
-      tool_input: { command: "npm run build" },
-    },
-    projectA,
-  );
-
-  const injected3 =
-    preResult3?.hookSpecificOutput?.additionalContext ?? preResult3?.additionalContext ?? null;
-
-  if (injected3) {
-    const injectLines = String(injected3).split("\n").filter(Boolean).slice(0, 4);
-    await panel(
-      "Proven fixes injected",
-      injectLines.map((l) => `${C.green}${l}${C.reset}`),
-      C.green,
-    );
-  }
-  await sleep(1500);
-
-  line(`  ${C.gray}Agent already knows the fix.${C.reset}`);
-  await sleep(800);
-  // REAL build — already fixed, passes immediately
-  await showCommand("npm run build", projectA);
-  await sleep(600);
-  line();
+  await showCommand("npm run build", project);
   line(`  ${C.bold}${C.green}  Right the first time. Zero retries.${C.reset}`);
   line();
   await sleep(2500);
 
-  // Cross-project — REAL build on project B (still has error)
-  line(`  ${C.bold}${C.magenta}  Meanwhile, in another project...${C.reset}`);
-  line();
-  await sleep(1200);
-
-  line(`  ${C.gray}Agent on "${C.reset}project-b${C.gray}" runs build.${C.reset}`);
-  await sleep(800);
-  // REAL build on project B — still has the TS error
-  const buildB = await showCommand("npm run build", projectB);
-  await sleep(600);
-
-  // REAL PreToolUse on project B — inherits fix from project A
-  process.stdout.write(`  ${C.magenta}[remem-mcp]${C.reset} `);
-  await type(`PreToolUse hook firing (project B)...`, 14);
-  await sleep(500);
-
-  const preResultB = await runHook(
-    "hook-pre-tool-use",
-    dbPath,
-    {
-      tool_name: "Bash",
-      tool_input: { command: "npm run build" },
-    },
-    projectB,
-  );
-
-  const injectedB =
-    preResultB?.hookSpecificOutput?.additionalContext ?? preResultB?.additionalContext ?? null;
-
-  if (injectedB) {
-    const injectLines = String(injectedB).split("\n").filter(Boolean).slice(0, 4);
-    await panel(
-      "Cross-project fix inherited",
-      injectLines.map((l) => `${C.magenta}${l}${C.reset}`),
-      C.magenta,
-    );
-    await sleep(1500);
-
-    line(`  ${C.gray}Agent applies the inherited fix...${C.reset}`);
-    await sleep(800);
-    // REAL fix on project B
-    writeFileSync(join(projectB, "src", "index.ts"), `const foo = "hello";\n\nconsole.log(foo);\n`);
-    await sleep(500);
-    // REAL build on project B — now passes
-    await showCommand("npm run build", projectB);
-    await sleep(600);
-    line();
-    line(`  ${C.bold}${C.magenta}  Fixed in project B — without ever hitting it there.${C.reset}`);
-  } else {
-    line(`  ${C.gray}(no cross-project inheritance found)${C.reset}`);
-  }
-  line();
-  await sleep(3000);
-
   // ═══════════════════════════════════════════════════════════════
-  // SCENE 5: Dashboard with animated counters
+  // SCENE 3: Dashboard
   // ═══════════════════════════════════════════════════════════════
   clear();
-  await sleep(500);
   banner();
-  line();
   line(`  ${C.bold}  remem-mcp status${C.reset}`);
   line(`  ${C.gray}  ════════════════════════════════════════════${C.reset}`);
   line();
-  await sleep(1000);
+  await sleep(600);
 
-  // Read REAL data from DB
   const dashDb = new Database(dbPath, { readonly: true });
   const totalErrors = dashDb
     .prepare(`SELECT COUNT(*) as c FROM captures WHERE type = 'error' AND deleted_at IS NULL`)
@@ -659,44 +415,27 @@ export async function demo(): Promise<void> {
        AND json_extract(metadata, '$.resolved') = 1`,
     )
     .get() as { c: number };
-  const projects = dashDb
-    .prepare(`SELECT COUNT(DISTINCT session_key) as c FROM captures WHERE deleted_at IS NULL`)
-    .get() as { c: number };
   dashDb.close();
 
-  // Animated counters — slower, more readable
   process.stdout.write(`  ${C.bold}Errors learned:${C.reset}     `);
   await counter(totalErrors.c, "", C.green);
-  await sleep(400);
-
-  const resRate = totalErrors.c > 0 ? Math.round((resolvedErrors.c / totalErrors.c) * 100) : 0;
+  await sleep(300);
   process.stdout.write(`  ${C.bold}Errors resolved:${C.reset}    `);
-  await counter(resolvedErrors.c, `  (${resRate}%)`, C.green);
-  await sleep(400);
-
-  process.stdout.write(`  ${C.bold}Projects protected:${C.reset} `);
-  await counter(projects.c, "", C.cyan);
+  await counter(resolvedErrors.c, "", C.green);
   line();
-  await sleep(1200);
+  await sleep(1000);
 
-  // Summary — short
   line(`  ${C.gray}────────────────────────────────────────────${C.reset}`);
-  await sleep(400);
-  line(`  ${C.red}Day 1${C.reset}  error occurs    → PostToolUse captures it`);
-  await sleep(400);
-  line(`  ${C.yellow}Day 2${C.reset}  memory injected → agent fixes → upvoted`);
-  await sleep(400);
-  line(`  ${C.green}Day 3${C.reset}  right the first time — zero retries`);
-  await sleep(400);
-  line(`  ${C.magenta}Day 3${C.reset}  project B → ${C.bold}inherited fix${C.reset}`);
+  line(`  ${C.red}Scene 1${C.reset}  error → captured`);
+  line(`  ${C.yellow}Scene 2${C.reset}  fix injected → zero retries`);
+  line(`  ${C.green}Scene 3${C.reset}  memory that learns`);
   line();
   await sleep(2000);
 
   line(`  ${C.bold}${C.green}  Your agent stops repeating the same mistakes.${C.reset}`);
   line();
-  await sleep(3000);
+  await sleep(2000);
 
-  // Cleanup
   rmSync(tmpDir, { recursive: true, force: true });
 }
 

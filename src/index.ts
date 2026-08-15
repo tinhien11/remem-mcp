@@ -1138,8 +1138,8 @@ async function main(): Promise<void> {
     console.log(`remem-mcp - Local-first MCP memory server
 
 Getting started:
-  remem-mcp setup          One-command install (MCP + hooks + demo)
-  remem-mcp demo           Watch the error learning loop (30s)
+  remem-mcp setup          One-command install (MCP + hooks + skill)
+  remem-mcp demo           Error learning loop demo (15s)
   remem-mcp demo-codegraph Live CodeGraph demo on facebook/react
   remem-mcp status         One dashboard: health + all 3 loops + recent
   remem-mcp viewer         Web UI at localhost:7331
@@ -1169,7 +1169,7 @@ ${"─".repeat(60)}
 
 Setup & maintenance:
   remem-mcp                Start the MCP server (stdio)
-  remem-mcp setup          Install MCP + hooks + run demo (one command)
+  remem-mcp setup          Install MCP + hooks + skill (one command)
   remem-mcp install-skill  Install the agent skill for Devin CLI
   remem-mcp install-hooks  Install lifecycle hooks (SessionStart, Stop, SessionEnd)
   remem-mcp uninstall-hooks  Remove lifecycle hooks
