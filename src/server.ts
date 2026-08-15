@@ -1689,15 +1689,16 @@ async function handleCapture(
   }
 
   // Conflict detection: find similar captures in the same session.
-  // Threshold is cosine DISTANCE (lower = more similar). 0.3 means we only
-  // flag captures with >70% similarity — close enough to be a true duplicate
-  // or contradiction. The old threshold (0.8) flagged everything with >20%
-  // similarity, which made every same-topic capture look like a conflict.
+  // Threshold is cosine DISTANCE (lower = more similar). 0.2 means we only
+  // flag captures with >80% similarity — close enough to be a true duplicate
+  // or contradiction. Previous threshold (0.3 = >70%) caused false positives
+  // when captures shared topic/format but had different content (e.g. session
+  // summaries starting with "Dogfood Phiên X").
   let conflictInfo = "";
   let conflictIds: string[] = [];
   if (embedding) {
     try {
-      const conflicts = await opts.storage.findConflicts(embedding, sessionKey, 0.3);
+      const conflicts = await opts.storage.findConflicts(embedding, sessionKey, 0.2);
       const filtered = conflicts.filter((c) => c.id !== id);
       conflictIds = filtered.map((c) => c.id);
       if (filtered.length > 0) {
