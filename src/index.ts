@@ -373,8 +373,6 @@ async function main(): Promise<void> {
     console.log("  2. On restart, SessionStart hook loads project basics automatically");
     console.log("  3. Skill teaches agent to use recall/capture/codegraph_search automatically");
     console.log("  4. Run `npx remem-mcp status` anytime to see your memory");
-    console.log("\n─ Demo ─────────────────────────────────────────────────");
-    await demo();
     return;
   }
   if (arg === "uninstall-hooks") {
