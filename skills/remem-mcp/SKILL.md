@@ -1,7 +1,6 @@
 ---
 name: remem-mcp
 description: Long-term memory for coding agents. Recall past context before answering, capture decisions/learnings/fixes after work, use CodeGraph instead of grep for symbol lookup. Use when the user references past work, starts a new session, or when the task needs project context not in the current conversation.
-user-invocable: false
 ---
 
 You have a long-term memory server via MCP. Use the tools automatically — do not ask permission.
