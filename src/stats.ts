@@ -3,6 +3,8 @@ import Database from "better-sqlite3";
 interface TypeCount {
   type: string;
   count: number;
+  agent_id?: string;
+  team_id?: string;
 }
 
 /** Print memory statistics: total captures, breakdown by type, top tags, sessions. */
@@ -77,7 +79,7 @@ export function stats(dbPath: string): void {
   if (agents.length > 0) {
     console.log(`\nBy agent:`);
     for (const row of agents) {
-      console.log(`  ${row.agent_id.padEnd(14)} ${String(row.count).padStart(4)}`);
+      console.log(`  ${row.agent_id!.padEnd(14)} ${String(row.count).padStart(4)}`);
     }
   }
 
@@ -153,7 +155,7 @@ export function stats(dbPath: string): void {
         )
         .all() as TypeCount[];
       for (const row of teamBreakdown) {
-        console.log(`  ${row.team_id.padEnd(20)} ${String(row.count).padStart(4)}`);
+        console.log(`  ${row.team_id!.padEnd(20)} ${String(row.count).padStart(4)}`);
       }
     }
   } catch {

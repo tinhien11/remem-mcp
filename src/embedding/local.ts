@@ -11,7 +11,7 @@ export class LocalEmbedder implements Embedder {
   readonly dimension = 384;
   readonly model = "Xenova/all-MiniLM-L6-v2";
 
-  private extractor: Awaited<ReturnType<typeof pipeline>> | null = null;
+  private extractor: ((input: string, options: { pooling: string; normalize: boolean }) => Promise<{ data: unknown }>) | null = null;
   private initPromise: Promise<void> | null = null;
 
   /** Initialize the model. This runs once. Subsequent calls return immediately. */
@@ -22,7 +22,7 @@ export class LocalEmbedder implements Embedder {
       return;
     }
     this.initPromise = (async () => {
-      this.extractor = await pipeline("feature-extraction", this.model);
+      this.extractor = (await pipeline("feature-extraction", this.model)) as unknown as typeof this.extractor;
     })();
     await this.initPromise;
   }

@@ -1149,7 +1149,7 @@ export function errorsActions(dbPath: string = defaultDbPath()): void {
     title: string;
     fix: string;
     etype: string;
-    validated: string;
+    validated: string | number | boolean;
     harm: string;
     drift: string;
     downvotes: string;

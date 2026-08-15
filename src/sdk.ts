@@ -63,7 +63,7 @@ export class Memory {
   }
 
   /** Capture a memory entry. Returns the ID, or null if duplicate. */
-  async capture(content: string, type: CaptureType, tags: string[] = []): Promise<string | null> {
+  async capture(content: string, type: CaptureType, tags: string[] = [], _opts?: { sessionKey?: string }): Promise<string | null> {
     const { text: redactedContent } = this.redactSecrets ? redact(content) : { text: content };
 
     // Dedup check
@@ -176,9 +176,9 @@ export class Memory {
     ).run(newContent, JSON.stringify(newTags), newType, newTrust, contentHash, id);
 
     // Update FTS index
-    const rowid = db.prepare("SELECT rowid FROM captures WHERE id = ?").get(id)?.rowid as
-      | number
-      | undefined;
+    const rowid = (db.prepare("SELECT rowid FROM captures WHERE id = ?").get(id) as
+      | { rowid?: number }
+      | undefined)?.rowid;
     if (rowid) {
       db.prepare(
         "INSERT INTO captures_fts(captures_fts, rowid, content, tags, type) VALUES('delete', ?, '', '', '')",

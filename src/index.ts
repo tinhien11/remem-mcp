@@ -57,6 +57,7 @@ import {
   patternsTemplates,
 } from "./errors.js";
 import { exportData } from "./export.js";
+import { exportMarkdown } from "./export-md.js";
 import {
   hookPostCommit,
   hookPostCompaction,
@@ -765,6 +766,39 @@ async function main(): Promise<void> {
     exportData(dbPath, output, Object.keys(filters).length > 0 ? filters : undefined);
     return;
   }
+  if (arg === "export-md") {
+    const dbPath = defaultDbPath();
+    const rest = process.argv.slice(3);
+    // Find the first positional (non-flag, non-flag-value) arg as the output
+    // file. Flags are --flag value pairs; everything else is positional.
+    const knownFlags = new Set(["--session-key", "--type", "--tag"]);
+    let output: string | null = null;
+    const flagArgs: string[] = [];
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i].startsWith("--") && knownFlags.has(rest[i]) && rest[i + 1]) {
+        flagArgs.push(rest[i], rest[i + 1]);
+        i++;
+      } else if (!rest[i].startsWith("--") && !output) {
+        output = rest[i];
+      } else {
+        flagArgs.push(rest[i]);
+      }
+    }
+    const outputFile =
+      output ??
+      `remem-mcp-export-${new Date().toISOString().replace(/[:.]/g, "-")}.md`;
+    const flags = parseFlags(flagArgs);
+    const filters: { sessionKey?: string; type?: string; tag?: string } = {};
+    if (flags["session-key"]) filters.sessionKey = flags["session-key"];
+    if (flags["type"]) filters.type = flags["type"];
+    if (flags["tag"]) filters.tag = flags["tag"];
+    exportMarkdown(
+      dbPath,
+      outputFile,
+      Object.keys(filters).length > 0 ? filters : undefined,
+    );
+    return;
+  }
   if (arg === "import") {
     const dbPath = defaultDbPath();
     const input = process.argv[3];
@@ -1315,6 +1349,7 @@ Knowledge & skills:
 Export options:
   --session-key <key>  Export only captures from this session
   --type <type>        Export only captures of this type
+  --tag <tag>          (export-md only) Export only captures with this tag
 
 Common flags for L1-L3 and knowledge/skills commands:
   --team-id <id>       Team ID (required for persona, knowledge, skills)

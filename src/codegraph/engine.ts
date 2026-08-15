@@ -108,7 +108,33 @@ export async function parseFile(
   const language = detectLanguage(filePath);
   if (!language) return null;
 
-  const pack = await getPack();
+  const pack = (await getPack()) as {
+    hasLanguage: (lang: string) => boolean;
+    process: (
+      source: string,
+      opts: { language: string },
+    ) => {
+      structure: Array<{
+        kind?: string;
+        name?: string;
+        span?: { startLine?: number; endLine?: number };
+        signature?: string;
+        docComment?: string;
+        children?: Array<{
+          kind?: string;
+          name?: string;
+          span?: { startLine?: number; endLine?: number };
+          signature?: string;
+          docComment?: string;
+        }>;
+      }>;
+      imports: Array<{
+        items?: string[];
+        source?: string;
+        span?: { startLine?: number };
+      }>;
+    } | null;
+  };
   if (!pack.hasLanguage(language)) return null;
 
   let source: string;

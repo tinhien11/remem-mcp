@@ -1071,6 +1071,15 @@ const TOOLS: Tool[] = [
       required: ["name"],
     },
   },
+  {
+    name: "health",
+    description:
+      "Diagnose memory server health: DB integrity, index status, capture count, schema version, embedding model.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
 ];
 
 /**
@@ -1096,6 +1105,7 @@ const CORE_TOOL_NAMES = new Set([
   "session_start",
   "session_end",
   "session_checkpoint",
+  "health",
 ]);
 
 function getTools(): Tool[] {
@@ -1268,6 +1278,8 @@ export function createServer(opts: ServerOptions): Server {
         return handleSessionEnd(args, opts);
       case "session_checkpoint":
         return handleSessionCheckpoint(args, opts);
+      case "health":
+        return handleHealth(args, opts);
       default:
         return {
           content: [{ type: "text", text: `Error: Unknown tool "${name}".` }],
@@ -1358,8 +1370,8 @@ async function handleRecall(
       });
     }
     // Merge: project first, then global (dedup by id)
-    const seen = new Set(projectResults.map((r) => r.id));
-    results = [...projectResults, ...globalResults.filter((r) => !seen.has(r.id))];
+    const seen = new Set(projectResults.map((r) => r.entry.id));
+    results = [...projectResults, ...globalResults.filter((r) => !seen.has(r.entry.id))];
   } else {
     results = await opts.storage.search(query, queryEmbedding, {
       sessionKey,
@@ -2262,7 +2274,7 @@ async function handleUpdate(
 
   const db = getDb(opts);
   const row = db.prepare("SELECT * FROM captures WHERE id = ? AND deleted_at IS NULL").get(id) as
-    | Record<string, unknown>
+    | (Record<string, unknown> & { rowid?: number })
     | undefined;
   if (!row) {
     return { content: [{ type: "text", text: `Error: Capture ${id} not found.` }], isError: true };
@@ -2282,7 +2294,7 @@ async function handleUpdate(
 
   // Update FTS index
   const rowid =
-    (row.rowid as number) ?? db.prepare("SELECT rowid FROM captures WHERE id = ?").get(id)?.rowid;
+    row.rowid ?? (db.prepare("SELECT rowid FROM captures WHERE id = ?").get(id) as { rowid?: number } | undefined)?.rowid;
   if (rowid) {
     db.prepare(
       "INSERT INTO captures_fts(captures_fts, rowid, content, tags, type) VALUES('delete', ?, '', '', '')",
@@ -2306,6 +2318,14 @@ async function handleConsolidate(
   const confirm = (args.confirm as boolean) ?? false;
   const batchSize = (args.batch_size as number) ?? 0;
   const sessionKey = (args.session_key as string) ?? defaultSessionKey();
+
+  if (threshold < 0 || threshold > 1) {
+    return { content: [{ type: "text", text: "Error: threshold must be between 0 and 1." }], isError: true };
+  }
+  if (batchSize < 0) {
+    return { content: [{ type: "text", text: "Error: batch_size must be non-negative." }], isError: true };
+  }
+
   const db = getDb(opts);
 
   // Get all non-deleted captures for the session (or all if session_key === "all")
@@ -2390,21 +2410,25 @@ async function handleConsolidate(
     return { content: [{ type: "text", text: lines.join("\n") }] };
   }
 
-  // Merge: keep the oldest capture, soft-delete the rest
+  // Merge: keep the oldest capture, soft-delete the rest (transactional)
   let merged = 0;
-  for (const g of groups) {
-    // Sort by created_at ascending (oldest first)
-    const groupRows = g.ids
-      .map((id) => rows.find((r) => r.id === id))
-      .filter(Boolean)
-      .sort((a, b) => a!.created_at - b!.created_at);
-    const dups = groupRows.slice(1);
-    for (const dup of dups) {
-      db.prepare("UPDATE captures SET deleted_at = ? WHERE id = ?").run(Date.now(), dup.id);
-      db.prepare("DELETE FROM captures_vec WHERE id = ?").run(dup.id);
-      merged++;
+  const softDelete = db.prepare("UPDATE captures SET deleted_at = ? WHERE id = ?");
+  const deleteVec = db.prepare("DELETE FROM captures_vec WHERE id = ?");
+  const mergeTx = db.transaction(() => {
+    for (const g of groups) {
+      const groupRows = g.ids
+        .map((id) => rows.find((r) => r.id === id))
+        .filter(Boolean)
+        .sort((a, b) => a!.created_at - b!.created_at);
+      const dups = groupRows.slice(1);
+      for (const dup of dups) {
+        softDelete.run(Date.now(), dup!.id);
+        deleteVec.run(dup!.id);
+        merged++;
+      }
     }
-  }
+  });
+  mergeTx();
 
   return {
     content: [
@@ -2508,6 +2532,128 @@ async function handleStats(
     dbSizeBytes: dbSize,
     dbSizeMB: Math.round((dbSize / 1024 / 1024) * 100) / 100,
     sessions: sessionStats,
+  };
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(result, null, 2),
+      },
+    ],
+  };
+}
+
+/**
+ * Handle the health tool — diagnose memory server health.
+ *
+ * Checks DB connection, integrity, FTS5 index, sqlite-vec index, capture count,
+ * schema version, embedding model, DB file size, and last capture timestamp.
+ * Returns status "healthy" when all critical checks pass, "degraded" otherwise.
+ */
+async function handleHealth(
+  _args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  const db = getDb(opts);
+  const checks: Record<string, unknown> = {};
+  let degraded = false;
+
+  // DB connection: can we read from the captures table?
+  try {
+    const row = db.prepare("SELECT COUNT(*) as n FROM captures").get() as { n: number };
+    checks.dbConnection = { ok: true, rowCount: row.n };
+  } catch (e) {
+    checks.dbConnection = { ok: false, error: String(e) };
+    degraded = true;
+  }
+
+  // DB integrity: PRAGMA integrity_check
+  try {
+    const row = db.prepare("PRAGMA integrity_check").get() as { integrity_check: string };
+    const ok = row.integrity_check === "ok";
+    checks.dbIntegrity = { ok, result: row.integrity_check };
+    if (!ok) degraded = true;
+  } catch (e) {
+    checks.dbIntegrity = { ok: false, error: String(e) };
+    degraded = true;
+  }
+
+  // FTS5 index status
+  try {
+    const row = db
+      .prepare("SELECT * FROM captures_fts WHERE captures_fts MATCH 'test' LIMIT 1")
+      .get() as { count?: number } | undefined;
+    checks.fts5Index = { ok: true, reachable: true };
+  } catch (e) {
+    checks.fts5Index = { ok: false, reachable: false, error: String(e) };
+    degraded = true;
+  }
+
+  // sqlite-vec index status
+  try {
+    const row = db.prepare("SELECT count(*) as n FROM captures_vec").get() as { n: number };
+    checks.vecIndex = { ok: true, reachable: true, rowCount: row.n };
+  } catch (e) {
+    checks.vecIndex = { ok: false, reachable: false, error: String(e) };
+    degraded = true;
+  }
+
+  // Total captures count (non-deleted)
+  try {
+    const row = db
+      .prepare("SELECT COUNT(*) as n FROM captures WHERE deleted_at IS NULL")
+      .get() as { n: number };
+    checks.totalCaptures = row.n;
+  } catch (e) {
+    checks.totalCaptures = { error: String(e) };
+    degraded = true;
+  }
+
+  // Schema version
+  try {
+    const row = db
+      .prepare("SELECT MAX(version) as version FROM schema_version")
+      .get() as { version: number | null };
+    checks.schemaVersion = row.version;
+  } catch (e) {
+    checks.schemaVersion = { error: String(e) };
+    degraded = true;
+  }
+
+  // Embedding model (from REMEM_EMBEDDER env or default)
+  const embeddingModel =
+    process.env.REMEM_EMBEDDER ?? opts.embedder.model ?? "Xenova/all-MiniLM-L6-v2";
+  checks.embeddingModel = embeddingModel;
+
+  // DB file size
+  let dbSizeBytes = 0;
+  try {
+    const dbPath = db.name;
+    const stat = await import("node:fs").then((fs) => fs.statSync(dbPath));
+    dbSizeBytes = stat.size;
+  } catch {
+    // ignore
+  }
+  checks.dbSizeBytes = dbSizeBytes;
+  checks.dbSizeMB = Math.round((dbSizeBytes / 1024 / 1024) * 100) / 100;
+
+  // Last capture timestamp
+  try {
+    const row = db
+      .prepare(
+        "SELECT MAX(created_at) as last FROM captures WHERE deleted_at IS NULL",
+      )
+      .get() as { last: number | null };
+    checks.lastCapture = row.last ? new Date(row.last).toISOString() : null;
+  } catch (e) {
+    checks.lastCapture = { error: String(e) };
+  }
+
+  const result = {
+    status: degraded ? "degraded" : "healthy",
+    timestamp: new Date().toISOString(),
+    checks,
   };
 
   return {
@@ -2795,6 +2941,14 @@ async function handleSessionCheckpoint(
   const name = args.name as string;
   const summary = (args.summary as string) ?? "";
   const sessionKey = defaultSessionKey();
+
+  if (!name || name.trim() === "") {
+    return { content: [{ type: "text", text: "Error: name is required and cannot be empty." }], isError: true };
+  }
+  if (name.length > 100) {
+    return { content: [{ type: "text", text: "Error: name must be 100 characters or less." }], isError: true };
+  }
+
   const db = getDb(opts);
 
   // Get recent captures as checkpoint snapshot
@@ -3594,7 +3748,7 @@ async function handleWikiIngest(
     return { content: [{ type: "text", text: `Error: path not found: ${path}` }], isError: true };
   }
 
-  let results: import("./wiki/engine.js").WikiIngestResult[];
+  let results: import("./wiki/engine.js").IngestResult[];
   if (stat.isDirectory()) {
     results = wikiIngestDir(db, path, repoPath, teamId, maxFiles);
   } else {

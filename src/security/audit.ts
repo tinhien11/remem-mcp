@@ -11,7 +11,7 @@ export interface AuditEntry {
   quotaHit: boolean;
   redacted: boolean;
   /** For mutation tools (forget): records what was changed. */
-  mutation?: { id?: string; filter?: unknown; captures: number };
+  mutation?: { id?: string; filter?: unknown; captures?: number; reject?: boolean; reason?: string; winner?: string; loser?: string };
 }
 
 /** Append-only JSONL audit logger. */

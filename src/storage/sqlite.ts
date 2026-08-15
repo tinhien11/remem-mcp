@@ -149,7 +149,26 @@ export function stripQueryProperNouns(query: string): string {
 }
 
 /** Current schema version. */
-const CURRENT_SCHEMA_VERSION = 6;
+const CURRENT_SCHEMA_VERSION = 8;
+
+/**
+ * Evergreen tags: captures with any of these tags are exempt from temporal
+ * decay and the auto-stale mechanism (decay multiplier = 1.0, never marked
+ * stale). Parsed once at startup from REMEM_EVERGREEN_TAGS (comma-separated).
+ * Default: "evergreen,never-forget".
+ */
+const EVERGREEN_TAGS: ReadonlySet<string> = new Set(
+  (process.env.REMEM_EVERGREEN_TAGS ?? "evergreen,never-forget")
+    .split(",")
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean),
+);
+
+/** Check whether a capture's tags include any evergreen tag. */
+function isEvergreen(tags: string[] | undefined | null): boolean {
+  if (!tags || tags.length === 0) return false;
+  return tags.some((t) => EVERGREEN_TAGS.has(t.toLowerCase()));
+}
 
 /**
  * SQLite storage backend.
@@ -555,7 +574,10 @@ export class SQLiteBackend implements StorageBackend {
     const stmt = this.db.prepare(
       "UPDATE captures SET access_count = access_count + 1, last_accessed_at = ? WHERE id = ?",
     );
-    for (const id of ids) stmt.run(now, id);
+    const tx = this.db.transaction(() => {
+      for (const id of ids) stmt.run(now, id);
+    });
+    tx();
   }
 
   /** Confirm a capture (Bayesian: increment alpha). Increases confidence. */
@@ -604,10 +626,13 @@ export class SQLiteBackend implements StorageBackend {
 
     const totalHeeded = rows.reduce((s, r) => s + r.heeded_count, 0);
     const totalOutcomes = rows.reduce((s, r) => s + r.heeded_count + r.recurrence_count, 0);
+    const meanPrecision = candidates.length > 0
+      ? candidates.reduce((s, c) => s + c.precision, 0) / candidates.length
+      : 0;
 
     return {
       totalCorrections: rows.length,
-      avgPrecision: totalOutcomes > 0 ? totalHeeded / totalOutcomes : 0,
+      avgPrecision: meanPrecision,
       heedRate: totalOutcomes > 0 ? totalHeeded / totalOutcomes : 0,
       noiseCandidates: candidates.filter((c) => c.precision < 0.3).sort((a, b) => a.precision - b.precision),
       highSignalCandidates: candidates.filter((c) => c.precision >= 0.8).sort((a, b) => b.precision - a.precision),
@@ -797,7 +822,7 @@ export class SQLiteBackend implements StorageBackend {
     const ftsQuery = this.escapeFtsQuery(query);
     if (!ftsQuery) return [];
 
-    let sql: string;
+    let sql: string = "";
     const params: unknown[] = [ftsQuery];
     try {
       sql = `
@@ -980,10 +1005,15 @@ export class SQLiteBackend implements StorageBackend {
         const row = rowMap.get(r.id);
         if (!row) return null;
         const ageMs = now - row.created_at;
-        const decay = 0.5 ** (ageMs / HALF_LIFE_MS);
+        // Evergreen tags exempt a capture from temporal decay and auto-stale.
+        // The capture keeps its full score regardless of age.
+        const tags = row.tags ? (JSON.parse(row.tags) as string[]) : [];
+        const evergreen = isEvergreen(tags);
+        const decay = evergreen ? 1.0 : 0.5 ** (ageMs / HALF_LIFE_MS);
         // Auto-stale: if capture is older than STALE_MS and not already verified,
         // treat it as stale (0.1 trust boost) to naturally fade old memories.
-        const effectiveTrust = ageMs > STALE_MS && row.trust_state !== "verified"
+        // Evergreen captures are never auto-staled.
+        const effectiveTrust = !evergreen && ageMs > STALE_MS && row.trust_state !== "verified"
           ? "stale"
           : (row.trust_state ?? "candidate");
         const trustBoost = TRUST_BOOST[effectiveTrust] ?? 1.0;

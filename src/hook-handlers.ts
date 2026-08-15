@@ -425,7 +425,7 @@ export function hookRecall(dbPath: string): void {
       // Try immutable mode first (no WAL writes needed), fall back to readonly
       let db: Database.Database;
       try {
-        db = new Database(dbPath, { readonly: true, immutable: true });
+        db = new Database(dbPath, { readonly: true, immutable: true } as Database.Options);
       } catch {
         db = new Database(dbPath, { readonly: true });
       }
@@ -1046,9 +1046,9 @@ export function hookPostToolUse(dbPath: string): void {
                   .toLowerCase()
                   .split(/\s+/)
                   .filter(
-                    (w) => w.length > 3 && !["command", "succeeded", "output", "error"].includes(w),
+                    (w: string) => w.length > 3 && !["command", "succeeded", "output", "error"].includes(w),
                   );
-                const commonWords = words.filter((w) =>
+                const commonWords = words.filter((w: string) =>
                   allFixes.slice(1).every((f) => f.toLowerCase().includes(w)),
                 );
 

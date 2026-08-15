@@ -378,7 +378,9 @@ export async function demo(): Promise<void> {
   );
 
   const injected =
-    preResult?.hookSpecificOutput?.additionalContext ?? preResult?.additionalContext ?? null;
+    (preResult?.hookSpecificOutput as Record<string, unknown> | undefined)?.additionalContext ??
+    preResult?.additionalContext ??
+    null;
 
   if (injected) {
     const injectLines = String(injected).split("\n").filter(Boolean).slice(0, 3);
