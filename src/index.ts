@@ -278,7 +278,6 @@ async function main(): Promise<void> {
   }
   if (arg === "setup") {
     console.log("remem-mcp setup\n");
-    console.log("This will register the MCP server, install hooks, install skill, and capture project basics.\n");
     await installMcpServer();
     console.log("");
     await installHooks();
@@ -367,12 +366,10 @@ async function main(): Promise<void> {
       if (id) console.log(`Test capture saved: ${id}`);
     }
 
-    console.log("\n✓ Setup complete.");
-    console.log("\nNext steps:");
-    console.log("  1. Restart your agent (close and reopen the session)");
-    console.log("  2. On restart, SessionStart hook loads project basics automatically");
-    console.log("  3. Skill teaches agent to use recall/capture/codegraph_search automatically");
-    console.log("  4. Run `npx remem-mcp status` anytime to see your memory");
+    console.log("\n✓ Done. Restart your agent.");
+    console.log("  Hooks auto-recall on start, auto-capture errors, auto-save on exit.");
+    console.log("  Skill teaches agent to use codegraph_search instead of grep.");
+    console.log("  `npx remem-mcp status` to see memory.");
     return;
   }
   if (arg === "uninstall-hooks") {
