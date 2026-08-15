@@ -41,7 +41,7 @@ npx remem-mcp demo-codegraph  # Live CodeGraph demo on facebook/react
 npx remem-mcp status   # One dashboard: everything at a glance
 ```
 
-The demo creates a real TypeScript project, runs real `npm run build`, captures real TS2307 errors, and shows the full learning loop — capture → inject → fix → upvote → cross-project inheritance. No hardcoded strings.
+The demo creates a real TypeScript project, runs real `npm run build`, captures real TS2307 errors, and shows the full learning loop — capture → inject → fix → zero retries. No hardcoded strings.
 
 ---
 
