@@ -14,9 +14,12 @@
 // typical in memory servers. Lower k gives more weight to top-ranked items.
 const RRF_K = 40;
 
-// Vector search weight: 2x over BM25. Vector similarity is more precise
-// for semantic matching, while BM25 OR semantics can be noisy at scale.
-const VEC_WEIGHT = 2.0;
+// Vector search weight: 3x over BM25. Vector similarity is more precise
+// for semantic matching, while BM25 OR semantics can be noisy — especially
+// when a proper noun in the query (e.g. "Tin") matches an unrelated capture
+// that happens to mention that name. Higher vector weight ensures semantic
+// relevance dominates over keyword coincidence.
+const VEC_WEIGHT = 3.0;
 
 export interface RankedResult {
   id: string;

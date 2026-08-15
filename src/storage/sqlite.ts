@@ -952,7 +952,25 @@ export class SQLiteBackend implements StorageBackend {
     // identifiers (e.g. "configuration setting I", "plan B") and stopwording
     // them strips the only distinguishing term from the query.
     const filtered = tokens.filter((t) => t.length <= 1 || !FTS_STOPWORDS.has(t.toLowerCase()));
-    const finalTokens = filtered.length > 0 ? filtered : tokens;
+    // Remove proper nouns (capitalized words) from BM25 query to prevent
+    // a name match from dominating over semantic content. E.g. "what editor
+    // does Tin use" → BM25 queries "editor use" instead of "editor Tin use",
+    // so the Neovim capture ranks higher than the "I am Tin" intro.
+    // Vector search still uses the full query for semantic matching.
+    // Only strip proper nouns when there are ≥2 other content words remaining,
+    // so single-word queries (e.g. "Before") still match.
+    const noProperNouns = filtered.filter(
+      (t) => t.length <= 1 || t[0] !== t[0].toUpperCase() || FTS_STOPWORDS.has(t.toLowerCase()),
+    );
+    // Fallback chain: noProperNouns (≥2) → noProperNouns (>0) → filtered → tokens
+    const finalTokens =
+      noProperNouns.length >= 2
+        ? noProperNouns
+        : noProperNouns.length > 0
+          ? noProperNouns
+          : filtered.length > 0
+            ? filtered
+            : tokens;
     return finalTokens.map((t) => `"${t.replace(/"/g, '""')}"`).join(" OR ");
   }
 
