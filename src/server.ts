@@ -2760,7 +2760,10 @@ async function handleCodegraphSearch(
   }
 
   const db = getDb(opts);
-  let symbols = cgSearchSymbols(db, query, { teamId, kind, language, limit });
+  // Scope search to the specified repo path if provided, so results
+  // don't leak symbols from other indexed repos in the same DB.
+  const repoPath = customPath || undefined;
+  let symbols = cgSearchSymbols(db, query, { teamId, kind, language, limit, repoPath });
 
   // Auto-index: if no symbols found, try indexing the specified path
   // or the current directory, then retry the search.
@@ -2782,8 +2785,8 @@ async function handleCodegraphSearch(
       const results = await cgIndexDirectory(db, indexPath, repoRoot, teamId, 500);
       const indexed = results.filter((r) => !r.skipped);
       if (indexed.length > 0) {
-        // Retry search after indexing
-        symbols = cgSearchSymbols(db, query, { teamId, kind, language, limit });
+        // Retry search after indexing, scoped to the repo
+        symbols = cgSearchSymbols(db, query, { teamId, kind, language, limit, repoPath: repoRoot });
       }
       if (symbols.length === 0) {
         return {

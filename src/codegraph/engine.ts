@@ -433,8 +433,9 @@ export function searchSymbols(
     params.push(opts.teamId);
   }
   if (opts.repoPath !== undefined) {
-    sql += " AND repo_path = ?";
-    params.push(opts.repoPath);
+    // Use LIKE prefix match so /path/to/src also matches repo_path /path/to
+    sql += " AND (repo_path = ? OR repo_path LIKE ?)";
+    params.push(opts.repoPath, `${opts.repoPath}%`);
   }
   if (opts.kind) {
     sql += " AND kind = ?";
@@ -675,8 +676,9 @@ export function listSymbols(
     params.push(opts.teamId);
   }
   if (opts.repoPath !== undefined) {
-    sql += " AND repo_path = ?";
-    params.push(opts.repoPath);
+    // Use LIKE prefix match so /path/to/src also matches repo_path /path/to
+    sql += " AND (repo_path = ? OR repo_path LIKE ?)";
+    params.push(opts.repoPath, `${opts.repoPath}%`);
   }
   if (opts.kind) {
     sql += " AND kind = ?";
