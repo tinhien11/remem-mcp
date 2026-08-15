@@ -1,0 +1,69 @@
+<svg width="1280" height="640" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0d1117"/>
+      <stop offset="100%" stop-color="#161b22"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#58a6ff"/>
+      <stop offset="100%" stop-color="#79c0ff"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="640" fill="url(#bg)"/>
+
+  <!-- Logo area -->
+  <rect x="80" y="80" width="60" height="60" rx="12" fill="url(#accent)" opacity="0.9"/>
+  <text x="110" y="122" font-family="monospace" font-size="32" fill="#0d1117" text-anchor="middle" font-weight="bold">R</text>
+
+  <!-- Title -->
+  <text x="160" y="110" font-family="system-ui, -apple-system, sans-serif" font-size="42" fill="#f0f6fc" font-weight="bold">remem-mcp</text>
+  <text x="160" y="140" font-family="system-ui, -apple-system, sans-serif" font-size="20" fill="#8b949e">Long-term memory for AI coding agents</text>
+
+  <!-- Tagline -->
+  <text x="80" y="240" font-family="system-ui, -apple-system, sans-serif" font-size="56" fill="#f0f6fc" font-weight="bold">Your agent stops</text>
+  <text x="80" y="310" font-family="system-ui, -apple-system, sans-serif" font-size="56" fill="#f0f6fc" font-weight="bold">repeating mistakes.</text>
+
+  <!-- Feature pills -->
+  <g font-family="system-ui, -apple-system, sans-serif" font-size="18" fill="#c9d1d9">
+    <rect x="80" y="370" width="180" height="40" rx="20" fill="#21262d" stroke="#30363d"/>
+    <text x="170" y="396" text-anchor="middle">No API key</text>
+
+    <rect x="280" y="370" width="140" height="40" rx="20" fill="#21262d" stroke="#30363d"/>
+    <text x="350" y="396" text-anchor="middle">No cloud</text>
+
+    <rect x="440" y="370" width="200" height="40" rx="20" fill="#21262d" stroke="#30363d"/>
+    <text x="540" y="396" text-anchor="middle">1 SQLite file</text>
+
+    <rect x="660" y="370" width="220" height="40" rx="20" fill="#21262d" stroke="#30363d"/>
+    <text x="770" y="396" text-anchor="middle">28 MCP tools</text>
+  </g>
+
+  <!-- Benchmark badges -->
+  <g font-family="monospace" font-size="22" fill="#3fb950">
+    <text x="80" y="470">AMB 100/100/100</text>
+    <text x="80" y="505" fill="#3fb950">LoCoMo 95%</text>
+    <text x="80" y="540" fill="#3fb950">PersonaMem 100%</text>
+    <text x="80" y="575" fill="#3fb950">LongMemEval 96%</text>
+  </g>
+  <text x="380" y="470" font-family="system-ui, sans-serif" font-size="20" fill="#8b949e">Beats Mem0 &amp; TencentDB</text>
+
+  <!-- Install command -->
+  <rect x="80" y="560" width="400" height="50" rx="8" fill="#161b22" stroke="#30363d"/>
+  <text x="100" y="592" font-family="monospace" font-size="22" fill="#79c0ff">npx remem-mcp setup</text>
+
+  <!-- MCP badge -->
+  <rect x="1080" y="80" width="120" height="36" rx="8" fill="#21262d" stroke="#58a6ff"/>
+  <text x="1140" y="104" font-family="system-ui, sans-serif" font-size="16" fill="#58a6ff" text-anchor="middle" font-weight="bold">MCP Server</text>
+
+  <!-- Compatible agents -->
+  <text x="900" y="240" font-family="system-ui, sans-serif" font-size="20" fill="#8b949e">Works with:</text>
+  <g font-family="system-ui, sans-serif" font-size="24" fill="#c9d1d9">
+    <text x="900" y="280">Claude Code</text>
+    <text x="900" y="315">Cursor</text>
+    <text x="900" y="350">Devin CLI</text>
+    <text x="900" y="385">Codex CLI</text>
+    <text x="900" y="420">Windsurf</text>
+    <text x="900" y="455">VS Code</text>
+  </g>
+</svg>

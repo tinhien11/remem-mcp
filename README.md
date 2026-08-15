@@ -2,14 +2,28 @@
 
 [![npm version](https://img.shields.io/npm/v/remem-mcp.svg)](https://www.npmjs.com/package/remem-mcp)
 [![GitHub stars](https://img.shields.io/github/stars/tinhien11/remem-mcp.svg)](https://github.com/tinhien11/remem-mcp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Benchmark](https://img.shields.io/badge/AMB-100%2F100%2F100-brightgreen)](https://github.com/tinhien11/remem-mcp)
 
 > Your coding agent stops repeating the same mistakes.
 
 Local memory that survives context compaction — learns from every error, injects fixes before the next attempt, and syncs to your git repo so your whole team shares it.
 
+**One command setup. No API key. No cloud. No database server. Just a SQLite file.**
+
 <video src="https://raw.githubusercontent.com/tinhien11/remem-mcp/main/docs/screenshots/demo-learning-loop.mp4" controls muted width="100%"></video>
 
-![Demo (GIF)](https://raw.githubusercontent.com/tinhien11/remem-mcp/main/docs/screenshots/demo-learning-loop.gif)
+![Demo: Error learning loop](https://raw.githubusercontent.com/tinhien11/remem-mcp/main/docs/screenshots/demo-learning-loop.gif)
+
+### See it in action
+
+| Error learning loop | CodeGraph search | Web viewer |
+|---|---|---|
+| ![Error learning](https://raw.githubusercontent.com/tinhien11/remem-mcp/main/docs/screenshots/demo-learning-loop.gif) | ![CodeGraph](https://raw.githubusercontent.com/tinhien11/remem-mcp/main/docs/screenshots/demo-codegraph.gif) | ![Viewer](https://raw.githubusercontent.com/tinhien11/remem-mcp/main/docs/screenshots/viewer-demo.gif) |
+
+| Viewer: overview | CodeGraph: callers | CodeGraph: search |
+|---|---|---|
+| ![Overview](https://raw.githubusercontent.com/tinhien11/remem-mcp/main/docs/screenshots/viewer-overview.png) | ![Callers](https://raw.githubusercontent.com/tinhien11/remem-mcp/main/docs/screenshots/viewer-codegraph-callers.png) | ![Search](https://raw.githubusercontent.com/tinhien11/remem-mcp/main/docs/screenshots/viewer-codegraph-search.png) |
 
 ---
 
