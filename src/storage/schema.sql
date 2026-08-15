@@ -1,5 +1,5 @@
 -- Schema for remem-mcp
--- Version: 6
+-- Version: 7
 --
 -- This file runs on the first start. It creates all tables, triggers, and indexes.
 -- It uses CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS.
@@ -28,7 +28,12 @@ CREATE TABLE IF NOT EXISTS captures (
   deleted_at   INTEGER,
   trust_state      TEXT NOT NULL DEFAULT 'candidate',
   rejection_reason TEXT,
-  superseded_by    TEXT REFERENCES captures(id)
+  superseded_by    TEXT REFERENCES captures(id),
+  -- v7: Access tracking + Bayesian confidence
+  access_count      INTEGER NOT NULL DEFAULT 0,
+  last_accessed_at  INTEGER,
+  confirmations     INTEGER NOT NULL DEFAULT 0,
+  corrections       INTEGER NOT NULL DEFAULT 0
 );
 
 -- L0 messages: role-based conversation messages linked to a capture.

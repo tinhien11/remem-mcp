@@ -277,6 +277,10 @@ export class SQLiteBackend implements StorageBackend {
       this.migrateV5ToV6();
       this.writeSchemaVersion(6);
     }
+    if (currentVersion < 7) {
+      this.migrateV6ToV7();
+      this.writeSchemaVersion(7);
+    }
   }
 
   /** Backup the database to a .bak file. */
@@ -471,6 +475,20 @@ export class SQLiteBackend implements StorageBackend {
     console.error("[remem-mcp] Migrated schema v5 → v6 (CodeGraph + Wiki tables)");
   }
 
+  /** Migrate schema v6 → v7: add access tracking + Bayesian confidence columns. */
+  private migrateV6ToV7(): void {
+    const cols = this.db.prepare("PRAGMA table_info(captures)").all() as { name: string }[];
+    const hasAccessCount = cols.some((c) => c.name === "access_count");
+    if (!hasAccessCount) {
+      this.db.exec("ALTER TABLE captures ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0");
+      this.db.exec("ALTER TABLE captures ADD COLUMN last_accessed_at INTEGER");
+      this.db.exec("ALTER TABLE captures ADD COLUMN confirmations INTEGER NOT NULL DEFAULT 0");
+      this.db.exec("ALTER TABLE captures ADD COLUMN corrections INTEGER NOT NULL DEFAULT 0");
+      console.error("[remem-mcp] Added access tracking + Bayesian confidence columns");
+    }
+    console.error("[remem-mcp] Migrated schema v6 → v7 (access tracking + confidence)");
+  }
+
   async put(entry: CaptureEntry): Promise<void> {
     const contentHash =
       entry.contentHash ?? createHash("sha256").update(entry.content).digest("hex");
@@ -510,6 +528,41 @@ export class SQLiteBackend implements StorageBackend {
     const buffer = new Float32Array(embedding);
     const stmt = this.db.prepare("INSERT INTO captures_vec (id, embedding) VALUES (?, ?)");
     stmt.run(id, Buffer.from(buffer.buffer));
+  }
+
+  /** Record that a capture was accessed (for access-frequency boosting). */
+  recordAccess(ids: string[]): void {
+    if (ids.length === 0) return;
+    const now = Date.now();
+    const stmt = this.db.prepare(
+      "UPDATE captures SET access_count = access_count + 1, last_accessed_at = ? WHERE id = ?",
+    );
+    for (const id of ids) stmt.run(now, id);
+  }
+
+  /** Confirm a capture (Bayesian: increment alpha). Increases confidence. */
+  confirmCapture(id: string): void {
+    this.db.prepare("UPDATE captures SET confirmations = confirmations + 1 WHERE id = ?").run(id);
+  }
+
+  /** Correct a capture (Bayesian: increment beta). Decreases confidence. */
+  correctCapture(id: string): void {
+    this.db.prepare("UPDATE captures SET corrections = corrections + 1 WHERE id = ?").run(id);
+  }
+
+  /** Compute Bayesian confidence score (Beta-Bernoulli model).
+   *  confidence = (alpha / (alpha + beta)) * decay + floor * (1 - decay)
+   *  where alpha = 1 + confirmations, beta = 1 + corrections,
+   *  decay = 0.5^(days_since_last_confirmation / 90), floor = 0.05.
+   */
+  bayesianConfidence(confirmations: number, corrections: number, lastAccessed?: number): number {
+    const alpha = 1 + confirmations;
+    const beta = 1 + corrections;
+    const base = alpha / (alpha + beta);
+    if (!lastAccessed) return base;
+    const daysSince = (Date.now() - lastAccessed) / (24 * 60 * 60 * 1000);
+    const decay = 0.5 ** (daysSince / 90);
+    return base * decay + 0.05 * (1 - decay);
   }
 
   async get(id: string): Promise<CaptureEntry | null> {
@@ -870,11 +923,21 @@ export class SQLiteBackend implements StorageBackend {
           ? "stale"
           : (row.trust_state ?? "candidate");
         const trustBoost = TRUST_BOOST[effectiveTrust] ?? 1.0;
+        // Bayesian confidence: blend trust boost with evidence-based confidence.
+        // Captures with confirmations get higher confidence, corrections lower it.
+        const confirmations = (row as { confirmations?: number }).confirmations ?? 0;
+        const corrections = (row as { corrections?: number }).corrections ?? 0;
+        const lastAccessedAt = (row as { last_accessed_at?: number }).last_accessed_at;
+        const bayesian = this.bayesianConfidence(confirmations, corrections, lastAccessedAt);
+        // Blend: 70% trust-state boost + 30% Bayesian evidence (when evidence exists)
+        const blendedBoost = (confirmations + corrections) > 0
+          ? trustBoost * 0.7 + bayesian * 1.5 * 0.3
+          : trustBoost;
         const decayed = Number.isNaN(r.score) ? 0 : r.score * decay;
         // BM25 scores are negative (lower = better). For negative scores, divide by boost
         // so a lower boost makes the score more negative (ranks lower). For positive scores
         // (RRF fusion), multiply so a lower boost makes the score lower.
-        const finalScore = decayed >= 0 ? decayed * trustBoost : decayed / trustBoost;
+        const finalScore = decayed >= 0 ? decayed * blendedBoost : decayed / blendedBoost;
         // Recency tiebreaker: add a boost proportional to how recent the memory is.
         // For temporal-intent queries ("currently", "now", "latest"), use a much faster
         // decay (1s vs 1min) so even memories stored milliseconds apart are differentiated,
@@ -890,7 +953,18 @@ export class SQLiteBackend implements StorageBackend {
             : finalScore >= 0
               ? finalScore * (1 + recencyBias * recencyWeight)
               : finalScore / (1 + recencyBias * recencyWeight);
-        return { entry: rowToEntry(row), score: biasedScore };
+        // Access-frequency boost (Mem0-style): memories accessed recently get up to
+        // 1.5x boost, idle memories (never accessed or accessed long ago) get 0.3x floor.
+        // This rewards "popular" memories that agents keep recalling.
+        const accessCount = (row as { access_count?: number }).access_count ?? 0;
+        const lastAccessed = (row as { last_accessed_at?: number }).last_accessed_at;
+        const accessBoost = accessCount > 0 && lastAccessed
+          ? 0.3 + 1.2 * (1 / (1 + (now - lastAccessed) / (7 * 24 * 60 * 60 * 1000))) // 7-day half-life
+          : 1.0; // No access data → neutral
+        const accessScored = biasedScore >= 0
+          ? biasedScore * accessBoost
+          : biasedScore / accessBoost;
+        return { entry: rowToEntry(row), score: accessScored };
       })
       .filter((r): r is SearchResult => r !== null)
       // For temporal-intent queries ("currently", "now", "latest"), filter out stale
@@ -919,7 +993,12 @@ export class SQLiteBackend implements StorageBackend {
     // values do not appear in ANY returned result, so ranking alone is not
     // enough — the older capture must be removed entirely. We greedily keep the
     // most recent capture per semantic cluster using embedding cosine similarity.
-    if (temporalIntent) return this.temporalDedup(sorted);
+    if (temporalIntent) {
+      const deduped = this.temporalDedup(sorted);
+      this.recordAccess(deduped.map((r) => r.entry.id));
+      return deduped;
+    }
+    this.recordAccess(sorted.map((r) => r.entry.id));
     return sorted;
   }
 

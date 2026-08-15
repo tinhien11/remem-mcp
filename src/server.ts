@@ -2211,15 +2211,12 @@ async function handleConsolidate(
       .map((id) => rows.find((r) => r.id === id))
       .filter(Boolean)
       .sort((a, b) => a!.created_at - b!.created_at);
-    const keeper = groupRows[0]!;
     const dups = groupRows.slice(1);
     for (const dup of dups) {
       db.prepare("UPDATE captures SET deleted_at = ? WHERE id = ?").run(Date.now(), dup.id);
       db.prepare("DELETE FROM captures_vec WHERE id = ?").run(dup.id);
       merged++;
     }
-    // Log the merge
-    void keeper;
   }
 
   return {
