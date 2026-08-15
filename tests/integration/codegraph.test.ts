@@ -14,13 +14,7 @@ import {
   searchSymbols,
 } from "../../src/codegraph/engine.js";
 
-const TMP = join(
-  process.env.HOME ?? "/tmp",
-  ".local",
-  "share",
-  "remem-mcp",
-  "test-codegraph",
-);
+const TMP = join(process.env.HOME ?? "/tmp", ".local", "share", "remem-mcp", "test-codegraph");
 
 function makeDb(): Database.Database {
   const db = new Database(":memory:");

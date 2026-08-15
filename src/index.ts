@@ -85,9 +85,7 @@ import { findOutdatedPages, ingestDirectory, searchWiki } from "./wiki/engine.js
 
 /** Default DB path. */
 function defaultDbPath(): string {
-  return (
-    process.env.REMEM_DB_PATH ?? join(homedir(), ".local", "share", "remem-mcp", "memory.db")
-  );
+  return process.env.REMEM_DB_PATH ?? join(homedir(), ".local", "share", "remem-mcp", "memory.db");
 }
 
 /** Open a DB with schema loaded (for CLI commands that need CodeGraph/Wiki tables). */
@@ -181,20 +179,20 @@ function detectFramework(): string | null {
   try {
     const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
     const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
-    if (deps["next"]) return "Next.js";
+    if (deps.next) return "Next.js";
     if (deps["react-scripts"]) return "Create React App";
-    if (deps["react"] && deps["vite"]) return "React + Vite";
-    if (deps["react"]) return "React";
-    if (deps["vue"]) return "Vue";
-    if (deps["svelte"] || deps["@sveltejs/kit"]) return "Svelte";
-    if (deps["astro"]) return "Astro";
-    if (deps["nuxt"]) return "Nuxt";
+    if (deps.react && deps.vite) return "React + Vite";
+    if (deps.react) return "React";
+    if (deps.vue) return "Vue";
+    if (deps.svelte || deps["@sveltejs/kit"]) return "Svelte";
+    if (deps.astro) return "Astro";
+    if (deps.nuxt) return "Nuxt";
     if (deps["@angular/core"]) return "Angular";
-    if (deps["express"]) return "Express";
-    if (deps["hono"]) return "Hono";
-    if (deps["fastify"]) return "Fastify";
-    if (deps["nestjs"] || deps["@nestjs/core"]) return "NestJS";
-    if (deps["h3"]) return "h3";
+    if (deps.express) return "Express";
+    if (deps.hono) return "Hono";
+    if (deps.fastify) return "Fastify";
+    if (deps.nestjs || deps["@nestjs/core"]) return "NestJS";
+    if (deps.h3) return "h3";
     return null;
   } catch {
     return null;
@@ -209,10 +207,10 @@ function detectLintTool(): string | null {
     try {
       const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
       const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
-      if (deps["biome"]) return "Biome";
-      if (deps["eslint"]) return "ESLint";
-      if (deps["dprint"]) return "dprint";
-      if (deps["prettier"]) return "Prettier";
+      if (deps.biome) return "Biome";
+      if (deps.eslint) return "ESLint";
+      if (deps.dprint) return "dprint";
+      if (deps.prettier) return "Prettier";
       if (deps["@biomejs/biome"]) return "Biome";
     } catch {
       // fall through
@@ -252,8 +250,8 @@ function detectTestCommand(pkgManager: string | null): string | null {
       if (scripts.jest) return `${pm} run jest`;
       // vitest/jest in deps but no script
       const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
-      if (deps["vitest"]) return `${pm} exec vitest run`;
-      if (deps["jest"]) return `${pm} exec jest`;
+      if (deps.vitest) return `${pm} exec vitest run`;
+      if (deps.jest) return `${pm} exec jest`;
     } catch {
       // fall through
     }
@@ -360,11 +358,10 @@ async function main(): Promise<void> {
         "  No project files detected (package.json, Cargo.toml, etc.). Skipping bootstrap.",
       );
       // Fallback to test capture
-      const id = await mem.capture(
-        "remem-mcp setup completed. This is a test capture.",
-        "task",
-        ["setup", "test"],
-      );
+      const id = await mem.capture("remem-mcp setup completed. This is a test capture.", "task", [
+        "setup",
+        "test",
+      ]);
       if (id) console.log(`Test capture saved: ${id}`);
     }
 

@@ -52,8 +52,7 @@ export class Memory {
     sessionKey?: string;
     redactSecrets?: boolean;
   }) {
-    const dbPath =
-      opts?.dbPath ?? join(homedir(), ".local", "share", "remem-mcp", "memory.db");
+    const dbPath = opts?.dbPath ?? join(homedir(), ".local", "share", "remem-mcp", "memory.db");
     this.storage = new SQLiteBackend(dbPath);
     this.embedder = new LocalEmbedder();
     this.sessionKey =

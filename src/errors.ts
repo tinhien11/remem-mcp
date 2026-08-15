@@ -4,9 +4,7 @@ import Database from "better-sqlite3";
 
 /** Default DB path (matches index.ts). */
 function defaultDbPath(): string {
-  return (
-    process.env.REMEM_DB_PATH ?? join(homedir(), ".local", "share", "remem-mcp", "memory.db")
-  );
+  return process.env.REMEM_DB_PATH ?? join(homedir(), ".local", "share", "remem-mcp", "memory.db");
 }
 
 /**

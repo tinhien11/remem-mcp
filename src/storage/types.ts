@@ -202,11 +202,19 @@ export interface StorageBackend {
   /** Find captures with content hash matching the given content. Used for dedup.
    *  When agentId is provided, dedup is scoped to that agent — the same content
    *  captured by a different agent is not treated as a duplicate. */
-  findByContentHash(contentHash: string, sessionKey?: string, agentId?: string): Promise<CaptureEntry[]>;
+  findByContentHash(
+    contentHash: string,
+    sessionKey?: string,
+    agentId?: string,
+  ): Promise<CaptureEntry[]>;
 
   /** Find rejected tombstones by content hash. Used to block re-extraction of rejected values.
    *  When agentId is provided, the tombstone is scoped to that agent. */
-  findRejectedByContentHash(contentHash: string, sessionKey?: string, agentId?: string): Promise<CaptureEntry[]>;
+  findRejectedByContentHash(
+    contentHash: string,
+    sessionKey?: string,
+    agentId?: string,
+  ): Promise<CaptureEntry[]>;
 
   /** Delete a capture by ID. Also deletes children (atoms, scenarios, messages). */
   delete(id: string): Promise<DeleteResult>;

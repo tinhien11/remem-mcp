@@ -431,7 +431,11 @@ export class SQLiteBackend implements StorageBackend {
     }));
   }
 
-  async findByContentHash(contentHash: string, sessionKey?: string, agentId?: string): Promise<CaptureEntry[]> {
+  async findByContentHash(
+    contentHash: string,
+    sessionKey?: string,
+    agentId?: string,
+  ): Promise<CaptureEntry[]> {
     let sql = "SELECT * FROM captures WHERE content_hash = ? AND deleted_at IS NULL";
     const params: unknown[] = [contentHash];
     if (sessionKey) {
@@ -464,7 +468,9 @@ export class SQLiteBackend implements StorageBackend {
 
     // Detect temporal intent: queries asking for "current/latest/now" state
     // should strongly prefer recent memories over older ones with better keyword match.
-    const temporalIntent = /\b(currently|current|now|latest|new|present|today|active)\b/i.test(query);
+    const temporalIntent = /\b(currently|current|now|latest|new|present|today|active)\b/i.test(
+      query,
+    );
 
     let bm25Results: RankedResult[] = [];
     let vecResults: RankedResult[] = [];
@@ -480,12 +486,19 @@ export class SQLiteBackend implements StorageBackend {
     // therefore returns very few surviving rows when the matching subset is small
     // (e.g. a benchmark run with a unique agent_id among many other captures).
     // Use a very broad KNN pool so enough candidates survive the post-filter.
-    const hasFilter =
-      !!(filters?.agentId || filters?.teamId || filters?.userId || filters?.taskId ||
-         filters?.type || (filters?.tags && filters.tags.length > 0));
+    const hasFilter = !!(
+      filters?.agentId ||
+      filters?.teamId ||
+      filters?.userId ||
+      filters?.taskId ||
+      filters?.type ||
+      (filters?.tags && filters.tags.length > 0)
+    );
     const vecCandidateLimit = hasFilter
       ? Math.min(Math.max(limit * 50, 2000), 5000)
-      : (mode === "hybrid" ? Math.min(Math.max(limit * 10, 100), 1000) : limit * 2);
+      : mode === "hybrid"
+        ? Math.min(Math.max(limit * 10, 100), 1000)
+        : limit * 2;
 
     // Vector search (sqlite-vec) — run first so we can determine if we're at scale
     if ((mode === "hybrid" || mode === "vector") && queryEmbedding) {
@@ -715,7 +728,7 @@ export class SQLiteBackend implements StorageBackend {
     // they're the most recent. The weight (0.1) is calibrated to be larger than
     // typical RRF scores (~0.05) so recency can overcome RRF rank differences,
     // but not so large as to completely ignore semantic relevance.
-    const recencyWeight = temporalIntent ? 0.5 : (scaleBoost ? 0.8 : 0.3);
+    const recencyWeight = temporalIntent ? 0.5 : scaleBoost ? 0.8 : 0.3;
     const sorted = results
       .map((r) => {
         const row = rowMap.get(r.id);
@@ -737,11 +750,12 @@ export class SQLiteBackend implements StorageBackend {
         // At scale, use an additive recency boost so captures with low RRF scores
         // (e.g. vector-only matches that didn't rank in BM25) can still surface
         // when they're the most recent. A multiplicative boost on score=0 stays 0.
-        const biasedScore = scaleBoost && finalScore >= 0
-          ? finalScore + recencyBias * recencyWeight
-          : finalScore >= 0
-            ? finalScore * (1 + recencyBias * recencyWeight)
-            : finalScore / (1 + recencyBias * recencyWeight);
+        const biasedScore =
+          scaleBoost && finalScore >= 0
+            ? finalScore + recencyBias * recencyWeight
+            : finalScore >= 0
+              ? finalScore * (1 + recencyBias * recencyWeight)
+              : finalScore / (1 + recencyBias * recencyWeight);
         return { entry: rowToEntry(row), score: biasedScore };
       })
       .filter((r): r is SearchResult => r !== null)
@@ -795,7 +809,14 @@ export class SQLiteBackend implements StorageBackend {
     const vecMap = new Map<string, Float32Array>();
     for (const row of rows) {
       try {
-        vecMap.set(row.id, new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4));
+        vecMap.set(
+          row.id,
+          new Float32Array(
+            row.embedding.buffer,
+            row.embedding.byteOffset,
+            row.embedding.byteLength / 4,
+          ),
+        );
       } catch {
         // ignore malformed vectors
       }
@@ -839,17 +860,89 @@ export class SQLiteBackend implements StorageBackend {
    */
   private escapeFtsQuery(query: string): string {
     const FTS_STOPWORDS = new Set([
-      "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-      "have", "has", "had", "do", "does", "did", "will", "would", "could",
-      "should", "may", "might", "must", "can", "shall",
-      "i", "you", "he", "she", "it", "we", "they", "me", "him", "her", "us", "them",
-      "my", "your", "his", "its", "our", "their",
-      "this", "that", "these", "those",
-      "and", "or", "but", "not", "no", "nor", "so", "yet",
-      "in", "on", "at", "to", "for", "of", "with", "by", "from", "as",
-      "about", "into", "through", "during", "before", "after",
-      "what", "when", "where", "which", "who", "how", "why",
-      "since", "because", "if", "then", "than",
+      "the",
+      "a",
+      "an",
+      "is",
+      "are",
+      "was",
+      "were",
+      "be",
+      "been",
+      "being",
+      "have",
+      "has",
+      "had",
+      "do",
+      "does",
+      "did",
+      "will",
+      "would",
+      "could",
+      "should",
+      "may",
+      "might",
+      "must",
+      "can",
+      "shall",
+      "i",
+      "you",
+      "he",
+      "she",
+      "it",
+      "we",
+      "they",
+      "me",
+      "him",
+      "her",
+      "us",
+      "them",
+      "my",
+      "your",
+      "his",
+      "its",
+      "our",
+      "their",
+      "this",
+      "that",
+      "these",
+      "those",
+      "and",
+      "or",
+      "but",
+      "not",
+      "no",
+      "nor",
+      "so",
+      "yet",
+      "in",
+      "on",
+      "at",
+      "to",
+      "for",
+      "of",
+      "with",
+      "by",
+      "from",
+      "as",
+      "about",
+      "into",
+      "through",
+      "during",
+      "before",
+      "after",
+      "what",
+      "when",
+      "where",
+      "which",
+      "who",
+      "how",
+      "why",
+      "since",
+      "because",
+      "if",
+      "then",
+      "than",
     ]);
     const tokens = query.trim().split(/\s+/).filter(Boolean);
     if (tokens.length === 0) return "";
@@ -858,9 +951,7 @@ export class SQLiteBackend implements StorageBackend {
     // Single-character tokens are never stopworded — they are often meaningful
     // identifiers (e.g. "configuration setting I", "plan B") and stopwording
     // them strips the only distinguishing term from the query.
-    const filtered = tokens.filter(
-      (t) => t.length <= 1 || !FTS_STOPWORDS.has(t.toLowerCase()),
-    );
+    const filtered = tokens.filter((t) => t.length <= 1 || !FTS_STOPWORDS.has(t.toLowerCase()));
     const finalTokens = filtered.length > 0 ? filtered : tokens;
     return finalTokens.map((t) => `"${t.replace(/"/g, '""')}"`).join(" OR ");
   }

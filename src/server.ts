@@ -1100,7 +1100,7 @@ async function handleRecall(
   // where agent B retrieves context stored by agent A). In that case we must not
   // restrict the search to the querying agent's own captures.
   const scope = (args.scope as string | undefined) ?? undefined;
-  const agentId = scope === "org" ? undefined : (args.agent_id as string) ?? undefined;
+  const agentId = scope === "org" ? undefined : ((args.agent_id as string) ?? undefined);
 
   let queryEmbedding: number[] | null = null;
   let vectorDegraded = false;
@@ -1251,7 +1251,8 @@ async function handleCapture(
   // with agent_id expect a JSON-parseable response so they can extract the stored ID
   // for later cleanup. Human callers don't pass agent_id and get the readable
   // "Captured: <id>" text. An explicit format arg always wins.
-  const format = (args.format as "text" | "json") ?? (args.agent_id !== undefined ? "json" : "text");
+  const format =
+    (args.format as "text" | "json") ?? (args.agent_id !== undefined ? "json" : "text");
 
   // Build content from either 'content' or 'messages'
   let content: string;
@@ -1926,7 +1927,7 @@ async function handleForget(
   const id = args.id as string | undefined;
   const filter = args.filter as DeleteFilter | undefined;
   // When id is provided, default confirm to true (for MCP adapter compatibility)
-  const confirm = (args.confirm as boolean) ?? (id ? true : false);
+  const confirm = (args.confirm as boolean) ?? !!id;
   const reject = (args.reject as boolean) ?? false;
   const reason = args.reason as string | undefined;
   const format = (args.format as "text" | "json") ?? "text";

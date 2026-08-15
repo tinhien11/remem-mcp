@@ -120,14 +120,9 @@ export async function doctor(): Promise<void> {
     checkSkill("Claude Code", join(homedir(), ".claude", "skills", "remem-mcp", "SKILL.md")),
   );
   checks.push(
-    checkSkill(
-      "Devin CLI",
-      join(homedir(), ".config", "devin", "skills", "remem-mcp", "SKILL.md"),
-    ),
+    checkSkill("Devin CLI", join(homedir(), ".config", "devin", "skills", "remem-mcp", "SKILL.md")),
   );
-  checks.push(
-    checkSkill("Generic", join(homedir(), ".agents", "skills", "remem-mcp", "SKILL.md")),
-  );
+  checks.push(checkSkill("Generic", join(homedir(), ".agents", "skills", "remem-mcp", "SKILL.md")));
 
   // 5. Database
   const dbPath =
