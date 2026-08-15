@@ -632,7 +632,7 @@ const TOOLS: Tool[] = [
     description:
       "Index a file or directory into the code graph. Extracts symbols (functions, classes, methods), " +
       "call relationships, and imports. Supports TypeScript, JavaScript, Python, Go, Rust, Java, C, C++, C#. " +
-      "Run this before using codegraph_search, codegraph_callers, codegraph_callees, or codegraph_impact.",
+      "Note: codegraph_search auto-indexes on first use, so you only need this for explicit re-indexing or custom paths.",
     inputSchema: {
       type: "object",
       properties: {
@@ -661,7 +661,8 @@ const TOOLS: Tool[] = [
     name: "codegraph_search",
     description:
       "Search for code symbols by name. Returns matching functions, classes, methods, etc. " +
-      "with file paths and line numbers. Use this to find where a function or class is defined.",
+      "with file paths and line numbers. Use this INSTEAD of grep when looking for function/class/method definitions. " +
+      "If the codebase hasn't been indexed yet, this auto-indexes src/ (or cwd) on first use — no manual setup needed.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2736,10 +2737,10 @@ async function handleCodegraphIndex(
   return { content: [{ type: "text", text: lines.join("\n") }] };
 }
 
-function handleCodegraphSearch(
+async function handleCodegraphSearch(
   args: Record<string, unknown>,
   opts: ServerOptions,
-): { content: Array<{ type: "text"; text: string }>; isError?: boolean } {
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
   const query = args.query as string;
   const kind = args.kind as string | undefined;
   const language = args.language as string | undefined;
@@ -2751,10 +2752,42 @@ function handleCodegraphSearch(
   }
 
   const db = getDb(opts);
-  const symbols = cgSearchSymbols(db, query, { teamId, kind, language, limit });
+  let symbols = cgSearchSymbols(db, query, { teamId, kind, language, limit });
 
+  // Auto-index: if no symbols found, try indexing the current directory
+  // then retry the search. This makes CodeGraph work with zero setup.
   if (symbols.length === 0) {
-    return { content: [{ type: "text", text: "No symbols found." }] };
+    const cwd = process.cwd();
+    const { existsSync } = await import("node:fs");
+    // Look for a src/ directory, otherwise index cwd
+    const indexPath = existsSync(`${cwd}/src`) ? `${cwd}/src` : cwd;
+    try {
+      const results = await cgIndexDirectory(db, indexPath, cwd, teamId, 500);
+      const indexed = results.filter((r) => !r.skipped);
+      if (indexed.length > 0) {
+        // Retry search after indexing
+        symbols = cgSearchSymbols(db, query, { teamId, kind, language, limit });
+      }
+      if (symbols.length === 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `No symbols found. Auto-indexed ${indexed.length} files from ${indexPath} — try a different search term, or call codegraph_index with a specific path.`,
+            },
+          ],
+        };
+      }
+    } catch {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "No symbols found. Call codegraph_index with a path to index your codebase first.",
+          },
+        ],
+      };
+    }
   }
 
   const lines = symbols.map(

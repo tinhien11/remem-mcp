@@ -138,22 +138,24 @@ All run via lifecycle hooks. The agent doesn't need to call any tool.
 
 When the automatic loops aren't enough, use these for deeper code navigation.
 
-```bash
-# 1. Index your codebase (one-time, rerun after major changes)
-npx remem-mcp index --path src --repo .
+**CodeGraph** — symbol search, callers/callees, impact analysis. **Auto-indexes on first use** — just call `codegraph_search` and it indexes `src/` automatically. No manual `codegraph_index` needed.
 
-# 2. Search symbols (auto-scoped to current directory)
+```bash
+# Search symbols (auto-indexes src/ on first call)
 npx remem-mcp search-code --query "parseTar"
 # → parseTar  at  src/parse.ts:22
 
-# 3. List symbols in a file
+# List symbols in a file
 npx remem-mcp list-code src/reporters/fancy.ts
 # → Class    L49-135  FancyReporter
 # → Method   L86-134  formatLogObj
 
-# 4. Trace callers / callees / impact (use symbol ID from step 2)
+# Trace callers / callees / impact (use symbol ID from search)
 npx remem-mcp callers 01KZXPPHF93TS4HV8FWCSSK36A
 npx remem-mcp impact  01KZXPPHF93TS4HV8FWCSSK36A
+
+# Manual re-index (only needed after major changes)
+npx remem-mcp index --path src --repo .
 
 # Wiki + viewer
 npx remem-mcp wiki ingest --path docs      # Index markdown docs + ADRs
@@ -161,7 +163,7 @@ npx remem-mcp wiki outdated                 # Find outdated wiki pages
 npx remem-mcp viewer                        # Web UI at localhost:7331
 ```
 
-- **CodeGraph** — symbol search, callers/callees, impact analysis. Auto-scoped to your project — no cross-project contamination.
+- **CodeGraph** — symbol search, callers/callees, impact analysis. Auto-indexes on first `codegraph_search` call. Auto-scoped to your project.
 - **Wiki** — markdown docs, ADRs, outdated detection.
 - **Search** — hybrid BM25 + sqlite-vec vector search with RRF fusion. `explain_recall` shows scores.
 
