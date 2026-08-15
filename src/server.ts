@@ -676,6 +676,13 @@ const TOOLS: Tool[] = [
           description:
             "Filter by language (typescript, javascript, python, go, rust, java, c, cpp, csharp).",
         },
+        path: {
+          type: "string",
+          description:
+            "Optional: directory to auto-index if no symbols are found yet. " +
+            "Defaults to src/ under the current working directory. " +
+            "Use this when searching a different project than the MCP server's cwd.",
+        },
         team_id: { type: "string", description: "The team ID for isolation." },
         limit: { type: "integer", default: 20, maximum: 100 },
       },
@@ -2744,6 +2751,7 @@ async function handleCodegraphSearch(
   const query = args.query as string;
   const kind = args.kind as string | undefined;
   const language = args.language as string | undefined;
+  const customPath = args.path as string | undefined;
   const teamId = (args.team_id as string) ?? undefined;
   const limit = (args.limit as number) ?? 20;
 
@@ -2754,15 +2762,24 @@ async function handleCodegraphSearch(
   const db = getDb(opts);
   let symbols = cgSearchSymbols(db, query, { teamId, kind, language, limit });
 
-  // Auto-index: if no symbols found, try indexing the current directory
-  // then retry the search. This makes CodeGraph work with zero setup.
+  // Auto-index: if no symbols found, try indexing the specified path
+  // or the current directory, then retry the search.
+  // This makes CodeGraph work with zero setup.
   if (symbols.length === 0) {
     const cwd = process.cwd();
     const { existsSync } = await import("node:fs");
-    // Look for a src/ directory, otherwise index cwd
-    const indexPath = existsSync(`${cwd}/src`) ? `${cwd}/src` : cwd;
+    // Use custom path if provided, otherwise look for src/ in cwd
+    let indexPath: string;
+    let repoRoot: string;
+    if (customPath) {
+      indexPath = customPath;
+      repoRoot = customPath;
+    } else {
+      indexPath = existsSync(`${cwd}/src`) ? `${cwd}/src` : cwd;
+      repoRoot = cwd;
+    }
     try {
-      const results = await cgIndexDirectory(db, indexPath, cwd, teamId, 500);
+      const results = await cgIndexDirectory(db, indexPath, repoRoot, teamId, 500);
       const indexed = results.filter((r) => !r.skipped);
       if (indexed.length > 0) {
         // Retry search after indexing
