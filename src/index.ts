@@ -350,20 +350,18 @@ async function main(): Promise<void> {
     }
 
     if (captured > 0) {
-      console.log(
-        `  Captured ${captured} project basics (package manager, scripts, framework, lint, test).`,
-      );
-      console.log("  These will be injected into your next agent session automatically.");
+      console.log(`  Captured ${captured} project basics.`);
     } else {
-      console.log(
-        "  No project files detected (package.json, Cargo.toml, etc.). Skipping bootstrap.",
-      );
-      // Fallback to test capture
-      const id = await mem.capture("remem-mcp setup completed. This is a test capture.", "task", [
-        "setup",
-        "test",
-      ]);
-      if (id) console.log(`Test capture saved: ${id}`);
+      // Check if project files exist but captures were deduped (already captured before)
+      const hasProjectFiles = existsSync(join(process.cwd(), "package.json")) ||
+        existsSync(join(process.cwd(), "Cargo.toml")) ||
+        existsSync(join(process.cwd(), "go.mod")) ||
+        existsSync(join(process.cwd(), "pyproject.toml"));
+      if (hasProjectFiles) {
+        console.log("  Project basics already captured (no changes since last setup).");
+      } else {
+        console.log("  No project files detected. Skipping bootstrap.");
+      }
     }
 
     console.log("\n✓ Done. Restart your agent.");
