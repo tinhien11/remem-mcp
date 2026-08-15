@@ -913,6 +913,65 @@ const TOOLS: Tool[] = [
       },
     },
   },
+  {
+    name: "confirm",
+    description:
+      "Confirm that a memory is accurate. Increments the Bayesian confirmation count, " +
+      "raising its confidence score in future searches. Use when a recalled memory " +
+      "proved helpful and correct.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        capture_id: {
+          type: "string",
+          description: "The ID of the capture to confirm.",
+        },
+      },
+      required: ["capture_id"],
+    },
+  },
+  {
+    name: "correct",
+    description:
+      "Mark a memory as inaccurate or outdated. Increments the Bayesian correction count, " +
+      "lowering its confidence score in future searches. Use when a recalled memory was " +
+      "wrong, misleading, or superseded by newer information.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        capture_id: {
+          type: "string",
+          description: "The ID of the capture to correct.",
+        },
+        reason: {
+          type: "string",
+          description: "Optional explanation of why this memory is wrong.",
+        },
+      },
+      required: ["capture_id"],
+    },
+  },
+  {
+    name: "supersede",
+    description:
+      "Mark an old memory as superseded by a newer one. The old memory's superseded_by " +
+      "field is set, and it will be filtered out of search results (unless explicitly " +
+      "requested). Use when a fact has changed (e.g. 'database is MySQL' → 'database is PostgreSQL').",
+    inputSchema: {
+      type: "object",
+      properties: {
+        old_id: {
+          type: "string",
+          description: "The ID of the old/outdated capture.",
+        },
+        new_id: {
+          type: "string",
+          description: "The ID of the new/replacement capture.",
+        },
+      },
+      required: ["old_id", "new_id"],
+    },
+  },
 ];
 
 /**
@@ -930,6 +989,9 @@ const CORE_TOOL_NAMES = new Set([
   "update",
   "consolidate",
   "stats",
+  "confirm",
+  "correct",
+  "supersede",
 ]);
 
 function getTools(): Tool[] {
@@ -1086,6 +1148,12 @@ export function createServer(opts: ServerOptions): Server {
         return handleConsolidate(args, opts);
       case "stats":
         return handleStats(args, opts);
+      case "confirm":
+        return handleConfirm(args, opts);
+      case "correct":
+        return handleCorrect(args, opts);
+      case "supersede":
+        return handleSupersede(args, opts);
       default:
         return {
           content: [{ type: "text", text: `Error: Unknown tool "${name}".` }],
@@ -2328,6 +2396,131 @@ async function handleStats(
       {
         type: "text",
         text: JSON.stringify(result, null, 2),
+      },
+    ],
+  };
+}
+
+/** Handle the confirm tool — increase Bayesian confidence for a capture. */
+async function handleConfirm(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  const captureId = args.capture_id as string;
+  if (!captureId) {
+    return {
+      content: [{ type: "text", text: "Error: capture_id is required." }],
+      isError: true,
+    };
+  }
+  const db = getDb(opts);
+  const row = db
+    .prepare("SELECT id, confirmations, corrections FROM captures WHERE id = ? AND deleted_at IS NULL")
+    .get(captureId) as { id: string; confirmations: number; corrections: number } | undefined;
+  if (!row) {
+    return {
+      content: [{ type: "text", text: `Error: Capture ${captureId} not found or deleted.` }],
+      isError: true,
+    };
+  }
+  db.prepare("UPDATE captures SET confirmations = confirmations + 1 WHERE id = ?").run(captureId);
+  const alpha = 1 + row.confirmations + 1;
+  const beta = 1 + row.corrections;
+  const confidence = alpha / (alpha + beta);
+  return {
+    content: [
+      {
+        type: "text",
+        text: `Confirmed capture ${captureId}. Confidence: ${confidence.toFixed(2)} (${row.confirmations + 1} confirmations, ${row.corrections} corrections).`,
+      },
+    ],
+  };
+}
+
+/** Handle the correct tool — decrease Bayesian confidence for a capture. */
+async function handleCorrect(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  const captureId = args.capture_id as string;
+  const reason = (args.reason as string) ?? "";
+  if (!captureId) {
+    return {
+      content: [{ type: "text", text: "Error: capture_id is required." }],
+      isError: true,
+    };
+  }
+  const db = getDb(opts);
+  const row = db
+    .prepare("SELECT id, confirmations, corrections FROM captures WHERE id = ? AND deleted_at IS NULL")
+    .get(captureId) as { id: string; confirmations: number; corrections: number } | undefined;
+  if (!row) {
+    return {
+      content: [{ type: "text", text: `Error: Capture ${captureId} not found or deleted.` }],
+      isError: true,
+    };
+  }
+  db.prepare("UPDATE captures SET corrections = corrections + 1 WHERE id = ?").run(captureId);
+  if (reason) {
+    db.prepare("UPDATE captures SET rejection_reason = ? WHERE id = ?").run(reason, captureId);
+  }
+  const alpha = 1 + row.confirmations;
+  const beta = 1 + row.corrections + 1;
+  const confidence = alpha / (alpha + beta);
+  return {
+    content: [
+      {
+        type: "text",
+        text: `Corrected capture ${captureId}. Confidence: ${confidence.toFixed(2)} (${row.confirmations} confirmations, ${row.corrections + 1} corrections).${reason ? ` Reason: ${reason}` : ""}`,
+      },
+    ],
+  };
+}
+
+/** Handle the supersede tool — mark an old capture as replaced by a newer one. */
+async function handleSupersede(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  const oldId = args.old_id as string;
+  const newId = args.new_id as string;
+  if (!oldId || !newId) {
+    return {
+      content: [{ type: "text", text: "Error: old_id and new_id are required." }],
+      isError: true,
+    };
+  }
+  if (oldId === newId) {
+    return {
+      content: [{ type: "text", text: "Error: old_id and new_id cannot be the same." }],
+      isError: true,
+    };
+  }
+  const db = getDb(opts);
+  const oldRow = db
+    .prepare("SELECT id, content FROM captures WHERE id = ? AND deleted_at IS NULL")
+    .get(oldId) as { id: string; content: string } | undefined;
+  if (!oldRow) {
+    return {
+      content: [{ type: "text", text: `Error: Old capture ${oldId} not found or deleted.` }],
+      isError: true,
+    };
+  }
+  const newRow = db
+    .prepare("SELECT id, content FROM captures WHERE id = ? AND deleted_at IS NULL")
+    .get(newId) as { id: string; content: string } | undefined;
+  if (!newRow) {
+    return {
+      content: [{ type: "text", text: `Error: New capture ${newId} not found or deleted.` }],
+      isError: true,
+    };
+  }
+  db.prepare("UPDATE captures SET superseded_by = ? WHERE id = ?").run(newId, oldId);
+  return {
+    content: [
+      {
+        type: "text",
+        text: `Superseded: "${oldRow.content.slice(0, 60)}..." → "${newRow.content.slice(0, 60)}...".\nOld capture ${oldId} will be filtered from search results. New capture ${newId} takes precedence.`,
       },
     ],
   };

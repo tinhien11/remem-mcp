@@ -628,7 +628,7 @@ export class SQLiteBackend implements StorageBackend {
   async listByTags(tags: string[], limit = 50): Promise<CaptureEntry[]> {
     if (tags.length === 0) return [];
     const tagConditions = tags.map(() => "tags LIKE ?").join(" OR ");
-    const sql = `SELECT * FROM captures WHERE (${tagConditions}) AND deleted_at IS NULL AND trust_state != 'rejected' ORDER BY created_at DESC LIMIT ?`;
+    const sql = `SELECT * FROM captures WHERE (${tagConditions}) AND deleted_at IS NULL AND trust_state != 'rejected' AND superseded_by IS NULL ORDER BY created_at DESC LIMIT ?`;
     const params = [...tags.map((t) => `%"${t}"%`), limit];
     const rows = this.db.prepare(sql).all(...params) as DbRow[];
     return rows.map(rowToEntry);
@@ -740,7 +740,7 @@ export class SQLiteBackend implements StorageBackend {
       SELECT fts.id as id, bm25(captures_fts) as score
       FROM captures_fts fts
       JOIN captures c ON c.id = fts.id
-      WHERE captures_fts MATCH ? AND c.deleted_at IS NULL AND c.trust_state != 'rejected'
+      WHERE captures_fts MATCH ? AND c.deleted_at IS NULL AND c.trust_state != 'rejected' AND c.superseded_by IS NULL
     `;
 
       if (sessionKey) {
@@ -810,7 +810,7 @@ export class SQLiteBackend implements StorageBackend {
       SELECT vec.id as id, vec.distance as score
       FROM captures_vec vec
       JOIN captures c ON c.id = vec.id
-      WHERE vec.embedding MATCH ? AND vec.k = ? AND c.deleted_at IS NULL AND c.trust_state != 'rejected'
+      WHERE vec.embedding MATCH ? AND vec.k = ? AND c.deleted_at IS NULL AND c.trust_state != 'rejected' AND c.superseded_by IS NULL
     `;
     const params: unknown[] = [Buffer.from(buffer.buffer), limit];
 
