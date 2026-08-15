@@ -2302,6 +2302,9 @@ export function hookPreToolUse(dbPath: string): void {
 /**
  * Noise filter: detect commands that are not worth capturing as errors.
  * These are typically test commands, intentional failures, or one-off probes.
+ * Also filters commands where a non-zero exit code is normal behavior
+ * (e.g. grep/rg exit 1 = "no matches", test exit 1 = "assertion failed",
+ * diff exit 1 = "files differ", cmp exit 1 = "files differ").
  */
 function isNoiseCommand(command: string): boolean {
   const lower = command.toLowerCase().trim();
@@ -2311,6 +2314,18 @@ function isNoiseCommand(command: string): boolean {
   if (/^echo\s+/.test(lower)) return true;
   // Very short commands that are just probes (ls <fake>, cat <fake>)
   if (/^ls\s+\/[a-z_]+$/.test(lower) && lower.length < 30) return true;
+  // grep/rg with exit code 1 = "no matches found" — not an error
+  if (/^(grep|rg)\s+/.test(lower)) return true;
+  // diff/cmp with exit code 1 = "files differ" — not an error
+  if (/^(diff|cmp)\s+/.test(lower)) return true;
+  // test/[ with exit code 1 = "assertion failed" — expected in test workflows
+  if (/^(test|\[)\s+/.test(lower)) return true;
+  // which/command -v with exit 1 = "not found" — a probe, not an error
+  if (/^(which|command\s+-v)\s+/.test(lower)) return true;
+  // fzf with exit code 130 = "Ctrl-C pressed" — user cancellation
+  if (/^(fzf|sk)\s+/.test(lower)) return true;
+  // git diff --exit-code with exit 1 = "there are differences" — expected
+  if (/git\s+diff\s+.*--exit-code/.test(lower)) return true;
   return false;
 }
 

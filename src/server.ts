@@ -1127,31 +1127,37 @@ async function handleRecall(
   }
 
   // If REMEM_GLOBAL_SESSION_KEY is set and session_key wasn't explicitly provided,
-  // search both global and project session keys, global first.
+  // search project session first, then global as fallback for remaining slots.
+  // Project-specific captures are always more relevant than generic cross-project
+  // rules when the user is working in a project directory.
   const globalKey = globalSessionKey();
   const useGlobalFallback = globalKey && !args.session_key && globalKey !== sessionKey;
 
   let results: SearchResult[];
   if (useGlobalFallback) {
-    // Search global memory first (rules, learnings, cross-project decisions)
-    const globalResults = await opts.storage.search(query, queryEmbedding, {
-      sessionKey: globalKey,
-      limit: Math.ceil(limit / 2),
-      offset: 0,
-      mode,
-      filters: { teamId, userId, taskId, agentId },
-    });
-    // Then search project memory
+    // Search project memory first (gets full limit — project context is primary)
     const projectResults = await opts.storage.search(query, queryEmbedding, {
       sessionKey,
-      limit: limit - globalResults.length,
+      limit,
       offset: 0,
       mode,
       filters: { teamId, userId, taskId, agentId },
     });
-    // Merge: global first, then project (dedup by id)
-    const seen = new Set(globalResults.map((r) => r.id));
-    results = [...globalResults, ...projectResults.filter((r) => !seen.has(r.id))];
+    // Then search global memory for remaining slots (rules, cross-project decisions)
+    const remaining = limit - projectResults.length;
+    let globalResults: SearchResult[] = [];
+    if (remaining > 0) {
+      globalResults = await opts.storage.search(query, queryEmbedding, {
+        sessionKey: globalKey,
+        limit: remaining,
+        offset: 0,
+        mode,
+        filters: { teamId, userId, taskId, agentId },
+      });
+    }
+    // Merge: project first, then global (dedup by id)
+    const seen = new Set(projectResults.map((r) => r.id));
+    results = [...projectResults, ...globalResults.filter((r) => !seen.has(r.id))];
   } else {
     results = await opts.storage.search(query, queryEmbedding, {
       sessionKey,
@@ -1401,11 +1407,15 @@ async function handleCapture(
   }
 
   // Conflict detection: find similar captures in the same session.
+  // Threshold is cosine DISTANCE (lower = more similar). 0.3 means we only
+  // flag captures with >70% similarity — close enough to be a true duplicate
+  // or contradiction. The old threshold (0.8) flagged everything with >20%
+  // similarity, which made every same-topic capture look like a conflict.
   let conflictInfo = "";
   let conflictIds: string[] = [];
   if (embedding) {
     try {
-      const conflicts = await opts.storage.findConflicts(embedding, sessionKey, 0.8);
+      const conflicts = await opts.storage.findConflicts(embedding, sessionKey, 0.3);
       const filtered = conflicts.filter((c) => c.id !== id);
       conflictIds = filtered.map((c) => c.id);
       if (filtered.length > 0) {
