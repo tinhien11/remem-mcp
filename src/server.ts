@@ -65,6 +65,36 @@ function detectAgentId(): string {
   return "unknown";
 }
 
+/**
+ * Dedup search results by content prefix. When multiple captures share the
+ * same first N characters (e.g. repeated checkpoints or audit summaries),
+ * keep only the highest-scoring one. This prevents noise from long-run loops
+ * and repeated captures with near-identical content.
+ */
+function dedupByContentPrefix(results: SearchResult[], prefixLen = 60): SearchResult[] {
+  const seen = new Map<string, number>(); // prefix → index in output
+  const out: SearchResult[] = [];
+  for (const r of results) {
+    const prefix = r.entry.content.slice(0, prefixLen).trim().toLowerCase();
+    if (prefix.length < 10) {
+      // Too short to dedup meaningfully — keep as-is
+      out.push(r);
+      continue;
+    }
+    const existingIdx = seen.get(prefix);
+    if (existingIdx === undefined) {
+      seen.set(prefix, out.length);
+      out.push(r);
+    } else {
+      // Keep whichever has higher score
+      if (r.score > out[existingIdx].score) {
+        out[existingIdx] = r;
+      }
+    }
+  }
+  return out;
+}
+
 /** Options to create the MCP server. */
 export interface ServerOptions {
   storage: StorageBackend;
@@ -145,6 +175,12 @@ const TOOLS: Tool[] = [
           enum: ["hybrid", "keyword", "vector"],
           default: "hybrid",
           description: "The search mode.",
+        },
+        type: {
+          type: "string",
+          enum: ["conversation", "decision", "learning", "task", "error", "atom"],
+          description:
+            "Filter results by memory type. Use 'decision' to skip checkpoints/tasks, 'error' for past failures, etc.",
         },
         format: {
           type: "string",
@@ -1318,6 +1354,7 @@ async function handleRecall(
   const tokenCap = Math.min((args.max_tokens as number) ?? opts.maxTokensRecall, 8000);
   const mode = (args.mode as SearchMode) ?? "hybrid";
   const format = (args.format as "text" | "json") ?? "text";
+  const typeFilter = (args.type as CaptureType | undefined) ?? undefined;
   const { teamId, userId, taskId } = extractTenant(args);
   // "org" scoped memories are shared across agents (e.g. a cross-agent handoff
   // where agent B retrieves context stored by agent A). In that case we must not
@@ -1355,7 +1392,7 @@ async function handleRecall(
       limit,
       offset: 0,
       mode,
-      filters: { teamId, userId, taskId, agentId },
+      filters: { teamId, userId, taskId, agentId, type: typeFilter },
     });
     // Then search global memory for remaining slots (rules, cross-project decisions)
     const remaining = limit - projectResults.length;
@@ -1366,7 +1403,7 @@ async function handleRecall(
         limit: remaining,
         offset: 0,
         mode,
-        filters: { teamId, userId, taskId, agentId },
+        filters: { teamId, userId, taskId, agentId, type: typeFilter },
       });
     }
     // Merge: project first, then global (dedup by id)
@@ -1378,9 +1415,13 @@ async function handleRecall(
       limit,
       offset,
       mode,
-      filters: { teamId, userId, taskId, agentId },
+      filters: { teamId, userId, taskId, agentId, type: typeFilter },
     });
   }
+
+  // Dedup: remove near-duplicate captures with same content prefix (first 60 chars).
+  // This prevents noise from repeated checkpoints/audits with identical content.
+  results = dedupByContentPrefix(results, 60);
 
   let text = formatResults(results);
 
@@ -1574,7 +1615,34 @@ async function handleCapture(
     };
   }
 
-  const id = generateId();
+  // Fuzzy dedup: check if a capture with the same first 60 chars already exists.
+  // This catches near-duplicates like repeated checkpoints ("Checkpoint: X round N")
+  // or audit summaries with only minor differences. Keep the newest, supersede the old.
+  const newId = generateId();
+  const fuzzyPrefix = redactedContent.slice(0, 60).trim().toLowerCase();
+  if (fuzzyPrefix.length >= 10) {
+    try {
+      const fuzzyMatches = await opts.storage.search(fuzzyPrefix, null, {
+        sessionKey,
+        limit: 5,
+        offset: 0,
+        mode: "keyword",
+        filters: { agentId, type },
+      });
+      const fuzzyDup = fuzzyMatches.find(
+        (r) =>
+          r.entry.content.slice(0, 60).trim().toLowerCase() === fuzzyPrefix,
+      );
+      if (fuzzyDup) {
+        // Supersede the older capture instead of blocking — the new one may have updated info.
+        await opts.storage.supersede(fuzzyDup.entry.id, newId).catch(() => {});
+      }
+    } catch {
+      // Fuzzy dedup is best-effort — don't block capture if it fails.
+    }
+  }
+
+  const id = newId;
   const trustState: TrustState = verified ? "verified" : "candidate";
 
   const entry: CaptureEntry = {
@@ -1733,7 +1801,7 @@ async function handleSearch(
     }
   }
 
-  const results = await opts.storage.search(query, queryEmbedding, {
+  let results = await opts.storage.search(query, queryEmbedding, {
     sessionKey: (args.session_key as string) ?? defaultSessionKey(),
     limit,
     offset: 0,
@@ -1751,6 +1819,9 @@ async function handleSearch(
         }
       : undefined,
   });
+
+  // Dedup near-identical captures (same first 60 chars) — keep highest score.
+  results = dedupByContentPrefix(results, 60);
 
   if (format === "json") {
     // Atom-aware search: if atoms exist for a capture, use the atom fact as
