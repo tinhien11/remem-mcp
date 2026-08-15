@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -166,14 +166,14 @@ function detectPackageScripts(): Record<string, string> {
   }
 }
 
-/** Detect framework from dependencies. */
+/** Detect framework from dependencies or config files. */
 function detectFramework(): string | null {
   const cwd = process.cwd();
   const pkgPath = join(cwd, "package.json");
   if (!existsSync(pkgPath)) {
     // Non-JS frameworks
-    if (existsSync(join(cwd, "Cargo.toml"))) return "Rust";
-    if (existsSync(join(cwd, "go.mod"))) return "Go";
+    const fw = detectNonJsFramework(cwd);
+    if (fw) return fw;
     return null;
   }
   try {
@@ -197,6 +197,147 @@ function detectFramework(): string | null {
   } catch {
     return null;
   }
+}
+
+/** Detect non-JS frameworks from config files and dependencies. */
+function detectNonJsFramework(cwd: string): string | null {
+  // Python
+  const pyPath = join(cwd, "pyproject.toml");
+  if (existsSync(pyPath)) {
+    try {
+      const content = readFileSync(pyPath, "utf-8");
+      if (/\bdjango\b/i.test(content)) return "Django";
+      if (/\bfastapi\b/i.test(content)) return "FastAPI";
+      if (/\bflask\b/i.test(content)) return "Flask";
+      if (/\bstarlette\b/i.test(content)) return "Starlette";
+      if (/\baiohttp\b/i.test(content)) return "aiohttp";
+      if (/\btornado\b/i.test(content)) return "Tornado";
+      if (/\bsanic\b/i.test(content)) return "Sanic";
+      if (/\bpyramid\b/i.test(content)) return "Pyramid";
+      if (/\bbottle\b/i.test(content)) return "Bottle";
+      if (/\brye\b/i.test(content)) return "Rye";
+      if (/\bpoetry\b/i.test(content)) return "Poetry";
+      if (/\buv\b/i.test(content)) return "uv";
+    } catch {
+      // fall through
+    }
+  }
+  if (existsSync(join(cwd, "requirements.txt"))) {
+    try {
+      const content = readFileSync(join(cwd, "requirements.txt"), "utf-8");
+      if (/^\s*django\b/im.test(content)) return "Django";
+      if (/^\s*fastapi\b/im.test(content)) return "FastAPI";
+      if (/^\s*flask\b/im.test(content)) return "Flask";
+    } catch {
+      // fall through
+    }
+  }
+  if (existsSync(join(cwd, "manage.py")) && existsSync(join(cwd, "wsgi.py"))) return "Django";
+
+  // Rust
+  const cargoPath = join(cwd, "Cargo.toml");
+  if (existsSync(cargoPath)) {
+    try {
+      const content = readFileSync(cargoPath, "utf-8");
+      if (/\baxum\b/i.test(content)) return "Axum";
+      if (/\bactix-web\b/i.test(content)) return "Actix Web";
+      if (/\bwarp\b/i.test(content)) return "Warp";
+      if (/\brocket\b/i.test(content)) return "Rocket";
+      if (/\btower\b/i.test(content)) return "Tower";
+      if (/\btauri\b/i.test(content)) return "Tauri";
+      if (/\biced\b/i.test(content)) return "Iced";
+      if (/\bdioxus\b/i.test(content)) return "Dioxus";
+      if (/\bleptos\b/i.test(content)) return "Leptos";
+      if (/\byew\b/i.test(content)) return "Yew";
+      return "Rust";
+    } catch {
+      // fall through
+    }
+  }
+
+  // Go
+  const goModPath = join(cwd, "go.mod");
+  if (existsSync(goModPath)) {
+    try {
+      const content = readFileSync(goModPath, "utf-8");
+      if (/\bgin-gin\b/i.test(content)) return "Gin";
+      if (/\becho\b/i.test(content)) return "Echo";
+      if (/\bfiber\b/i.test(content)) return "Fiber";
+      if (/\bchi\b/i.test(content)) return "Chi";
+      if (/\bgorilla\b/i.test(content)) return "Gorilla";
+      if (/\bfasthttp\b/i.test(content)) return "FastHTTP";
+      return "Go";
+    } catch {
+      // fall through
+    }
+  }
+
+  // Ruby
+  const gemfilePath = join(cwd, "Gemfile");
+  if (existsSync(gemfilePath)) {
+    try {
+      const content = readFileSync(gemfilePath, "utf-8");
+      if (/\brails\b/i.test(content)) return "Rails";
+      if (/\bsinatra\b/i.test(content)) return "Sinatra";
+      if (/\bhanami\b/i.test(content)) return "Hanami";
+      if (/\broda\b/i.test(content)) return "Roda";
+      if (/\bjekyll\b/i.test(content)) return "Jekyll";
+      return "Ruby";
+    } catch {
+      // fall through
+    }
+  }
+
+  // Java
+  if (existsSync(join(cwd, "pom.xml"))) {
+    try {
+      const content = readFileSync(join(cwd, "pom.xml"), "utf-8");
+      if (/\bspring-boot\b/i.test(content)) return "Spring Boot";
+      if (/\bspring-webflux\b/i.test(content)) return "Spring WebFlux";
+      if (/\bquarkus\b/i.test(content)) return "Quarkus";
+      if (/\bmicronaut\b/i.test(content)) return "Micronaut";
+      if (/\bjavalin\b/i.test(content)) return "Javalin";
+      if (/\bdropwizard\b/i.test(content)) return "Dropwizard";
+      if (/\bvertx\b/i.test(content)) return "Vert.x";
+      if (/\bsparkjava\b/i.test(content)) return "Spark Java";
+      return "Java/Maven";
+    } catch {
+      // fall through
+    }
+  }
+  if (existsSync(join(cwd, "build.gradle")) || existsSync(join(cwd, "build.gradle.kts"))) {
+    try {
+      const content = readFileSync(
+        existsSync(join(cwd, "build.gradle.kts"))
+          ? join(cwd, "build.gradle.kts")
+          : join(cwd, "build.gradle"),
+        "utf-8",
+      );
+      if (/\bspring-boot\b/i.test(content)) return "Spring Boot";
+      if (/\bquarkus\b/i.test(content)) return "Quarkus";
+      if (/\bmicronaut\b/i.test(content)) return "Micronaut";
+      return "Java/Gradle";
+    } catch {
+      // fall through
+    }
+  }
+
+  // C# / .NET
+  try {
+    const dotnetFiles = readdirSync(cwd).filter(
+      (f) => f.endsWith(".csproj") || f.endsWith(".sln"),
+    );
+    if (dotnetFiles.length > 0) {
+      const content = readFileSync(join(cwd, dotnetFiles[0]), "utf-8");
+      if (/\bMicrosoft\.NET\.Sdk\.Web\b/i.test(content)) return "ASP.NET Core";
+      if (/\bMicrosoft\.NET\.Sdk\b/i.test(content)) return ".NET";
+      return ".NET";
+    }
+  } catch {
+    // fall through
+  }
+
+  return null;
 }
 
 /** Detect lint/format tool from dependencies or config files. */
@@ -227,8 +368,52 @@ function detectLintTool(): string | null {
     return "ESLint";
   if (existsSync(join(cwd, ".prettierrc")) || existsSync(join(cwd, ".prettierrc.json")))
     return "Prettier";
+  // Rust
   if (existsSync(join(cwd, "rustfmt.toml"))) return "rustfmt";
+  if (existsSync(join(cwd, ".rustfmt.toml"))) return "rustfmt";
+  // Go
   if (existsSync(join(cwd, ".gofmt"))) return "gofmt";
+  if (existsSync(join(cwd, ".golangci.yml")) || existsSync(join(cwd, ".golangci.yaml")))
+    return "golangci-lint";
+  // Python
+  if (existsSync(join(cwd, ".ruff.toml")) || existsSync(join(cwd, "ruff.toml"))) return "Ruff";
+  if (
+    existsSync(join(cwd, ".flake8")) ||
+    existsSync(join(cwd, "setup.cfg")) ||
+    existsSync(join(cwd, "tox.ini"))
+  )
+    return "Flake8";
+  if (existsSync(join(cwd, ".pylintrc")) || existsSync(join(cwd, "pyproject.toml"))) {
+    try {
+      if (existsSync(join(cwd, "pyproject.toml"))) {
+        const content = readFileSync(join(cwd, "pyproject.toml"), "utf-8");
+        if (/\bruff\b/i.test(content)) return "Ruff";
+        if (/\bblack\b/i.test(content)) return "Black";
+        if (/\bflake8\b/i.test(content)) return "Flake8";
+        if (/\bpylint\b/i.test(content)) return "Pylint";
+        if (/\bisort\b/i.test(content)) return "isort";
+      }
+    } catch {
+      // fall through
+    }
+  }
+  if (existsSync(join(cwd, ".black")) || existsSync(join(cwd, "black-config.toml")))
+    return "Black";
+  // Ruby
+  if (existsSync(join(cwd, ".rubocop.yml")) || existsSync(join(cwd, ".rubocop.yaml")))
+    return "RuboCop";
+  if (existsSync(join(cwd, ".standard.yml")) || existsSync(join(cwd, ".standard.yaml")))
+    return "Standard";
+  // Java
+  if (existsSync(join(cwd, ".checkstyle"))) return "Checkstyle";
+  if (existsSync(join(cwd, "spotbugs-exclude.xml"))) return "SpotBugs";
+  // .NET
+  try {
+    const dotnetFiles = readdirSync(cwd).filter((f) => f.endsWith(".editorconfig"));
+    if (dotnetFiles.length > 0) return "EditorConfig";
+  } catch {
+    // fall through
+  }
   return null;
 }
 
@@ -260,9 +445,41 @@ function detectTestCommand(pkgManager: string | null): string | null {
   // Other ecosystems
   if (existsSync(join(cwd, "Cargo.toml"))) return "cargo test";
   if (existsSync(join(cwd, "go.mod"))) return "go test ./...";
-  if (existsSync(join(cwd, "pytest.ini")) || existsSync(join(cwd, "pyproject.toml")))
-    return "pytest";
-  if (existsSync(join(cwd, "Gemfile"))) return "bundle exec rspec";
+  // Python
+  if (existsSync(join(cwd, "pytest.ini")) || existsSync(join(cwd, "conftest.py"))) return "pytest";
+  if (existsSync(join(cwd, "pyproject.toml"))) {
+    try {
+      const content = readFileSync(join(cwd, "pyproject.toml"), "utf-8");
+      if (/\bpytest\b/i.test(content)) return "pytest";
+      if (/\bunittest\b/i.test(content)) return "python -m unittest";
+    } catch {
+      // fall through
+    }
+  }
+  if (existsSync(join(cwd, "tox.ini"))) return "tox";
+  if (existsSync(join(cwd, "Gemfile"))) {
+    try {
+      const content = readFileSync(join(cwd, "Gemfile"), "utf-8");
+      if (/\brspec\b/i.test(content)) return "bundle exec rspec";
+      if (/\bminitest\b/i.test(content)) return "bundle exec rake test";
+    } catch {
+      // fall through
+    }
+    return "bundle exec rspec";
+  }
+  // Java
+  if (existsSync(join(cwd, "pom.xml"))) return "mvn test";
+  if (existsSync(join(cwd, "build.gradle")) || existsSync(join(cwd, "build.gradle.kts")))
+    return "gradle test";
+  // .NET
+  try {
+    const dotnetFiles = readdirSync(cwd).filter(
+      (f) => f.endsWith(".csproj") || f.endsWith(".fsproj"),
+    );
+    if (dotnetFiles.length > 0) return "dotnet test";
+  } catch {
+    // fall through
+  }
   return null;
 }
 
