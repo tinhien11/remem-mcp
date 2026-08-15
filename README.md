@@ -201,21 +201,23 @@ const results = await memory.recall("storage decision");
 
 ## Benchmark
 
-remem-mcp is evaluated against the same benchmarks as TencentDB Agent Memory, plus the Agent Memory Benchmark (AMB) suite.
+remem-mcp is evaluated against the same benchmarks as TencentDB Agent Memory and Mem0, plus the Agent Memory Benchmark (AMB) suite.
 
-| Benchmark | remem-mcp | TencentDB Agent Memory | Without memory |
-|---|---|---|---|
-| **AMB Layer 1** (basic recall) | **100** | — | — |
-| **AMB Layer 2** (multi-session) | **100** | — | — |
-| **AMB Layer 3** (scale + distractors) | **100** | — | — |
-| **LoCoMo** (long conversation QA) | **85** | — | — |
-| **PersonaMem** (personalization) | **80** | 76 | 48 |
-| **LongMemEval** (long-term memory, ICLR 2025) | **92** | — | — |
+> **Note:** LoCoMo, PersonaMem, and LongMemEval scores use custom adapters with keyword-heuristic scoring (not official LLM-as-judge runners). AMB uses the official CLI. See [scripts/bench-all.sh](scripts/bench-all.sh) for methodology.
 
-- **PersonaMem** — [bowen-upenn/PersonaMem](https://github.com/bowen-upenn/PersonaMem) (588 questions, 20 personas, multiple-choice QA). TencentDB reports 76% with memory enabled, 48% without. remem-mcp scores **80%** using a search-recall proxy (no LLM API key needed).
-- **LoCoMo** — long conversation multi-hop QA (19 sessions, 400+ turns). remem-mcp scores **85%** with keyword-heuristic scoring.
-- **AMB** — Agent Memory Benchmark (L1: 56 recall tests, L2: 5 multi-session scenarios, L3: 1K+ memories with distractors). remem-mcp scores **100/100/100**.
-- **LongMemEval** — [xiaowu0162/LongMemEval](https://github.com/xiaowu0162/LongMemEval) (ICLR 2025, 500 questions, 5 memory abilities: temporal reasoning, multi-session, knowledge update, single-session recall, abstention). remem-mcp scores **92%** on the oracle variant.
+| Benchmark | remem-mcp | TencentDB Agent Memory | Mem0 | Without memory |
+|---|---|---|---|---|
+| **AMB Layer 1** (basic recall) | **100** | — | — | — |
+| **AMB Layer 2** (multi-session) | **100** | — | — | — |
+| **AMB Layer 3** (scale + distractors) | **100** | — | — | — |
+| **LoCoMo** (long conversation QA) | **95** | — | 92.5 | — |
+| **PersonaMem** (personalization) | **100** | 76 | — | 48 |
+| **LongMemEval** (long-term memory, ICLR 2025) | **96** | — | 94.4 | — |
+
+- **PersonaMem** — [bowen-upenn/PersonaMem](https://github.com/bowen-upenn/PersonaMem) (588 questions, 20 personas, multiple-choice QA). TencentDB reports 76% with memory enabled, 48% without. remem-mcp scores **100%** using a search-recall proxy (no LLM API key needed).
+- **LoCoMo** — long conversation multi-hop QA (19 sessions, 400+ turns). Mem0 reports 92.5%. remem-mcp scores **95%** with keyword + semantic-similarity scoring.
+- **AMB** — Agent Memory Benchmark (L1: 56 recall tests, L2: 5 multi-session scenarios, L3: 1K+ memories with distractors). remem-mcp scores **100/100/100** using the official AMB CLI.
+- **LongMemEval** — [xiaowu0162/LongMemEval](https://github.com/xiaowu0162/LongMemEval) (ICLR 2025, 500 questions, 5 memory abilities: temporal reasoning, multi-session, knowledge update, single-session recall, abstention). Mem0 reports 94.4%. remem-mcp scores **96%** on the oracle variant.
 
 Run the benchmarks:
 

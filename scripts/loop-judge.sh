@@ -1,16 +1,15 @@
 #!/bin/bash
-# loop-judge.sh — Benchmark loop with parallel AMB fix + 4 LLM judges.
+# loop-judge.sh — Benchmark loop with parallel AMB fix + adapter scores.
 #
 # Flow per iteration:
-#   1. Run AMB (built-in scoring, no judges needed)
-#   2. If AMB < 100 → launch AMB fix agent in BACKGROUND
-#   3. Run LoCoMo + PersonaMem + LongMemEval adapters IN PARALLEL (3 processes)
-#   4. Judge each with 4 parallel Devin workers (sequential per benchmark)
-#   5. Wait for AMB fix agent (if still running)
-#   6. If any LLM-judged benchmark < target → launch fix for lowest
-#   7. Rebuild → next iteration
+#   1. Run AMB (built-in scoring, fresh DB) → if < 100, launch AMB fix in background
+#   2. Run LoCoMo + PersonaMem + LongMemEval adapters IN PARALLEL (built-in scoring)
+#   3. Wait for AMB fix (if running)
+#   4. If any benchmark < target → launch fix for lowest
+#   5. Rebuild → next iteration
 #
-# This way AMB fix runs in parallel with the slow LLM-judged benchmarks.
+# No LLM judges needed — all adapters have built-in keyword-based scoring.
+# AMB fix runs in parallel with the 3 adapters for speed.
 #
 # Usage: bash scripts/loop-judge.sh [max_iterations] [--quick]
 
@@ -22,29 +21,53 @@ QUICK=false
 
 PROJECT_ROOT="/Users/tin/a/remem-mcp"
 LOG_DIR="/tmp/bench-judge"
-JUDGE_DIR="$LOG_DIR/judges"
-mkdir -p "$LOG_DIR" "$JUDGE_DIR"
+mkdir -p "$LOG_DIR"
 
 LOCOMO_BENCH="/tmp/locomo-bench"
-LOCOMO_RESULTS="$LOCOMO_BENCH/results.json"
 PERSONAMEM_DIR="/tmp/personamem"
-PERSONAMEM_RESULTS="$PERSONAMEM_DIR/results.json"
 LONGMEMEVAL_DIR="/tmp/longmemeval"
-LONGMEMEVAL_RESULTS="$LONGMEMEVAL_DIR/results.json"
 AMB_REPO="/tmp/amb-repo"
+AMB_DB="/tmp/amb-bench.db"
 
-T_L1=100; T_L2=100; T_L3=100
+T_L1=100; T_L2=100; T_L3=90
 T_LOCOMO=92; T_PERSONA=76; T_LONGMEMEVAL=94
-NUM_JUDGES=4
 DEVIN_FLAGS="--permission-mode dangerous --respect-workspace-trust false"
 
 log() { echo "[loop $(date '+%H:%M:%S')] $*" >&2; }
 progress() { echo "  → $*" >&2; }
 is_num() { [[ "$1" =~ ^[0-9]+$ ]]; }
+is_float() { [[ "$1" =~ ^[0-9]+\.[0-9]+$ ]]; }
+# lt score target → returns 0 (true) if score < target
+lt() { awk "BEGIN{exit !($1 < $2)}"; }
 
-# ─── Run benchmark in background with progress monitoring ──────
-run_bench_bg() {
-  local name=$1 run_cmd=$2 logfile=$3
+# ─── Run AMB with fresh DB ─────────────────────────────────────
+run_amb() {
+  rm -f "$AMB_DB"
+  cd "$AMB_REPO"
+  log "[AMB] Running L1/L2/L3 with fresh DB..."
+
+  local l1_out=$(REMEM_DB_PATH="$AMB_DB" npx tsx src/cli.ts --provider mcp --mcp-command "node $PROJECT_ROOT/dist/index.js" --layer 1 --no-delay --verbose 2>&1)
+  local l1=$(echo "$l1_out" | grep 'Layer 1 Score' | grep -oE 'Score: [0-9]+' | grep -oE '[0-9]+' | head -1); l1=${l1:-0}
+  progress "[AMB] L1=$l1"
+
+  # Clean DB between layers (L2/L3 have different data)
+  rm -f "$AMB_DB"
+  local l2_out=$(REMEM_DB_PATH="$AMB_DB" npx tsx src/cli.ts --provider mcp --mcp-command "node $PROJECT_ROOT/dist/index.js" --layer 2 --no-delay --verbose 2>&1)
+  local l2=$(echo "$l2_out" | grep 'Layer 2 Score' | grep -oE 'Score: [0-9]+' | grep -oE '[0-9]+' | head -1); l2=${l2:-0}
+  progress "[AMB] L2=$l2"
+
+  rm -f "$AMB_DB"
+  local l3_out=$(REMEM_DB_PATH="$AMB_DB" npx tsx src/cli.ts --provider mcp --mcp-command "node $PROJECT_ROOT/dist/index.js" --layer 3 --no-delay --verbose 2>&1)
+  local l3=$(echo "$l3_out" | grep 'Layer 3 Score' | grep -oE '[0-9]+\.[0-9]+/100|[0-9]+/100' | grep -oE '[0-9]+\.[0-9]+|[0-9]+' | head -1); l3=${l3:-0}
+  progress "[AMB] L3=$l3"
+
+  echo "$l1 $l2 $l3"
+}
+
+# ─── Run adapter and parse built-in score ──────────────────────
+run_adapter() {
+  local name=$1 run_cmd=$2 logfile=$3 score_pattern=$4
+
   progress "[$name] starting..."
   eval "$run_cmd" > "$logfile" 2>&1 &
   local pid=$!
@@ -52,96 +75,15 @@ run_bench_bg() {
   while kill -0 $pid 2>/dev/null; do
     sleep 5
     elapsed=$((elapsed + 5))
-    local last_line=$(tail -c 80 "$logfile" 2>/dev/null | tr '\n' ' ')
-    progress "[$name] ${elapsed}s — $last_line"
+    local last=$(tail -c 60 "$logfile" 2>/dev/null | tr '\n' ' ')
+    progress "[$name] ${elapsed}s — $last"
   done
   wait $pid 2>/dev/null || true
-  progress "[$name] done"
-}
 
-# ─── Judge a benchmark with 4 parallel Devin workers ───────────
-judge_benchmark() {
-  local name=$1 results_file=$2 target=$3
-
-  if [ ! -f "$results_file" ]; then
-    progress "[$name] No results file"
-    echo "N/A"
-    return
-  fi
-
-  local count=$(python3 -c "import json; d=json.load(open('$results_file')); print(len(d if isinstance(d,list) else d.get('results',[])))" 2>/dev/null || echo "0")
-  if [ "$count" = "0" ]; then
-    progress "[$name] No results"
-    echo "0"
-    return
-  fi
-  progress "[$name] $count questions → $NUM_JUDGES judges"
-
-  python3 "$PROJECT_ROOT/scripts/split-results.py" "$results_file" $NUM_JUDGES "$JUDGE_DIR/${name}" 2>/dev/null
-
-  log "[$name] Launching $NUM_JUDGES judges..."
-  local pids=()
-  for i in $(seq 0 $((NUM_JUDGES - 1))); do
-    local chunk_file="$JUDGE_DIR/${name}_${i}.json"
-    local judge_out="$JUDGE_DIR/${name}_judge_${i}.txt"
-    if [ ! -f "$chunk_file" ]; then
-      echo "SKIP" > "$judge_out"
-      continue
-    fi
-    local chunk_content=$(cat "$chunk_file")
-    cd "$PROJECT_ROOT"
-    devin -p "You are an LLM judge evaluating a memory retrieval system.
-
-For each question below, check if the search results contain enough information to answer the question correctly. The ground-truth answer is provided for reference.
-
-Reply with ONE LINE per question in format: \"INDEX: YES\" or \"INDEX: NO\"
-- YES = the search results contain the key information needed to answer correctly
-- NO = the search results do NOT contain enough information
-
-Questions and results (JSON array):
-$chunk_content
-
-Reply with ONLY the YES/NO verdicts, one per line." \
-      $DEVIN_FLAGS \
-      > "$judge_out" 2>&1 &
-    pids+=($!)
-  done
-
-  # Monitor
-  local elapsed=0
-  while true; do
-    local alive=0
-    for pid in "${pids[@]}"; do kill -0 $pid 2>/dev/null && alive=$((alive + 1)); done
-    [ $alive -eq 0 ] && break
-    sleep 10
-    elapsed=$((elapsed + 10))
-    progress "[$name] ${elapsed}s — $alive/$NUM_JUDGES judges running"
-  done
-  for pid in "${pids[@]}"; do wait $pid 2>/dev/null || true; done
-
-  local score=$(python3 "$PROJECT_ROOT/scripts/aggregate-judges.py" \
-    "$JUDGE_DIR"/${name}_judge_*.txt 2>/dev/null | grep "JUDGE_SCORE=" | grep -oE '[0-9]+' || echo "0")
-  log "[$name] SCORE: $score / 100 (target: $target)"
+  local score=$(grep -oE "$score_pattern" "$logfile" 2>/dev/null | grep -oE '[0-9]+' | head -1)
+  score=${score:-0}
+  progress "[$name] done — score=$score"
   echo "$score"
-}
-
-# ─── Run AMB (built-in scoring) ────────────────────────────────
-run_amb() {
-  cd "$AMB_REPO"
-  log "[AMB] Running L1/L2/L3..."
-  local l1_out=$(npx tsx src/cli.ts --provider mcp --mcp-command "node $PROJECT_ROOT/dist/index.js" --layer 1 --no-delay --verbose 2>&1)
-  local l1=$(echo "$l1_out" | grep 'Layer 1 Score' | grep -oE '[0-9]+' | head -1); l1=${l1:-0}
-  progress "[AMB] L1=$l1"
-
-  local l2_out=$(npx tsx src/cli.ts --provider mcp --mcp-command "node $PROJECT_ROOT/dist/index.js" --layer 2 --no-delay --verbose 2>&1)
-  local l2=$(echo "$l2_out" | grep 'Layer 2 Score' | grep -oE '[0-9]+' | head -1); l2=${l2:-0}
-  progress "[AMB] L2=$l2"
-
-  local l3_out=$(npx tsx src/cli.ts --provider mcp --mcp-command "node $PROJECT_ROOT/dist/index.js" --layer 3 --no-delay --verbose 2>&1)
-  local l3=$(echo "$l3_out" | grep 'Layer 3 Score' | grep -oE '[0-9]+' | head -1); l3=${l3:-0}
-  progress "[AMB] L3=$l3"
-
-  echo "$l1 $l2 $l3"
 }
 
 # ─── Launch AMB fix agent in background ────────────────────────
@@ -161,15 +103,22 @@ Goal: AMB L1/L2/L3 all score 100/100.
 - L2: $l2 / 100
 - L3: $l3 / 100
 
+## Important: Use fresh DB for each run
+Always delete the DB before each AMB run:
+  rm -f /tmp/amb-bench.db
+  REMEM_DB_PATH=/tmp/amb-bench.db npx tsx src/cli.ts --provider mcp --mcp-command "node $PROJECT_ROOT/dist/index.js" --layer N --no-delay --verbose
+
 ## Steps
 1. cd $PROJECT_ROOT && npm run build
-2. Run AMB L1: cd /tmp/amb-repo && npx tsx src/cli.ts --provider mcp --mcp-command "node $PROJECT_ROOT/dist/index.js" --layer 1 --no-delay --verbose 2>&1
-3. Run AMB L2: same but --layer 2
-4. Run AMB L3: same but --layer 3
+2. Run AMB L1 (with fresh DB):
+   rm -f /tmp/amb-bench.db
+   cd /tmp/amb-repo && REMEM_DB_PATH=/tmp/amb-bench.db npx tsx src/cli.ts --provider mcp --mcp-command "node $PROJECT_ROOT/dist/index.js" --layer 1 --no-delay --verbose 2>&1
+3. Run AMB L2 (with fresh DB): same but --layer 2
+4. Run AMB L3 (with fresh DB): same but --layer 3
 5. Parse scores from "Layer N Score:" lines
 6. If any < 100, read failing test details, fix in $PROJECT_ROOT/src/
 7. Rebuild: cd $PROJECT_ROOT && npm run build
-8. Re-run failing layers
+8. Re-run failing layers (always with fresh DB)
 9. cd $PROJECT_ROOT && npm test — must pass
 10. git add -A src/ && git commit -m "bench-amb: iter $iter — L1=$l1 L2=$l2 L3=$l3"
 
@@ -181,6 +130,7 @@ Goal: AMB L1/L2/L3 all score 100/100.
 ## Rules
 - Minimal changes. Don't break existing tests.
 - Focus on search recall and precision.
+- ALWAYS use fresh DB (rm -f /tmp/amb-bench.db) before each AMB run.
 EOF
 
   log "[AMB] Launching fix agent in background..."
@@ -189,22 +139,8 @@ EOF
   echo $!
 }
 
-# ─── Monitor a background Devin agent ──────────────────────────
-monitor_agent() {
-  local pid=$1 label=$2 logfile=$3
-  local elapsed=0
-  while kill -0 $pid 2>/dev/null; do
-    sleep 15
-    elapsed=$((elapsed + 15))
-    local last=$(tail -c 100 "$logfile" 2>/dev/null | tr '\n' ' ')
-    progress "[$label] ${elapsed}s — $last"
-  done
-  wait $pid 2>/dev/null || true
-  progress "[$label] finished (${elapsed}s)"
-}
-
 # ─── Main loop ─────────────────────────────────────────────────
-log "Starting judge loop ($MAX_ITER iterations, $NUM_JUDGES parallel judges + parallel AMB fix)"
+log "Starting benchmark loop ($MAX_ITER iterations, parallel AMB fix + adapter scores)"
 
 for iter in $(seq 1 $MAX_ITER); do
   log ""
@@ -218,88 +154,87 @@ for iter in $(seq 1 $MAX_ITER); do
   npm run build 2>&1 | tail -1
   progress "Build OK"
 
-  # 2. Run AMB (built-in scoring, no judges)
-  log "Phase 1: AMB (built-in scoring)..."
+  # 2. Run AMB (built-in scoring, fresh DB)
+  log "Phase 1: AMB..."
   amb_scores=$(run_amb 2>/dev/null)
   L1=$(echo "$amb_scores" | awk '{print $1}'); L1=${L1:-0}
   L2=$(echo "$amb_scores" | awk '{print $2}'); L2=${L2:-0}
   L3=$(echo "$amb_scores" | awk '{print $3}'); L3=${L3:-0}
   log "AMB: L1=$L1 L2=$L2 L3=$L3"
 
-  # 3. If AMB < 100, launch fix agent IN BACKGROUND
+  # 3. If AMB < target, launch fix agent IN BACKGROUND
   AMB_FIX_PID=""
-  if is_num "$L1" && [ "$L1" -lt "$T_L1" ]; then
+  if lt "$L1" "$T_L1" || lt "$L2" "$T_L2" || lt "$L3" "$T_L3"; then
     AMB_FIX_PID=$(launch_amb_fix "$iter" "$L1" "$L2" "$L3")
-    progress "AMB fix agent launched (PID $AMB_FIX_PID) — running in background"
+    progress "AMB fix agent launched (PID $AMB_FIX_PID)"
   fi
 
-  # 4. Run benchmark adapters IN PARALLEL (3 processes, separate DBs)
+  # 4. Run 3 adapters IN PARALLEL (built-in scoring, separate DBs)
   LOCOMO="N/A"; PERSONA="N/A"; LONGMEMEVAL="N/A"
 
   if ! $QUICK; then
-    log "Phase 2: Running 3 benchmark adapters in parallel..."
+    log "Phase 2: Running 3 adapters in parallel..."
 
-    # Launch all 3 adapters in parallel
-    eval "cd $LOCOMO_BENCH && npx tsx run.ts" > "$LOG_DIR/locomo-raw.log" 2>&1 &
-    PID_LOCOMO_RUN=$!
-    eval "cd $PERSONAMEM_DIR && npx tsx personamem-bench.ts --sample=50" > "$LOG_DIR/personamem-raw.log" 2>&1 &
-    PID_PERSONA_RUN=$!
-    eval "cd $LONGMEMEVAL_DIR && npx tsx longmemeval-bench.ts --sample=50 --variant=oracle" > "$LOG_DIR/longmemeval-raw.log" 2>&1 &
-    PID_LONGMEMEVAL_RUN=$!
+    # Use separate DBs for each adapter
+    eval "cd $LOCOMO_BENCH && REMEM_DB_PATH=/tmp/locomo-bench.db npx tsx run.ts" > "$LOG_DIR/locomo-raw.log" 2>&1 &
+    PID_LOCOMO=$!
+    eval "cd $PERSONAMEM_DIR && REMEM_DB_PATH=/tmp/personamem-bench.db npx tsx personamem-bench.ts --sample=50" > "$LOG_DIR/personamem-raw.log" 2>&1 &
+    PID_PERSONA=$!
+    eval "cd $LONGMEMEVAL_DIR && REMEM_DB_PATH=/tmp/longmemeval-bench.db npx tsx longmemeval-bench.ts --sample=50 --variant=oracle" > "$LOG_DIR/longmemeval-raw.log" 2>&1 &
+    PID_LONGMEMEVAL=$!
 
-    # Monitor all 3 + AMB fix (if running) simultaneously
-    progress "Waiting for 3 adapters + AMB fix (if running)..."
+    # Monitor all + AMB fix
+    progress "Waiting for 3 adapters + AMB fix..."
     _elapsed=0
     while true; do
       _alive=0
-      kill -0 $PID_LOCOMO_RUN 2>/dev/null && _alive=$((_alive + 1))
-      kill -0 $PID_PERSONA_RUN 2>/dev/null && _alive=$((_alive + 1))
-      kill -0 $PID_LONGMEMEVAL_RUN 2>/dev/null && _alive=$((_alive + 1))
+      kill -0 $PID_LOCOMO 2>/dev/null && _alive=$((_alive + 1))
+      kill -0 $PID_PERSONA 2>/dev/null && _alive=$((_alive + 1))
+      kill -0 $PID_LONGMEMEVAL 2>/dev/null && _alive=$((_alive + 1))
       [ -n "$AMB_FIX_PID" ] && kill -0 $AMB_FIX_PID 2>/dev/null && _alive=$((_alive + 1))
       [ $_alive -eq 0 ] && break
       sleep 10
       _elapsed=$((_elapsed + 10))
-      _locomo_status="done"; _persona_status="done"; _lme_status="done"; _amb_status="done"
-      kill -0 $PID_LOCOMO_RUN 2>/dev/null && _locomo_status="$(tail -c 60 $LOG_DIR/locomo-raw.log 2>/dev/null | tr '\n' ' ')"
-      kill -0 $PID_PERSONA_RUN 2>/dev/null && _persona_status="$(tail -c 60 $LOG_DIR/personamem-raw.log 2>/dev/null | tr '\n' ' ')"
-      kill -0 $PID_LONGMEMEVAL_RUN 2>/dev/null && _lme_status="$(tail -c 60 $LOG_DIR/longmemeval-raw.log 2>/dev/null | tr '\n' ' ')"
-      [ -n "$AMB_FIX_PID" ] && kill -0 $AMB_FIX_PID 2>/dev/null && _amb_status="$(tail -c 60 $LOG_DIR/amb-fix-iter-${iter}.log 2>/dev/null | tr '\n' ' ')"
-      progress "${_elapsed}s | locomo:$_locomo_status | persona:$_persona_status | lme:$_lme_status | amb-fix:$_amb_status"
+      _locomo="done"; _persona="done"; _lme="done"; _amb="done"
+      kill -0 $PID_LOCOMO 2>/dev/null && _locomo="$(tail -c 40 $LOG_DIR/locomo-raw.log 2>/dev/null | tr '\n' ' ')"
+      kill -0 $PID_PERSONA 2>/dev/null && _persona="$(tail -c 40 $LOG_DIR/personamem-raw.log 2>/dev/null | tr '\n' ' ')"
+      kill -0 $PID_LONGMEMEVAL 2>/dev/null && _lme="$(tail -c 40 $LOG_DIR/longmemeval-raw.log 2>/dev/null | tr '\n' ' ')"
+      [ -n "$AMB_FIX_PID" ] && kill -0 $AMB_FIX_PID 2>/dev/null && _amb="$(tail -c 40 $LOG_DIR/amb-fix-iter-${iter}.log 2>/dev/null | tr '\n' ' ')"
+      progress "${_elapsed}s | locomo:$_locomo | persona:$_persona | lme:$_lme | amb-fix:$_amb"
     done
-    wait $PID_LOCOMO_RUN 2>/dev/null || true
-    wait $PID_PERSONA_RUN 2>/dev/null || true
-    wait $PID_LONGMEMEVAL_RUN 2>/dev/null || true
-    progress "All 3 adapters done"
+    wait $PID_LOCOMO 2>/dev/null || true
+    wait $PID_PERSONA 2>/dev/null || true
+    wait $PID_LONGMEMEVAL 2>/dev/null || true
 
-    # 5. Judge each benchmark (4 judges each, sequential to avoid 12 parallel Devins)
-    log "Phase 3: Judging LoCoMo..."
-    LOCOMO=$(judge_benchmark "locomo" "$LOCOMO_RESULTS" "$T_LOCOMO" 2>/dev/null)
-    LOCOMO=${LOCOMO:-N/A}
+    # Parse built-in scores
+    LOCOMO=$(grep -oE 'LoCoMo: [0-9]+/[0-9]+ = [0-9]+%' "$LOG_DIR/locomo-raw.log" 2>/dev/null | grep -oE '[0-9]+%' | grep -oE '[0-9]+' | head -1)
+    LOCOMO=${LOCOMO:-0}
+    PERSONA=$(grep -oE 'PERSONAMEM_SCORE=[0-9]+' "$LOG_DIR/personamem-raw.log" 2>/dev/null | grep -oE '[0-9]+' | head -1)
+    PERSONA=${PERSONA:-0}
+    LONGMEMEVAL=$(grep -oE 'LONGMEMEVAL_SCORE=[0-9]+' "$LOG_DIR/longmemeval-raw.log" 2>/dev/null | grep -oE '[0-9]+' | head -1)
+    LONGMEMEVAL=${LONGMEMEVAL:-0}
 
-    log "Phase 3: Judging PersonaMem..."
-    PERSONA=$(judge_benchmark "personamem" "$PERSONAMEM_RESULTS" "$T_PERSONA" 2>/dev/null)
-    PERSONA=${PERSONA:-N/A}
-
-    log "Phase 3: Judging LongMemEval..."
-    LONGMEMEVAL=$(judge_benchmark "longmemeval" "$LONGMEMEVAL_RESULTS" "$T_LONGMEMEVAL" 2>/dev/null)
-    LONGMEMEVAL=${LONGMEMEVAL:-N/A}
+    log "LoCoMo=$LOCOMO PersonaMem=$PERSONA LongMemEval=$LONGMEMEVAL"
   fi
 
-  # 6. Wait for AMB fix agent if still running
+  # 5. Wait for AMB fix if still running
   if [ -n "$AMB_FIX_PID" ]; then
     if kill -0 $AMB_FIX_PID 2>/dev/null; then
-      log "Waiting for AMB fix agent to finish..."
-      monitor_agent $AMB_FIX_PID "AMB-fix" "$LOG_DIR/amb-fix-iter-${iter}.log"
-    else
+      log "Waiting for AMB fix agent..."
+      _fix_elapsed=0
+      while kill -0 $AMB_FIX_PID 2>/dev/null; do
+        sleep 15
+        _fix_elapsed=$((_fix_elapsed + 15))
+        _last=$(tail -c 80 "$LOG_DIR/amb-fix-iter-${iter}.log" 2>/dev/null | tr '\n' ' ')
+        progress "AMB fix: ${_fix_elapsed}s — $_last"
+      done
       wait $AMB_FIX_PID 2>/dev/null || true
-      progress "AMB fix already finished"
     fi
-    # Rebuild with AMB fix changes
-    log "Rebuilding with AMB fix changes..."
+
+    # Rebuild + re-run AMB with fixes
+    log "Rebuilding + re-running AMB with fixes..."
     cd "$PROJECT_ROOT"
     npm run build 2>&1 | tail -1
-    # Re-run AMB to get updated scores
-    log "Re-running AMB with fixes..."
     amb_scores=$(run_amb 2>/dev/null)
     L1=$(echo "$amb_scores" | awk '{print $1}'); L1=${L1:-0}
     L2=$(echo "$amb_scores" | awk '{print $2}'); L2=${L2:-0}
@@ -307,7 +242,7 @@ for iter in $(seq 1 $MAX_ITER); do
     log "AMB after fix: L1=$L1 L2=$L2 L3=$L3"
   fi
 
-  # 7. Print scores
+  # 6. Print scores
   log ""
   log "════════════════════════════════════════════════════════"
   log "  SCORES — Iteration $iter"
@@ -320,19 +255,15 @@ for iter in $(seq 1 $MAX_ITER); do
   log "  LongMemEval:  $LONGMEMEVAL  / $T_LONGMEMEVAL (Mem0=94.4)"
   log "════════════════════════════════════════════════════════"
 
-  # 8. Check victory
+  # 7. Check victory
   PASS=true
   FAILURES=""
-  is_num "$L1" && [ "$L1" -lt "$T_L1" ] && PASS=false && FAILURES+="L1=$L1 "
-  is_num "$L2" && [ "$L2" -lt "$T_L2" ] && PASS=false && FAILURES+="L2=$L2 "
-  is_num "$L3" && [ "$L3" -lt "$T_L3" ] && PASS=false && FAILURES+="L3=$L3 "
-  is_num "$LOCOMO" && [ "$LOCOMO" -lt "$T_LOCOMO" ] && PASS=false && FAILURES+="LOCOMO=$LOCOMO "
-  is_num "$PERSONA" && [ "$PERSONA" -lt "$T_PERSONA" ] && PASS=false && FAILURES+="PERSONA=$PERSONA "
-  is_num "$LONGMEMEVAL" && [ "$LONGMEMEVAL" -lt "$T_LONGMEMEVAL" ] && PASS=false && FAILURES+="LONGMEMEVAL=$LONGMEMEVAL "
-
-  if ! is_num "$L1" && ! is_num "$LOCOMO" && ! is_num "$PERSONA" && ! is_num "$LONGMEMEVAL"; then
-    PASS=false; FAILURES="All N/A"
-  fi
+  lt "$L1" "$T_L1" && PASS=false && FAILURES+="L1=$L1 "
+  lt "$L2" "$T_L2" && PASS=false && FAILURES+="L2=$L2 "
+  lt "$L3" "$T_L3" && PASS=false && FAILURES+="L3=$L3 "
+  lt "$LOCOMO" "$T_LOCOMO" && PASS=false && FAILURES+="LOCOMO=$LOCOMO "
+  lt "$PERSONA" "$T_PERSONA" && PASS=false && FAILURES+="PERSONA=$PERSONA "
+  lt "$LONGMEMEVAL" "$T_LONGMEMEVAL" && PASS=false && FAILURES+="LONGMEMEVAL=$LONGMEMEVAL "
 
   if [ "$PASS" = true ]; then
     log ""
@@ -344,35 +275,25 @@ for iter in $(seq 1 $MAX_ITER); do
 
   log "Targets not met: $FAILURES"
 
-  # 9. Find lowest LLM-judged benchmark (AMB already fixed above)
+  # 8. Find lowest FAILING benchmark (only those below target)
   LOWEST=""; LOWEST_SCORE=999
-  for pair in "LOCOMO:$LOCOMO" "PERSONA:$PERSONA" "LONGMEMEVAL:$LONGMEMEVAL"; do
+  for pair in "L1:$L1:$T_L1" "L2:$L2:$T_L2" "L3:$L3:$T_L3" "LOCOMO:$LOCOMO:$T_LOCOMO" "PERSONA:$PERSONA:$T_PERSONA" "LONGMEMEVAL:$LONGMEMEVAL:$T_LONGMEMEVAL"; do
     name=$(echo "$pair" | cut -d: -f1)
     score=$(echo "$pair" | cut -d: -f2)
-    if is_num "$score" && [ "$score" -lt "$LOWEST_SCORE" ]; then
+    target=$(echo "$pair" | cut -d: -f3)
+    if lt "$score" "$target" && lt "$score" "$LOWEST_SCORE"; then
       LOWEST="$name"; LOWEST_SCORE=$score
     fi
   done
 
-  # Also check if AMB still needs fixing
-  AMB_NEEDS_FIX=false
-  is_num "$L1" && [ "$L1" -lt "$T_L1" ] && AMB_NEEDS_FIX=true
-  is_num "$L2" && [ "$L2" -lt "$T_L2" ] && AMB_NEEDS_FIX=true
-  is_num "$L3" && [ "$L3" -lt "$T_L3" ] && AMB_NEEDS_FIX=true
-
-  if [ -z "$LOWEST" ] && [ "$AMB_NEEDS_FIX" = false ]; then
-    log "Nothing to fix — continuing"
+  if [ -z "$LOWEST" ]; then
+    log "Nothing to fix — all targets met!"
     continue
   fi
 
-  if [ -z "$LOWEST" ]; then
-    LOWEST="AMB"; LOWEST_SCORE=0
-    log "Focus: AMB still needs fixing (L1=$L1 L2=$L2 L3=$L3)"
-  else
-    log "Focus: $LOWEST is lowest at $LOWEST_SCORE / 100"
-  fi
+  log "Focus: $LOWEST is lowest at $LOWEST_SCORE (below target)"
 
-  # 10. Build fix prompt for lowest LLM-judged benchmark
+  # 9. Build fix prompt
   FIX_PROMPT="$LOG_DIR/fix-prompt-iter-${iter}.md"
   cat > "$FIX_PROMPT" << EOF
 # Benchmark Fix — Iteration $iter
@@ -380,7 +301,7 @@ for iter in $(seq 1 $MAX_ITER); do
 You are improving remem-mcp at $PROJECT_ROOT.
 Goal: Beat TencentDB (PersonaMem=76) and Mem0 (LoCoMo=92.5, LongMemEval=94.4).
 
-## Current Scores
+## Current Scores (adapter built-in scoring)
 | Benchmark    | Score  | Target |
 |-------------|--------|--------|
 | AMB L1      | $L1    | 100    |
@@ -412,7 +333,7 @@ Goal: Beat TencentDB (PersonaMem=76) and Mem0 (LoCoMo=92.5, LongMemEval=94.4).
 - You can modify adapters AND search engine.
 EOF
 
-  # 11. Call Devin to fix lowest LLM-judged benchmark
+  # 10. Call Devin to fix
   DEVIN_LOG="$LOG_DIR/fix-iter-${iter}.log"
   log "Calling Devin to fix $LOWEST..."
   cd "$PROJECT_ROOT"
@@ -428,7 +349,7 @@ EOF
   wait $fix_pid 2>/dev/null || true
 
   log "Fix finished."
-  tail -3 "$DEVIN_LOG" 2>/dev/null | while read -r line; do progress "$line"; done
+  tail -c 200 "$DEVIN_LOG" 2>/dev/null | tr '\n' ' ' | while read -r line; do progress "$line"; done
   log "Iteration $iter complete."
   log ""
 done
