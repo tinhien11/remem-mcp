@@ -281,6 +281,10 @@ export class SQLiteBackend implements StorageBackend {
       this.migrateV6ToV7();
       this.writeSchemaVersion(7);
     }
+    if (currentVersion < 8) {
+      this.migrateV7ToV8();
+      this.writeSchemaVersion(8);
+    }
   }
 
   /** Backup the database to a .bak file. */
@@ -475,7 +479,7 @@ export class SQLiteBackend implements StorageBackend {
     console.error("[remem-mcp] Migrated schema v5 → v6 (CodeGraph + Wiki tables)");
   }
 
-  /** Migrate schema v6 → v7: add access tracking + Bayesian confidence + correction outcome columns. */
+  /** Migrate schema v6 → v7: add access tracking + Bayesian confidence columns. */
   private migrateV6ToV7(): void {
     const cols = this.db.prepare("PRAGMA table_info(captures)").all() as { name: string }[];
     const hasAccessCount = cols.some((c) => c.name === "access_count");
@@ -486,6 +490,12 @@ export class SQLiteBackend implements StorageBackend {
       this.db.exec("ALTER TABLE captures ADD COLUMN corrections INTEGER NOT NULL DEFAULT 0");
       console.error("[remem-mcp] Added access tracking + Bayesian confidence columns");
     }
+    console.error("[remem-mcp] Migrated schema v6 → v7 (access tracking + confidence)");
+  }
+
+  /** Migrate schema v7 → v8: add correction outcome tracking columns. */
+  private migrateV7ToV8(): void {
+    const cols = this.db.prepare("PRAGMA table_info(captures)").all() as { name: string }[];
     const hasRetrievedCount = cols.some((c) => c.name === "retrieved_count");
     if (!hasRetrievedCount) {
       this.db.exec("ALTER TABLE captures ADD COLUMN retrieved_count INTEGER NOT NULL DEFAULT 0");
@@ -494,7 +504,7 @@ export class SQLiteBackend implements StorageBackend {
       this.db.exec("ALTER TABLE captures ADD COLUMN last_outcome TEXT");
       console.error("[remem-mcp] Added correction outcome tracking columns");
     }
-    console.error("[remem-mcp] Migrated schema v6 → v7 (access tracking + confidence + outcomes)");
+    console.error("[remem-mcp] Migrated schema v7 → v8 (correction outcome tracking)");
   }
 
   async put(entry: CaptureEntry): Promise<void> {
