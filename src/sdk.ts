@@ -17,7 +17,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { LocalEmbedder } from "./embedding/local.js";
 import { redact } from "./security/redactor.js";
-import { SQLiteBackend } from "./storage/sqlite.js";
+import { SQLiteBackend, stripQueryProperNouns } from "./storage/sqlite.js";
 import type {
   CaptureEntry,
   CaptureType,
@@ -104,7 +104,11 @@ export class Memory {
 
     let queryEmbedding: number[] | null = null;
     if (mode === "hybrid" || mode === "vector") {
-      queryEmbedding = await this.embedder.embed(query);
+      // Use stripped query (proper nouns removed) for vector embedding when
+      // proper nouns would dominate. This ensures "what editor does Tin use"
+      // embeds as "editor use" — matching Neovim, not the "I am Tin" intro.
+      const stripped = stripQueryProperNouns(query);
+      queryEmbedding = await this.embedder.embed(stripped || query);
     }
 
     return this.storage.search(query, queryEmbedding, {
@@ -125,7 +129,8 @@ export class Memory {
 
     let queryEmbedding: number[] | null = null;
     if (mode === "hybrid" || mode === "vector") {
-      queryEmbedding = await this.embedder.embed(query);
+      const stripped = stripQueryProperNouns(query);
+      queryEmbedding = await this.embedder.embed(stripped || query);
     }
 
     return this.storage.search(query, queryEmbedding, {

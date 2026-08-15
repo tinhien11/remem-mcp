@@ -26,6 +26,128 @@ import type {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+/** FTS stopword set — shared between BM25 query building and proper-noun stripping. */
+const FTS_STOPWORDS_SET = new Set([
+  "the",
+  "a",
+  "an",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "have",
+  "has",
+  "had",
+  "do",
+  "does",
+  "did",
+  "will",
+  "would",
+  "could",
+  "should",
+  "may",
+  "might",
+  "must",
+  "can",
+  "shall",
+  "i",
+  "you",
+  "he",
+  "she",
+  "it",
+  "we",
+  "they",
+  "me",
+  "him",
+  "her",
+  "us",
+  "them",
+  "my",
+  "your",
+  "his",
+  "its",
+  "our",
+  "their",
+  "this",
+  "that",
+  "these",
+  "those",
+  "and",
+  "or",
+  "but",
+  "not",
+  "no",
+  "nor",
+  "so",
+  "yet",
+  "in",
+  "on",
+  "at",
+  "to",
+  "for",
+  "of",
+  "with",
+  "by",
+  "from",
+  "as",
+  "about",
+  "into",
+  "through",
+  "during",
+  "before",
+  "after",
+  "what",
+  "when",
+  "where",
+  "which",
+  "who",
+  "how",
+  "why",
+  "since",
+  "because",
+  "if",
+  "then",
+  "than",
+]);
+
+/**
+ * Strip proper nouns (person/place names) from a query, leaving only content words.
+ * Returns the stripped query string, or empty string if nothing remains after stripping.
+ * Used by both BM25 (escapeFtsQuery) and vector search (SDK) to ensure proper nouns
+ * don't dominate search results when they're rare tokens.
+ *
+ * Only strips words that look like person names: first letter uppercase, rest lowercase.
+ * Keeps acronyms (all-caps: API, REST, CI) and mixed-case technical terms (GraphQL,
+ * PostgreSQL, JavaScript) — these carry semantic meaning that should be preserved.
+ *
+ * E.g. "what editor does Tin use" → "editor use"
+ *      "API design GraphQL or REST" → "API design GraphQL or REST" (no change)
+ *      "When did Caroline go to the LGBTQ support group" → "go LGBTQ support group"
+ */
+export function stripQueryProperNouns(query: string): string {
+  const tokens = query.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return "";
+  const filtered = tokens.filter((t) => t.length <= 1 || !FTS_STOPWORDS_SET.has(t.toLowerCase()));
+  // Strip person-name-like words: first char uppercase, rest lowercase (length > 1).
+  // Keep acronyms (all-caps), mixed-case (GraphQL), and single-char tokens.
+  const isPersonName = (t: string): boolean => {
+    if (t.length <= 1) return false;
+    if (t[0] !== t[0].toUpperCase()) return false;
+    if (t[0] === t[0].toUpperCase() && t.slice(1) === t.slice(1).toLowerCase()) return true;
+    return false;
+  };
+  const noProperNouns = filtered.filter(
+    (t) => t.length <= 1 || !isPersonName(t) || FTS_STOPWORDS_SET.has(t.toLowerCase()),
+  );
+  // Only strip if ≥2 content words remain (preserve single-word queries)
+  if (noProperNouns.length >= 2) return noProperNouns.join(" ");
+  if (noProperNouns.length > 0) return noProperNouns.join(" ");
+  return filtered.length > 0 ? filtered.join(" ") : tokens.join(" ");
+}
+
 /** Current schema version. */
 const CURRENT_SCHEMA_VERSION = 6;
 
@@ -859,119 +981,12 @@ export class SQLiteBackend implements StorageBackend {
    *  filters out BM25 noise.
    */
   private escapeFtsQuery(query: string): string {
-    const FTS_STOPWORDS = new Set([
-      "the",
-      "a",
-      "an",
-      "is",
-      "are",
-      "was",
-      "were",
-      "be",
-      "been",
-      "being",
-      "have",
-      "has",
-      "had",
-      "do",
-      "does",
-      "did",
-      "will",
-      "would",
-      "could",
-      "should",
-      "may",
-      "might",
-      "must",
-      "can",
-      "shall",
-      "i",
-      "you",
-      "he",
-      "she",
-      "it",
-      "we",
-      "they",
-      "me",
-      "him",
-      "her",
-      "us",
-      "them",
-      "my",
-      "your",
-      "his",
-      "its",
-      "our",
-      "their",
-      "this",
-      "that",
-      "these",
-      "those",
-      "and",
-      "or",
-      "but",
-      "not",
-      "no",
-      "nor",
-      "so",
-      "yet",
-      "in",
-      "on",
-      "at",
-      "to",
-      "for",
-      "of",
-      "with",
-      "by",
-      "from",
-      "as",
-      "about",
-      "into",
-      "through",
-      "during",
-      "before",
-      "after",
-      "what",
-      "when",
-      "where",
-      "which",
-      "who",
-      "how",
-      "why",
-      "since",
-      "because",
-      "if",
-      "then",
-      "than",
-    ]);
-    const tokens = query.trim().split(/\s+/).filter(Boolean);
-    if (tokens.length === 0) return "";
-    // Remove stopwords to reduce noise, but keep all tokens if none remain
-    // (e.g., a query that is entirely stopwords should still search).
-    // Single-character tokens are never stopworded — they are often meaningful
-    // identifiers (e.g. "configuration setting I", "plan B") and stopwording
-    // them strips the only distinguishing term from the query.
-    const filtered = tokens.filter((t) => t.length <= 1 || !FTS_STOPWORDS.has(t.toLowerCase()));
-    // Remove proper nouns (capitalized words) from BM25 query to prevent
-    // a name match from dominating over semantic content. E.g. "what editor
-    // does Tin use" → BM25 queries "editor use" instead of "editor Tin use",
-    // so the Neovim capture ranks higher than the "I am Tin" intro.
-    // Vector search still uses the full query for semantic matching.
-    // Only strip proper nouns when there are ≥2 other content words remaining,
-    // so single-word queries (e.g. "Before") still match.
-    const noProperNouns = filtered.filter(
-      (t) => t.length <= 1 || t[0] !== t[0].toUpperCase() || FTS_STOPWORDS.has(t.toLowerCase()),
-    );
-    // Fallback chain: noProperNouns (≥2) → noProperNouns (>0) → filtered → tokens
-    const finalTokens =
-      noProperNouns.length >= 2
-        ? noProperNouns
-        : noProperNouns.length > 0
-          ? noProperNouns
-          : filtered.length > 0
-            ? filtered
-            : tokens;
-    return finalTokens.map((t) => `"${t.replace(/"/g, '""')}"`).join(" OR ");
+    // Use the shared stripQueryProperNouns to get content words (stopwords + proper nouns removed).
+    // Then format as FTS5 OR query.
+    const stripped = stripQueryProperNouns(query);
+    if (!stripped) return "";
+    const tokens = stripped.split(/\s+/).filter(Boolean);
+    return tokens.map((t) => `"${t.replace(/"/g, '""')}"`).join(" OR ");
   }
 
   async delete(id: string): Promise<DeleteResult> {

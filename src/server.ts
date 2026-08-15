@@ -21,6 +21,7 @@ import type { PipelineContext, PipelineStage } from "./pipeline/types.js";
 import { AuditLogger } from "./security/audit.js";
 import { checkContentLength, enforceQuota } from "./security/quota.js";
 import { redact } from "./security/redactor.js";
+import { stripQueryProperNouns } from "./storage/sqlite.js";
 import type {
   CaptureEntry,
   CaptureMessage,
@@ -1106,7 +1107,11 @@ async function handleRecall(
   let vectorDegraded = false;
   if (mode === "hybrid" || mode === "vector") {
     try {
-      queryEmbedding = await opts.embedder.embed(query);
+      // Use stripped query (proper nouns removed) for vector embedding.
+      // This prevents a rare proper noun (e.g. "Tin") from dominating vector
+      // similarity over content words (e.g. "editor use" → Neovim).
+      const stripped = stripQueryProperNouns(query);
+      queryEmbedding = await opts.embedder.embed(stripped || query);
     } catch (err) {
       console.error(`[remem-mcp] Embedding failed: ${err}`);
       vectorDegraded = true;
@@ -1488,7 +1493,8 @@ async function handleSearch(
   let vectorDegraded = false;
   if (mode === "hybrid" || mode === "vector") {
     try {
-      queryEmbedding = await opts.embedder.embed(query);
+      const stripped = stripQueryProperNouns(query);
+      queryEmbedding = await opts.embedder.embed(stripped || query);
     } catch (err) {
       console.error(`[remem-mcp] Embedding failed: ${err}`);
       vectorDegraded = true;
