@@ -29,8 +29,8 @@ RUN npm prune --omit=dev
 RUN apt-get purge -y python3 make g++ && apt-get autoremove -y
 
 # Default data directory
-ENV TDAI_DB_PATH=/data/memory.db
-ENV TDAI_AUDIT_LOG_PATH=/data/audit.jsonl
+ENV REMEM_DB_PATH=/data/memory.db
+ENV REMEM_AUDIT_LOG_PATH=/data/audit.jsonl
 VOLUME /data
 
 # Expose viewer port

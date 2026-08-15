@@ -135,7 +135,7 @@ sleep 2
 
 # Real hook-capture (Stop hook)
 echo '{"session_id":"handoff-3session-s1","cwd":"/Users/tin/a/remem-mcp","transcript_path":"/dev/null"}' | \
-  TDAI_DB_PATH="$DB" node dist/index.js hook-capture 2>&1 | \
+  REMEM_DB_PATH="$DB" node dist/index.js hook-capture 2>&1 | \
   python3 -c "
 import json,sys
 try:
@@ -179,7 +179,7 @@ sleep 2
 
 # Real hook-recall
 echo '{"session_id":"handoff-3session-s2","cwd":"/Users/tin/a/remem-mcp"}' | \
-  TDAI_DB_PATH="$DB" node dist/index.js hook-recall 2>&1 | \
+  REMEM_DB_PATH="$DB" node dist/index.js hook-recall 2>&1 | \
   python3 -c "
 import json,sys
 d = json.load(sys.stdin)
@@ -300,7 +300,7 @@ echo ""
 sleep 2
 
 echo '{"session_id":"handoff-3session-s3","cwd":"/Users/tin/a/remem-mcp"}' | \
-  TDAI_DB_PATH="$DB" node dist/index.js hook-recall 2>&1 | \
+  REMEM_DB_PATH="$DB" node dist/index.js hook-recall 2>&1 | \
   python3 -c "
 import json,sys
 d = json.load(sys.stdin)

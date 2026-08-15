@@ -110,13 +110,13 @@ Pass `team_id`, `agent_id`, `user_id`, or `task_id` to isolate memory between te
 
 ## Global + project memory
 
-Set `TDAI_GLOBAL_SESSION_KEY=global` in MCP config to search both global (cross-project) and project memory. Global results rank first.
+Set `REMEM_GLOBAL_SESSION_KEY=global` in MCP config to search both global (cross-project) and project memory. Global results rank first.
 
 ## CLI commands
 
 ```bash
 npx remem-mcp errors              # Error learning dashboard
-npx remem-mcp extract --limit 50  # L1 atom extraction (needs TDAI_LLM_API_KEY)
+npx remem-mcp extract --limit 50  # L1 atom extraction (needs REMEM_LLM_API_KEY)
 npx remem-mcp sync-export         # Export memory for team (commit to repo)
 npx remem-mcp sync-import         # Import teammate's memory
 ```

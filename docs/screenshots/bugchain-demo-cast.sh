@@ -140,7 +140,7 @@ echo ""
 sleep 2
 
 echo '{"session_id":"react-demo-s2","cwd":"/Users/dev/react"}' | \
-  TDAI_DB_PATH="$DB" node dist/index.js hook-recall 2>&1 | \
+  REMEM_DB_PATH="$DB" node dist/index.js hook-recall 2>&1 | \
   python3 -c "
 import json,sys
 d = json.load(sys.stdin)
@@ -231,7 +231,7 @@ echo ""
 sleep 2
 
 echo '{"session_id":"react-demo-s3","cwd":"/Users/dev/react"}' | \
-  TDAI_DB_PATH="$DB" node dist/index.js hook-recall 2>&1 | \
+  REMEM_DB_PATH="$DB" node dist/index.js hook-recall 2>&1 | \
   python3 -c "
 import json,sys
 d = json.load(sys.stdin)

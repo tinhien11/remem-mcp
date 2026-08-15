@@ -44,7 +44,7 @@ if (!existsSync(distIndex)) {
 
 const child = spawn(process.execPath, [distIndex, "setup"], {
   stdio: "inherit",
-  env: { ...process.env, TDAI_QUIET: "1" },
+  env: { ...process.env, REMEM_QUIET: "1" },
 });
 
 child.on("error", () => process.exit(0)); // Don't block npm install

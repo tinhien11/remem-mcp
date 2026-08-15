@@ -5,13 +5,13 @@ services:
     volumes:
       - remem-data:/data
     environment:
-      - TDAI_DB_PATH=/data/memory.db
-      - TDAI_AUDIT_LOG_PATH=/data/audit.jsonl
+      - REMEM_DB_PATH=/data/memory.db
+      - REMEM_AUDIT_LOG_PATH=/data/audit.jsonl
       # Uncomment to enable LLM pipeline features
-      # - TDAI_LLM_API_KEY=sk-...
-      # - TDAI_LLM_BASE_URL=https://api.openai.com/v1
-      # - TDAI_LLM_MODEL=gpt-4o-mini
-      # - TDAI_PIPELINE=atom
+      # - REMEM_LLM_API_KEY=sk-...
+      # - REMEM_LLM_BASE_URL=https://api.openai.com/v1
+      # - REMEM_LLM_MODEL=gpt-4o-mini
+      # - REMEM_PIPELINE=atom
     # For MCP stdio: stdin_open + tty
     stdin_open: true
     tty: true
