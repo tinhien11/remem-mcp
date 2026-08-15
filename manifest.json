@@ -1,10 +1,10 @@
 {
   "manifest_version": "0.3",
   "name": "remem-mcp",
-  "display_name": "remem-mcp — Local-first MCP Memory Server",
-  "version": "0.2.0",
-  "description": "Local-first MCP memory server for coding agents. No API key, no cloud — just SQLite + FTS5 + sqlite-vec on your machine.",
-  "long_description": "remem-mcp gives coding agents persistent memory across sessions.\n\n**6 MCP tools:**\n- `recall` — hybrid search (BM25 + vector) across past captures\n- `capture` — store decisions, learnings, errors, fixes\n- `search` — filtered search by type, tags, date range\n- `forget` — delete captures (requires confirm)\n- `handoff` — structured context packet for the next session\n- `adr` — Architecture Decision Records with context, alternatives, consequences\n\n**Key features:**\n- Content-hash dedup — no duplicate captures\n- Memory decay — 30-day half-life scoring\n- Team-shared memory — commit `.remem-mcp/memory-export.json` to your repo\n- Lifecycle hooks — SessionStart auto-recalls, Stop reminds to handoff\n- Web viewer on port 7331\n- Works with Claude Code, Cursor, Devin CLI, and any MCP-compatible agent\n- All data stays local",
+  "display_name": "remem-mcp — Local-first MCP Memory + CodeGraph + Wiki",
+  "version": "0.5.17",
+  "description": "Long-term memory for AI coding agents. Memory + CodeGraph + Wiki in one SQLite file. Auto-recall, auto-capture, no API key, no cloud.",
+  "long_description": "remem-mcp gives coding agents persistent memory across sessions.\n\n**Memory tools:**\n- `recall` — hybrid search (BM25 + vector) across past captures\n- `capture` — store decisions, learnings, errors, fixes\n- `search` — filtered search by type, tags, date range\n- `forget` — delete captures (requires confirm)\n- `handoff` — structured context packet for the next session\n- `adr` — Architecture Decision Records\n- `related` — find related captures\n- `resolve` — mark captures as superseded\n- `update` — edit existing captures\n- `consolidate` — merge duplicate captures\n\n**CodeGraph tools:**\n- `codegraph_index` — index source files with Tree-sitter\n- `codegraph_search` — find symbols (auto-indexes if empty)\n- `codegraph_callers` — who calls this symbol?\n- `codegraph_callees` — what does this symbol call?\n- `codegraph_impact` — what breaks if I change this?\n- `codegraph_list` — list indexed symbols\n\n**Wiki tools:**\n- `wiki_ingest` — ingest docs into the wiki\n- `wiki_search` — search the wiki\n- `wiki_get` — get a wiki page\n- `wiki_outdated` — check if wiki is stale\n\n**Knowledge & Skills:**\n- `knowledge_create/get/list/delete`\n- `skill_get/list/search`\n\n**Key features:**\n- Content-hash dedup — no duplicate captures\n- Memory decay — 30-day half-life scoring\n- Team-shared memory — commit `.remem-mcp/memory-export.jsonl` to your repo\n- Lifecycle hooks — SessionStart auto-recalls, Stop reminds to handoff\n- Web viewer on port 7331\n- Works with Claude Code, Cursor, Devin CLI, Codex, and any MCP-compatible agent\n- All data stays local — one SQLite file",
   "author": {
     "name": "tin",
     "url": "https://github.com/tinhien11"
@@ -26,30 +26,33 @@
     }
   },
   "tools": [
-    {
-      "name": "recall",
-      "description": "Hybrid search (BM25 + vector) across past captures"
-    },
-    {
-      "name": "capture",
-      "description": "Store decisions, learnings, errors, fixes as memory"
-    },
-    {
-      "name": "search",
-      "description": "Filtered search by type, tags, date range"
-    },
-    {
-      "name": "forget",
-      "description": "Delete captures (requires confirmation)"
-    },
-    {
-      "name": "handoff",
-      "description": "Structured context packet for the next session"
-    },
-    {
-      "name": "adr",
-      "description": "Architecture Decision Records with context, alternatives, consequences"
-    }
+    { "name": "recall", "description": "Hybrid search (BM25 + vector) across past captures" },
+    { "name": "capture", "description": "Store decisions, learnings, errors, fixes as memory" },
+    { "name": "search", "description": "Filtered search by type, tags, date range" },
+    { "name": "forget", "description": "Delete captures (requires confirmation)" },
+    { "name": "handoff", "description": "Structured context packet for the next session" },
+    { "name": "adr", "description": "Architecture Decision Records with context, alternatives, consequences" },
+    { "name": "related", "description": "Find related captures" },
+    { "name": "resolve", "description": "Mark captures as superseded or corrected" },
+    { "name": "update", "description": "Edit existing captures" },
+    { "name": "consolidate", "description": "Merge duplicate captures" },
+    { "name": "codegraph_index", "description": "Index source files with Tree-sitter" },
+    { "name": "codegraph_search", "description": "Find symbols (auto-indexes if empty)" },
+    { "name": "codegraph_callers", "description": "Find callers of a symbol" },
+    { "name": "codegraph_callees", "description": "Find callees of a symbol" },
+    { "name": "codegraph_impact", "description": "Impact analysis — what breaks if I change this?" },
+    { "name": "codegraph_list", "description": "List indexed symbols" },
+    { "name": "wiki_ingest", "description": "Ingest docs into the wiki" },
+    { "name": "wiki_search", "description": "Search the wiki" },
+    { "name": "wiki_get", "description": "Get a wiki page" },
+    { "name": "wiki_outdated", "description": "Check if wiki is stale" },
+    { "name": "knowledge_create", "description": "Create a knowledge entry" },
+    { "name": "knowledge_get", "description": "Get a knowledge entry" },
+    { "name": "knowledge_list", "description": "List knowledge entries" },
+    { "name": "knowledge_delete", "description": "Delete a knowledge entry" },
+    { "name": "skill_get", "description": "Get a skill" },
+    { "name": "skill_list", "description": "List skills" },
+    { "name": "skill_search", "description": "Search skills" }
   ],
   "tools_generated": false,
   "keywords": [
@@ -61,7 +64,12 @@
     "claude-code",
     "cursor",
     "devin",
-    "model-context-protocol"
+    "codex",
+    "codegraph",
+    "wiki",
+    "model-context-protocol",
+    "agent-memory",
+    "tree-sitter"
   ],
   "license": "MIT",
   "compatibility": {

@@ -1,17 +1,19 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.tinhien11/remem-mcp",
-  "description": "Local-first MCP memory server for coding agents. No API key, no cloud. SQLite + FTS5 + sqlite-vec.",
+  "title": "remem-mcp — Local-first MCP Memory + CodeGraph + Wiki",
+  "description": "Long-term memory for AI coding agents. Memory + CodeGraph + Wiki in one SQLite file. Auto-recall, auto-capture, no API key, no cloud.",
   "repository": {
     "url": "https://github.com/tinhien11/remem-mcp",
     "source": "github"
   },
-  "version": "0.4.0",
+  "websiteUrl": "https://github.com/tinhien11/remem-mcp#readme",
+  "version": "0.5.17",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "remem-mcp",
-      "version": "0.4.0",
+      "version": "0.5.17",
       "transport": {
         "type": "stdio"
       }
