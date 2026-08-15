@@ -238,6 +238,30 @@ export interface StorageBackend {
   /** Set the trust state of a capture (e.g., candidate → verified). */
   setTrustState(id: string, state: TrustState): Promise<number>;
 
+  /** Increment the access count for captures (Mem0-style access tracking). */
+  recordAccess(ids: string[]): void;
+
+  /** Increment the confirmation count for a capture (Bayesian confidence). */
+  confirmCapture(id: string): void;
+
+  /** Increment the correction count for a capture (Bayesian confidence). */
+  correctCapture(id: string): void;
+
+  /** Increment the retrieved count for a correction capture. */
+  incrementRetrievedCount(id: string): void;
+
+  /** Record the outcome of a correction (heeded or recurred). */
+  recordCorrectionOutcome(id: string, outcome: "heeded" | "recurred"): void;
+
+  /** Get correction learning KPIs (precision, heed rate, noise/high-signal candidates). */
+  getCorrectionKPIs(): {
+    totalCorrections: number;
+    avgPrecision: number;
+    heedRate: number;
+    noiseCandidates: { id: string; precision: number; content: string }[];
+    highSignalCandidates: { id: string; precision: number; content: string }[];
+  };
+
   // L1 atoms
   putAtom(atom: AtomEntry): Promise<void>;
   listAtoms(opts: {

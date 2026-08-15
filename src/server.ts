@@ -874,7 +874,8 @@ const TOOLS: Tool[] = [
     description:
       "Find and merge duplicate or near-duplicate memories. " +
       "Use this when you suspect redundant captures (e.g. same decision captured twice). " +
-      "Returns groups of similar captures. Set confirm=true to merge them.",
+      "Returns groups of similar captures. Set confirm=true to merge them. " +
+      "Use batch_size to limit how many captures are processed in one call (cost control).",
     inputSchema: {
       type: "object",
       properties: {
@@ -892,6 +893,13 @@ const TOOLS: Tool[] = [
           type: "boolean",
           default: false,
           description: "Set to true to merge duplicates. Without confirm, returns candidates only.",
+        },
+        batch_size: {
+          type: "integer",
+          default: 0,
+          description:
+            "Maximum captures to process in this batch. 0 = all (default). " +
+            "Use for incremental consolidation on large databases.",
         },
       },
     },
@@ -1004,6 +1012,65 @@ const TOOLS: Tool[] = [
       properties: {},
     },
   },
+  {
+    name: "session_start",
+    description:
+      "Open a session and return recent context. Call this at the start of a multi-turn conversation " +
+      "to get a summary of recent captures and correction alignment metrics.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_key: {
+          type: "string",
+          description: "Session identifier. Default is hash(cwd).",
+        },
+        context_query: {
+          type: "string",
+          description: "Optional query to fetch relevant context for this session.",
+        },
+      },
+    },
+  },
+  {
+    name: "session_end",
+    description:
+      "Close a session and optionally capture a summary. Call this at the end of a conversation " +
+      "to record what was accomplished.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        summary: {
+          type: "string",
+          description: "Session summary to capture as a memory.",
+        },
+        tags: {
+          type: "array",
+          items: { type: "string" },
+          description: "Tags for the summary capture.",
+        },
+      },
+    },
+  },
+  {
+    name: "session_checkpoint",
+    description:
+      "Create a checkpoint of the current session state. Returns a checkpoint ID that can be " +
+      "used to resume later. Stores recent captures as a named snapshot.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Checkpoint name for easy reference.",
+        },
+        summary: {
+          type: "string",
+          description: "What was happening at this checkpoint.",
+        },
+      },
+      required: ["name"],
+    },
+  },
 ];
 
 /**
@@ -1026,6 +1093,9 @@ const CORE_TOOL_NAMES = new Set([
   "supersede",
   "record_outcome",
   "correction_kpis",
+  "session_start",
+  "session_end",
+  "session_checkpoint",
 ]);
 
 function getTools(): Tool[] {
@@ -1192,6 +1262,12 @@ export function createServer(opts: ServerOptions): Server {
         return handleRecordOutcome(args, opts);
       case "correction_kpis":
         return handleCorrectionKPIs(args, opts);
+      case "session_start":
+        return handleSessionStart(args, opts);
+      case "session_end":
+        return handleSessionEnd(args, opts);
+      case "session_checkpoint":
+        return handleSessionCheckpoint(args, opts);
       default:
         return {
           content: [{ type: "text", text: `Error: Unknown tool "${name}".` }],
@@ -2228,6 +2304,7 @@ async function handleConsolidate(
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
   const threshold = (args.threshold as number) ?? 0.75;
   const confirm = (args.confirm as boolean) ?? false;
+  const batchSize = (args.batch_size as number) ?? 0;
   const sessionKey = (args.session_key as string) ?? defaultSessionKey();
   const db = getDb(opts);
 
@@ -2239,6 +2316,10 @@ async function handleConsolidate(
     params.push(sessionKey);
   }
   sql += " ORDER BY created_at DESC";
+  if (batchSize > 0) {
+    sql += " LIMIT ?";
+    params.push(batchSize);
+  }
   const rows = db.prepare(sql).all(...params) as {
     id: string;
     content: string;
@@ -2289,7 +2370,7 @@ async function handleConsolidate(
       content: [
         {
           type: "text",
-          text: `No duplicates found (threshold: ${threshold}). ${rows.length} captures checked.`,
+          text: `No duplicates found (threshold: ${threshold}). ${rows.length} captures checked.${batchSize > 0 ? ` (batch_size: ${batchSize})` : ""}`,
         },
       ],
     };
@@ -2612,6 +2693,144 @@ async function handleCorrectionKPIs(
       {
         type: "text",
         text: JSON.stringify(kpis, null, 2),
+      },
+    ],
+  };
+}
+
+/** Handle the session_start tool — return recent context + correction alignment. */
+async function handleSessionStart(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  const sessionKey = (args.session_key as string) ?? defaultSessionKey();
+  const contextQuery = args.context_query as string | undefined;
+  const db = getDb(opts);
+
+  // Recent captures (last 5)
+  const recent = db
+    .prepare(
+      "SELECT id, type, content, tags, created_at FROM captures WHERE deleted_at IS NULL AND session_key = ? ORDER BY created_at DESC LIMIT 5",
+    )
+    .all(sessionKey) as { id: string; type: string; content: string; tags: string; created_at: number }[];
+
+  // Correction KPIs
+  const kpis = opts.storage.getCorrectionKPIs();
+
+  // Optional context query
+  let contextResults: string[] = [];
+  if (contextQuery) {
+    const results = await opts.storage.search(
+      contextQuery,
+      await opts.embedder.embed(contextQuery),
+      { limit: 3, offset: 0, mode: "hybrid", sessionKey },
+    );
+    contextResults = results.map(
+      (r) => `[${r.entry.type}] ${r.entry.content.slice(0, 100)}`,
+    );
+  }
+
+  const summary = {
+    sessionKey,
+    recentCaptures: recent.map((r) => ({
+      id: r.id,
+      type: r.type,
+      preview: r.content.slice(0, 80),
+      createdAt: new Date(r.created_at).toISOString(),
+    })),
+    correctionAlignment: {
+      totalCorrections: kpis.totalCorrections,
+      heedRate: kpis.heedRate,
+      alignment: kpis.totalCorrections > 0
+        ? `${Math.round(kpis.heedRate * 100)}% corrections heeded (${kpis.totalCorrections} total)`
+        : "No corrections recorded yet",
+    },
+    contextResults,
+  };
+
+  return {
+    content: [{ type: "text", text: JSON.stringify(summary, null, 2) }],
+  };
+}
+
+/** Handle the session_end tool — capture a summary if provided. */
+async function handleSessionEnd(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  const summary = args.summary as string | undefined;
+  const tags = (args.tags as string[]) ?? ["session-summary"];
+
+  if (!summary) {
+    return {
+      content: [{ type: "text", text: "Session ended. No summary provided." }],
+    };
+  }
+
+  // Capture the summary as a memory
+  const id = generateId();
+  const entry: CaptureEntry = {
+    id,
+    sessionKey: defaultSessionKey(),
+    agentId: detectAgentId(),
+    type: "task",
+    content: summary,
+    tags: [...tags, "session-end"],
+    createdAt: Date.now(),
+  };
+  await opts.storage.put(entry);
+  const embedding = await opts.embedder.embed(summary);
+  await opts.storage.putVector(id, embedding);
+
+  return {
+    content: [{ type: "text", text: `Session ended. Summary captured: ${id}` }],
+  };
+}
+
+/** Handle the session_checkpoint tool — create a named checkpoint. */
+async function handleSessionCheckpoint(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  const name = args.name as string;
+  const summary = (args.summary as string) ?? "";
+  const sessionKey = defaultSessionKey();
+  const db = getDb(opts);
+
+  // Get recent captures as checkpoint snapshot
+  const recent = db
+    .prepare(
+      "SELECT id, type, content, tags, created_at FROM captures WHERE deleted_at IS NULL AND session_key = ? ORDER BY created_at DESC LIMIT 20",
+    )
+    .all(sessionKey) as { id: string; type: string; content: string; tags: string; created_at: number }[];
+
+  // Store checkpoint as a capture with metadata
+  const checkpointId = generateId();
+  const checkpointContent = `Checkpoint: ${name}${summary ? ` — ${summary}` : ""}\n${recent.length} captures in snapshot.`;
+  const entry: CaptureEntry = {
+    id: checkpointId,
+    sessionKey,
+    agentId: detectAgentId(),
+    type: "task",
+    content: checkpointContent,
+    tags: ["checkpoint", name],
+    createdAt: Date.now(),
+    metadata: {
+      checkpointName: name,
+      summary,
+      captureIds: recent.map((r) => r.id),
+      captureCount: recent.length,
+    },
+  };
+  await opts.storage.put(entry);
+  const embedding = await opts.embedder.embed(checkpointContent);
+  await opts.storage.putVector(checkpointId, embedding);
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: `Checkpoint "${name}" created: ${checkpointId}. ${recent.length} captures snapshot. Recall with: recall("checkpoint ${name}")`,
       },
     ],
   };
