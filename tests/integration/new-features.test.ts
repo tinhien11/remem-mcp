@@ -356,3 +356,65 @@ describe("Supersession handling", () => {
     m.close();
   });
 });
+
+describe("Correction outcome tracking", () => {
+  it("recordCorrectionOutcome tracks heeded", async () => {
+    const m = new Memory({ dbPath: testDbPath });
+    const id = await m.capture("Fix: always use --no-verify for commits", "error", ["fix"]);
+    expect(id).not.toBeNull();
+
+    m["storage"].correctCapture(id!);
+    m["storage"].recordCorrectionOutcome(id!, "heeded");
+
+    const db = m["storage"].getDatabase();
+    const row = db.prepare("SELECT heeded_count, recurrence_count, last_outcome FROM captures WHERE id = ?").get(id) as { heeded_count: number; recurrence_count: number; last_outcome: string };
+    expect(row.heeded_count).toBe(1);
+    expect(row.recurrence_count).toBe(0);
+    expect(row.last_outcome).toBe("heeded");
+    m.close();
+  });
+
+  it("recordCorrectionOutcome tracks recurred", async () => {
+    const m = new Memory({ dbPath: testDbPath });
+    const id = await m.capture("Fix: check for null before accessing property", "error", ["fix"]);
+    expect(id).not.toBeNull();
+
+    m["storage"].correctCapture(id!);
+    m["storage"].recordCorrectionOutcome(id!, "recurred");
+
+    const db = m["storage"].getDatabase();
+    const row = db.prepare("SELECT heeded_count, recurrence_count, last_outcome FROM captures WHERE id = ?").get(id) as { heeded_count: number; recurrence_count: number; last_outcome: string };
+    expect(row.heeded_count).toBe(0);
+    expect(row.recurrence_count).toBe(1);
+    expect(row.last_outcome).toBe("recurred");
+    m.close();
+  });
+
+  it("getCorrectionKPIs returns metrics", async () => {
+    const m = new Memory({ dbPath: testDbPath });
+    // Create 3 corrections with different outcomes
+    const id1 = await m.capture("Fix A: use const instead of let", "error", ["fix"]);
+    const id2 = await m.capture("Fix B: handle async errors", "error", ["fix"]);
+    const id3 = await m.capture("Fix C: check array bounds", "error", ["fix"]);
+
+    m["storage"].correctCapture(id1!);
+    m["storage"].recordCorrectionOutcome(id1!, "heeded");
+    m["storage"].recordCorrectionOutcome(id1!, "heeded");
+
+    m["storage"].correctCapture(id2!);
+    m["storage"].recordCorrectionOutcome(id2!, "recurred");
+
+    m["storage"].correctCapture(id3!);
+    // id3 has no outcome recorded yet
+
+    const kpis = m["storage"].getCorrectionKPIs();
+    expect(kpis.totalCorrections).toBe(3);
+    // 2 heeded + 1 recurred = 3 total outcomes, 2/3 heeded
+    expect(kpis.heedRate).toBeCloseTo(2 / 3, 2);
+    // id1 precision = 2/2 = 1.0 (high signal)
+    expect(kpis.highSignalCandidates.length).toBeGreaterThanOrEqual(1);
+    // id2 precision = 0/1 = 0.0 (noise)
+    expect(kpis.noiseCandidates.length).toBeGreaterThanOrEqual(1);
+    m.close();
+  });
+});

@@ -475,7 +475,7 @@ export class SQLiteBackend implements StorageBackend {
     console.error("[remem-mcp] Migrated schema v5 → v6 (CodeGraph + Wiki tables)");
   }
 
-  /** Migrate schema v6 → v7: add access tracking + Bayesian confidence columns. */
+  /** Migrate schema v6 → v7: add access tracking + Bayesian confidence + correction outcome columns. */
   private migrateV6ToV7(): void {
     const cols = this.db.prepare("PRAGMA table_info(captures)").all() as { name: string }[];
     const hasAccessCount = cols.some((c) => c.name === "access_count");
@@ -486,7 +486,15 @@ export class SQLiteBackend implements StorageBackend {
       this.db.exec("ALTER TABLE captures ADD COLUMN corrections INTEGER NOT NULL DEFAULT 0");
       console.error("[remem-mcp] Added access tracking + Bayesian confidence columns");
     }
-    console.error("[remem-mcp] Migrated schema v6 → v7 (access tracking + confidence)");
+    const hasRetrievedCount = cols.some((c) => c.name === "retrieved_count");
+    if (!hasRetrievedCount) {
+      this.db.exec("ALTER TABLE captures ADD COLUMN retrieved_count INTEGER NOT NULL DEFAULT 0");
+      this.db.exec("ALTER TABLE captures ADD COLUMN heeded_count INTEGER NOT NULL DEFAULT 0");
+      this.db.exec("ALTER TABLE captures ADD COLUMN recurrence_count INTEGER NOT NULL DEFAULT 0");
+      this.db.exec("ALTER TABLE captures ADD COLUMN last_outcome TEXT");
+      console.error("[remem-mcp] Added correction outcome tracking columns");
+    }
+    console.error("[remem-mcp] Migrated schema v6 → v7 (access tracking + confidence + outcomes)");
   }
 
   async put(entry: CaptureEntry): Promise<void> {
@@ -548,6 +556,52 @@ export class SQLiteBackend implements StorageBackend {
   /** Correct a capture (Bayesian: increment beta). Decreases confidence. */
   correctCapture(id: string): void {
     this.db.prepare("UPDATE captures SET corrections = corrections + 1 WHERE id = ?").run(id);
+  }
+
+  /** Record that a correction was retrieved in search results. */
+  incrementRetrievedCount(id: string): void {
+    this.db.prepare("UPDATE captures SET retrieved_count = retrieved_count + 1 WHERE id = ?").run(id);
+  }
+
+  /** Record whether a correction was heeded or the error recurred. */
+  recordCorrectionOutcome(id: string, outcome: "heeded" | "recurred"): void {
+    if (outcome === "heeded") {
+      this.db.prepare("UPDATE captures SET heeded_count = heeded_count + 1, last_outcome = 'heeded' WHERE id = ?").run(id);
+    } else {
+      this.db.prepare("UPDATE captures SET recurrence_count = recurrence_count + 1, last_outcome = 'recurred' WHERE id = ?").run(id);
+    }
+  }
+
+  /** Get correction KPIs: precision, heed rate, noise/high-signal candidates. */
+  getCorrectionKPIs(): {
+    totalCorrections: number;
+    avgPrecision: number;
+    heedRate: number;
+    noiseCandidates: { id: string; content: string; precision: number }[];
+    highSignalCandidates: { id: string; content: string; precision: number }[];
+  } {
+    const rows = this.db
+      .prepare(
+        "SELECT id, content, retrieved_count, heeded_count, recurrence_count FROM captures WHERE type = 'error' AND corrections > 0 AND deleted_at IS NULL",
+      )
+      .all() as { id: string; content: string; retrieved_count: number; heeded_count: number; recurrence_count: number }[];
+
+    const candidates = rows.map((r) => {
+      const total = r.heeded_count + r.recurrence_count;
+      const precision = total > 0 ? r.heeded_count / total : 0;
+      return { id: r.id, content: r.content.slice(0, 80), precision };
+    });
+
+    const totalHeeded = rows.reduce((s, r) => s + r.heeded_count, 0);
+    const totalOutcomes = rows.reduce((s, r) => s + r.heeded_count + r.recurrence_count, 0);
+
+    return {
+      totalCorrections: rows.length,
+      avgPrecision: totalOutcomes > 0 ? totalHeeded / totalOutcomes : 0,
+      heedRate: totalOutcomes > 0 ? totalHeeded / totalOutcomes : 0,
+      noiseCandidates: candidates.filter((c) => c.precision < 0.3).sort((a, b) => a.precision - b.precision),
+      highSignalCandidates: candidates.filter((c) => c.precision >= 0.8).sort((a, b) => b.precision - a.precision),
+    };
   }
 
   /** Compute Bayesian confidence score (Beta-Bernoulli model).

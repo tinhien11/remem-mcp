@@ -33,7 +33,12 @@ CREATE TABLE IF NOT EXISTS captures (
   access_count      INTEGER NOT NULL DEFAULT 0,
   last_accessed_at  INTEGER,
   confirmations     INTEGER NOT NULL DEFAULT 0,
-  corrections       INTEGER NOT NULL DEFAULT 0
+  corrections       INTEGER NOT NULL DEFAULT 0,
+  -- v7: Correction outcome tracking (AgentRecall pattern)
+  retrieved_count   INTEGER NOT NULL DEFAULT 0,
+  heeded_count      INTEGER NOT NULL DEFAULT 0,
+  recurrence_count  INTEGER NOT NULL DEFAULT 0,
+  last_outcome      TEXT
 );
 
 -- L0 messages: role-based conversation messages linked to a capture.

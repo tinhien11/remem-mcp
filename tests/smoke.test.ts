@@ -133,14 +133,16 @@ describeOrSkip("Smoke test: full server over stdio", () => {
     expect(toolNames).toContain("skill_get");
     expect(toolNames).toContain("skill_list");
     expect(toolNames).toContain("skill_search");
-    // Total = 7 core + 1 explain_recall + 1 related + 2 new + 1 stats + 3 confidence + 4 knowledge + 3 skill + 5 codegraph + 5 wiki = 32
+    // Total = 7 core + 1 explain_recall + 1 related + 2 new + 1 stats + 3 confidence + 2 outcome + 4 knowledge + 3 skill + 5 codegraph + 5 wiki = 34
     expect(toolNames).toContain("explain_recall");
     expect(toolNames).toContain("related");
     expect(toolNames).toContain("stats");
     expect(toolNames).toContain("confirm");
     expect(toolNames).toContain("correct");
     expect(toolNames).toContain("supersede");
-    expect(toolNames.length).toBe(32);
+    expect(toolNames).toContain("record_outcome");
+    expect(toolNames).toContain("correction_kpis");
+    expect(toolNames.length).toBe(34);
   });
 
   it("captures a decision", async () => {

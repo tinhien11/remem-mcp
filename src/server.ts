@@ -972,6 +972,38 @@ const TOOLS: Tool[] = [
       required: ["old_id", "new_id"],
     },
   },
+  {
+    name: "record_outcome",
+    description:
+      "Record whether a correction was heeded (agent followed the advice) or recurred (same error happened again). " +
+      "This tracks correction effectiveness over time. Call after applying a correction to a recalled memory.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        capture_id: {
+          type: "string",
+          description: "The ID of the correction capture.",
+        },
+        outcome: {
+          type: "string",
+          enum: ["heeded", "recurred"],
+          description: "'heeded' = agent followed the correction. 'recurred' = same error repeated.",
+        },
+      },
+      required: ["capture_id", "outcome"],
+    },
+  },
+  {
+    name: "correction_kpis",
+    description:
+      "Get correction learning metrics: total corrections, average precision, heed rate, " +
+      "noise candidates (precision < 0.3), and high-signal candidates (precision >= 0.8). " +
+      "Use this to evaluate memory quality and identify unhelpful corrections to prune.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
 ];
 
 /**
@@ -992,6 +1024,8 @@ const CORE_TOOL_NAMES = new Set([
   "confirm",
   "correct",
   "supersede",
+  "record_outcome",
+  "correction_kpis",
 ]);
 
 function getTools(): Tool[] {
@@ -1154,6 +1188,10 @@ export function createServer(opts: ServerOptions): Server {
         return handleCorrect(args, opts);
       case "supersede":
         return handleSupersede(args, opts);
+      case "record_outcome":
+        return handleRecordOutcome(args, opts);
+      case "correction_kpis":
+        return handleCorrectionKPIs(args, opts);
       default:
         return {
           content: [{ type: "text", text: `Error: Unknown tool "${name}".` }],
@@ -2515,12 +2553,65 @@ async function handleSupersede(
       isError: true,
     };
   }
-  db.prepare("UPDATE captures SET superseded_by = ? WHERE id = ?").run(newId, oldId);
+  db.prepare("UPDATE captures SET superseded_by = ?, trust_state = 'stale' WHERE id = ?").run(newId, oldId);
   return {
     content: [
       {
         type: "text",
         text: `Superseded: "${oldRow.content.slice(0, 60)}..." → "${newRow.content.slice(0, 60)}...".\nOld capture ${oldId} will be filtered from search results. New capture ${newId} takes precedence.`,
+      },
+    ],
+  };
+}
+
+/** Handle the record_outcome tool — track if a correction was heeded or recurred. */
+async function handleRecordOutcome(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  const captureId = args.capture_id as string;
+  const outcome = args.outcome as string;
+  if (!captureId || (outcome !== "heeded" && outcome !== "recurred")) {
+    return {
+      content: [{ type: "text", text: "Error: capture_id and outcome ('heeded' or 'recurred') are required." }],
+      isError: true,
+    };
+  }
+  const db = getDb(opts);
+  const row = db
+    .prepare("SELECT id, heeded_count, recurrence_count FROM captures WHERE id = ? AND deleted_at IS NULL")
+    .get(captureId) as { id: string; heeded_count: number; recurrence_count: number } | undefined;
+  if (!row) {
+    return {
+      content: [{ type: "text", text: `Error: Capture ${captureId} not found or deleted.` }],
+      isError: true,
+    };
+  }
+  opts.storage.recordCorrectionOutcome(captureId, outcome as "heeded" | "recurred");
+  const total = row.heeded_count + row.recurrence_count + 1;
+  const heeded = outcome === "heeded" ? row.heeded_count + 1 : row.heeded_count;
+  const precision = total > 0 ? heeded / total : 0;
+  return {
+    content: [
+      {
+        type: "text",
+        text: `Recorded: correction ${captureId} was ${outcome}. Precision: ${precision.toFixed(2)} (${heeded}/${total} heeded).`,
+      },
+    ],
+  };
+}
+
+/** Handle the correction_kpis tool — get correction learning metrics. */
+async function handleCorrectionKPIs(
+  _args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  const kpis = opts.storage.getCorrectionKPIs();
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(kpis, null, 2),
       },
     ],
   };
