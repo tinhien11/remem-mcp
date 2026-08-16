@@ -29,6 +29,51 @@ import type {
 } from "./storage/types.js";
 import { generateId } from "./utils/ulid.js";
 
+/**
+ * Auto-classify content as global (cross-project) or project-specific.
+ * Generic rules/conventions/learnings → global; content with file paths,
+ * line numbers, project names, or specific identifiers → project.
+ */
+export function classifyGlobalContent(content: string, type: CaptureType): boolean {
+  if (type !== "learning" && type !== "decision" && type !== "task") return false;
+
+  // Project-specific signals → NOT global
+  const projectSignals = [
+    /\b\/[a-z]/i,
+    /\b\w+\/\w+\.\w{1,5}\b/,
+    /line\s*\d+/i,
+    /\b\d{4,}\b/,
+    /\bcommit\s+[0-9a-f]{7,}/i,
+    /\bsrc\//,
+    /\bdist\//,
+    /\btests?\//,
+  ];
+  for (const sig of projectSignals) {
+    if (sig.test(content)) return false;
+  }
+
+  const lower = content.toLowerCase();
+  const globalSignals = [
+    /\balways\s+/i,
+    /\bnever\s+/i,
+    /\brule\b/i,
+    /\bconvention\b/i,
+    /\bpattern\b/i,
+    /\bprefer\b/i,
+    /\bavoid\b/i,
+    /\bshould\b/i,
+    /\bbest\s+practice\b/i,
+  ];
+  let score = 0;
+  for (const sig of globalSignals) {
+    if (sig.test(lower)) score++;
+  }
+
+  if (content.length < 300 && score >= 1) return true;
+  if (content.length < 150 && type === "learning") return true;
+  return false;
+}
+
 export type {
   CaptureEntry,
   CaptureType,
@@ -45,11 +90,13 @@ export class Memory {
   private storage: SQLiteBackend;
   private embedder: LocalEmbedder;
   private sessionKey: string;
+  private globalKey: string | null;
   private redactSecrets: boolean;
 
   constructor(opts?: {
     dbPath?: string;
     sessionKey?: string;
+    globalSessionKey?: string;
     redactSecrets?: boolean;
   }) {
     const dbPath = opts?.dbPath ?? join(homedir(), ".local", "share", "remem-mcp", "memory.db");
@@ -59,13 +106,26 @@ export class Memory {
       opts?.sessionKey ??
       process.env.REMEM_SESSION_KEY ??
       createHash("sha256").update(process.cwd()).digest("hex").slice(0, 16);
+    this.globalKey = opts?.globalSessionKey ?? process.env.REMEM_GLOBAL_SESSION_KEY ?? null;
     this.redactSecrets = opts?.redactSecrets ?? true;
   }
 
   /** Capture a memory entry. Returns the ID, or null if duplicate. */
-  async capture(content: string, type: CaptureType, tags: string[] = [], opts?: { sessionKey?: string }): Promise<string | null> {
+  async capture(
+    content: string,
+    type: CaptureType,
+    tags: string[] = [],
+    opts?: { sessionKey?: string; autoGlobal?: boolean },
+  ): Promise<string | null> {
     const { text: redactedContent } = this.redactSecrets ? redact(content) : { text: content };
-    const sessionKey = opts?.sessionKey ?? this.sessionKey;
+    let sessionKey = opts?.sessionKey ?? this.sessionKey;
+
+    // Auto-classify: route generic rules/learnings to global session
+    if (opts?.autoGlobal && !opts?.sessionKey && this.globalKey && this.globalKey !== sessionKey) {
+      if (classifyGlobalContent(content, type)) {
+        sessionKey = this.globalKey;
+      }
+    }
 
     // Dedup check
     const contentHash = createHash("sha256").update(redactedContent).digest("hex");
@@ -95,38 +155,62 @@ export class Memory {
     return id;
   }
 
-  /** Recall relevant memory. */
+  /** Recall relevant memory. Searches project + global (if configured). */
   async recall(
     query: string,
     opts?: { limit?: number; mode?: SearchMode; sessionKey?: string },
   ): Promise<SearchResult[]> {
     const limit = Math.min(opts?.limit ?? 10, 50);
     const mode = opts?.mode ?? "hybrid";
+    const sessionKey = opts?.sessionKey ?? this.sessionKey;
 
     let queryEmbedding: number[] | null = null;
     if (mode === "hybrid" || mode === "vector") {
-      // Use stripped query (proper nouns removed) for vector embedding when
-      // proper nouns would dominate. This ensures "what editor does Tin use"
-      // embeds as "editor use" — matching Neovim, not the "I am Tin" intro.
       const stripped = stripQueryProperNouns(query);
       queryEmbedding = await this.embedder.embed(stripped || query);
     }
 
+    // Global fallback: search project first, then global for remaining slots
+    if (this.globalKey && !opts?.sessionKey && this.globalKey !== sessionKey) {
+      const reservedGlobal = Math.min(3, limit);
+      const projectLimit = limit - reservedGlobal;
+      const projectResults = await this.storage.search(query, queryEmbedding, {
+        sessionKey,
+        limit: projectLimit,
+        offset: 0,
+        mode,
+      });
+      let globalResults: SearchResult[] = [];
+      try {
+        globalResults = await this.storage.search(query, queryEmbedding, {
+          sessionKey: this.globalKey,
+          limit: reservedGlobal,
+          offset: 0,
+          mode,
+        });
+      } catch {
+        // Global search failure is non-fatal
+      }
+      const seen = new Set(projectResults.map((r) => r.entry.id));
+      return [...projectResults, ...globalResults.filter((r) => !seen.has(r.entry.id))].slice(0, limit);
+    }
+
     return this.storage.search(query, queryEmbedding, {
-      sessionKey: opts?.sessionKey ?? this.sessionKey,
+      sessionKey,
       limit,
       offset: 0,
       mode,
     });
   }
 
-  /** Search with filters. */
+  /** Search with filters. Searches project + global (if configured). */
   async search(
     query: string,
     opts?: { mode?: SearchMode; filters?: SearchFilters; limit?: number; sessionKey?: string },
   ): Promise<SearchResult[]> {
     const limit = Math.min(opts?.limit ?? 20, 100);
     const mode = opts?.mode ?? "hybrid";
+    const sessionKey = opts?.sessionKey ?? this.sessionKey;
 
     let queryEmbedding: number[] | null = null;
     if (mode === "hybrid" || mode === "vector") {
@@ -134,8 +218,35 @@ export class Memory {
       queryEmbedding = await this.embedder.embed(stripped || query);
     }
 
+    // Global fallback
+    if (this.globalKey && !opts?.sessionKey && this.globalKey !== sessionKey) {
+      const reservedGlobal = Math.min(3, limit);
+      const projectLimit = limit - reservedGlobal;
+      const projectResults = await this.storage.search(query, queryEmbedding, {
+        sessionKey,
+        limit: projectLimit,
+        offset: 0,
+        mode,
+        filters: opts?.filters,
+      });
+      let globalResults: SearchResult[] = [];
+      try {
+        globalResults = await this.storage.search(query, queryEmbedding, {
+          sessionKey: this.globalKey,
+          limit: reservedGlobal,
+          offset: 0,
+          mode,
+          filters: opts?.filters,
+        });
+      } catch {
+        // Global search failure is non-fatal
+      }
+      const seen = new Set(projectResults.map((r) => r.entry.id));
+      return [...projectResults, ...globalResults.filter((r) => !seen.has(r.entry.id))].slice(0, limit);
+    }
+
     return this.storage.search(query, queryEmbedding, {
-      sessionKey: opts?.sessionKey ?? this.sessionKey,
+      sessionKey,
       limit,
       offset: 0,
       mode,

@@ -43,6 +43,7 @@ import {
   findOutdatedPages as wikiOutdated,
   searchWiki as wikiSearch,
 } from "./wiki/engine.js";
+import { classifyGlobalContent } from "./sdk.js";
 
 /** Default session key: hash of the current working directory. */
 function defaultSessionKey(): string {
@@ -55,59 +56,6 @@ function defaultSessionKey(): string {
 /** Global session key for cross-project memory (rules, learnings). */
 function globalSessionKey(): string | null {
   return process.env.REMEM_GLOBAL_SESSION_KEY ?? null;
-}
-
-/**
- * Auto-classify content as global (cross-project) or project-specific.
- * Heuristic: generic rules/conventions/learnings → global; content with
- * file paths, line numbers, project names, or specific identifiers → project.
- */
-function classifyGlobal(content: string, type: CaptureType): boolean {
-  // Only learning/decision/task types are candidates for global.
-  // Conversations, errors, and atoms stay project-scoped.
-  if (type !== "learning" && type !== "decision" && type !== "task") return false;
-
-  const lower = content.toLowerCase();
-
-  // Project-specific signals → NOT global
-  const projectSignals = [
-    /\b\/[a-z]/i,           // file paths: /src, /Users
-    /\b\w+\/\w+\.\w{1,5}\b/, // path/file.ext
-    /line\s*\d+/i,          // line numbers
-    /\b\d{4,}\b/,           // large numbers (IDs, timestamps)
-    /\bcommit\s+[0-9a-f]{7,}/i, // commit hashes
-    /\bsrc\//,              // src/ paths
-    /\bdist\//,             // dist/ paths
-    /\btests?\//,           // tests/ paths
-  ];
-  for (const sig of projectSignals) {
-    if (sig.test(content)) return false;
-  }
-
-  // Global signals: generic rules, conventions, patterns
-  const globalSignals = [
-    /\balways\s+/i,         // "always run tests"
-    /\bnever\s+/i,          // "never commit secrets"
-    /\brule\b/i,            // "rule: ..."
-    /\bconvention\b/i,      // "convention: ..."
-    /\bpattern\b/i,         // "pattern: ..."
-    /\bprefer\b/i,          // "prefer X over Y"
-    /\bavoid\b/i,           // "avoid doing X"
-    /\bshould\b/i,          // "you should ..."
-    /\bbest\s+practice\b/i, // "best practice"
-  ];
-  let globalScore = 0;
-  for (const sig of globalSignals) {
-    if (sig.test(lower)) globalScore++;
-  }
-
-  // Short, generic content (no project-specific identifiers) → global
-  if (content.length < 300 && globalScore >= 1) return true;
-
-  // Very short + learning type → likely a rule
-  if (content.length < 150 && type === "learning") return true;
-
-  return false;
 }
 
 /** Detect the agent ID from environment variables. */
@@ -1637,7 +1585,7 @@ async function handleCapture(
     } else {
       classifyContent = (args.content as string) ?? "";
     }
-    if (classifyGlobal(classifyContent, type)) {
+    if (classifyGlobalContent(classifyContent, type)) {
       sessionKey = globalKey;
       autoClassified = true;
     }
