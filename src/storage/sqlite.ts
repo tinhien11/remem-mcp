@@ -529,36 +529,56 @@ export class SQLiteBackend implements StorageBackend {
   async put(entry: CaptureEntry): Promise<void> {
     const contentHash =
       entry.contentHash ?? createHash("sha256").update(entry.content).digest("hex");
-    const stmt = this.db.prepare(`
-      INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata, team_id, user_id, task_id, trust_state)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    stmt.run(
-      entry.id,
-      entry.sessionKey,
-      entry.agentId,
-      entry.type,
-      entry.content,
-      contentHash,
-      JSON.stringify(entry.tags),
-      entry.createdAt,
-      entry.metadata ? JSON.stringify(entry.metadata) : null,
-      entry.teamId ?? null,
-      entry.userId ?? null,
-      entry.taskId ?? null,
-      entry.trustState ?? "candidate",
-    );
-
-    // Store role-based messages if provided
-    if (entry.messages && entry.messages.length > 0) {
-      const msgStmt = this.db.prepare(
-        "INSERT INTO messages (id, capture_id, role, content, seq, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-      );
-      for (let i = 0; i < entry.messages.length; i++) {
-        const msg = entry.messages[i];
-        msgStmt.run(generateId(), entry.id, msg.role, msg.content, i, entry.createdAt);
+    // Atomically check + insert to close the TOCTOU race in capture dedup. Callers
+    // (handleCapture, handoff, adr, sdk) first call findByContentHash and then put;
+    // without a transaction two concurrent captures with identical content could
+    // both pass the check and both insert duplicate rows. Wrapping the dedup probe
+    // and the INSERT in a single db.transaction holds the write lock for the whole
+    // operation, so the second concurrent put observes the first's row and skips.
+    // Soft-deleted (forgotten) rows are excluded so a forgotten capture can be
+    // re-captured. This is scoped to (content_hash, session_key, agent_id) to match
+    // findByContentHash's dedup scope.
+    const putTx = this.db.transaction(() => {
+      const dup = this.db
+        .prepare(
+          "SELECT 1 FROM captures WHERE content_hash = ? AND session_key = ? AND agent_id = ? AND deleted_at IS NULL LIMIT 1",
+        )
+        .get(contentHash, entry.sessionKey, entry.agentId);
+      if (dup) return false;
+      this.db
+        .prepare(
+          `INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata, team_id, user_id, task_id, trust_state)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          entry.id,
+          entry.sessionKey,
+          entry.agentId,
+          entry.type,
+          entry.content,
+          contentHash,
+          JSON.stringify(entry.tags),
+          entry.createdAt,
+          entry.metadata ? JSON.stringify(entry.metadata) : null,
+          entry.teamId ?? null,
+          entry.userId ?? null,
+          entry.taskId ?? null,
+          entry.trustState ?? "candidate",
+        );
+      // Store role-based messages inside the same transaction so a crash can't
+      // orphan messages under a capture that didn't commit.
+      if (entry.messages && entry.messages.length > 0) {
+        const msgStmt = this.db.prepare(
+          "INSERT INTO messages (id, capture_id, role, content, seq, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        );
+        for (let i = 0; i < entry.messages.length; i++) {
+          const msg = entry.messages[i];
+          msgStmt.run(generateId(), entry.id, msg.role, msg.content, i, entry.createdAt);
+        }
       }
-    }
+      return true;
+    });
+    putTx();
   }
 
   async putVector(id: string, embedding: number[]): Promise<void> {

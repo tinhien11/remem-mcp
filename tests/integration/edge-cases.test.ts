@@ -499,8 +499,11 @@ describe("Edge cases: concurrent writes", () => {
     );
     reader.close();
 
-    // All 5 should be stored (different IDs, same hash)
-    expect(results.length).toBe(5);
+    // Only one capture should be stored: put() wraps the dedup probe + INSERT in a
+    // single db.transaction, closing the TOCTOU race that previously allowed
+    // concurrent identical captures (same content_hash, session_key, agent_id) to
+    // both pass findByContentHash and both insert duplicate rows.
+    expect(results.length).toBe(1);
 
     backends.forEach((b) => b.close());
   });
