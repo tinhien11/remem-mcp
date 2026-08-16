@@ -302,6 +302,11 @@ const TOOLS: Tool[] = [
           },
         },
         limit: { type: "integer", default: 20, maximum: 100 },
+        session_key: {
+          type: "string",
+          description:
+            "The session key. Defaults to hash(cwd). Use this to search memory from a different project.",
+        },
         format: {
           type: "string",
           enum: ["text", "json"],
@@ -1192,11 +1197,31 @@ export function createServer(opts: ServerOptions): Server {
     const uri = request.params.uri;
 
     if (uri === "remem-mcp://recent") {
-      const results = await opts.storage.search("", null, {
-        limit: 20,
-        offset: 0,
-        mode: "keyword",
-      });
+      // Direct SQL query — search("") returns [] because escapeFtsQuery('') is empty
+      const db = getDb(opts);
+      const rows = db
+        .prepare(
+          "SELECT id, session_key, agent_id, type, content, tags, created_at, trust_state, superseded_by, team_id, user_id, task_id, content_hash FROM captures WHERE deleted_at IS NULL AND trust_state != 'rejected' AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 20",
+        )
+        .all() as Record<string, unknown>[];
+      const results: SearchResult[] = rows.map((r, i) => ({
+        entry: {
+          id: r.id as string,
+          sessionKey: r.session_key as string,
+          agentId: r.agent_id as string,
+          type: r.type as CaptureType,
+          content: r.content as string,
+          tags: r.tags ? JSON.parse(r.tags as string) : [],
+          createdAt: r.created_at as number,
+          trustState: (r.trust_state as TrustState) ?? "candidate",
+          supersededBy: r.superseded_by as string | null,
+          teamId: r.team_id as string | undefined,
+          userId: r.user_id as string | undefined,
+          taskId: r.task_id as string | undefined,
+          contentHash: r.content_hash as string,
+        },
+        score: 1 - i * 0.01,
+      }));
       const text = formatResults(results);
       return {
         contents: [
@@ -1390,7 +1415,7 @@ async function handleRecall(
     const projectResults = await opts.storage.search(query, queryEmbedding, {
       sessionKey,
       limit,
-      offset: 0,
+      offset,
       mode,
       filters: { teamId, userId, taskId, agentId, type: typeFilter },
     });
@@ -1819,24 +1844,54 @@ async function handleSearch(
     }
   }
 
-  let results = await opts.storage.search(query, queryEmbedding, {
-    sessionKey: (args.session_key as string) ?? defaultSessionKey(),
-    limit,
-    offset: 0,
-    mode,
-    filters: filters
-      ? {
-          type: filters.type,
-          tags: filters.tags,
-          agentId: filters.agent_id,
-          dateFrom: filters.date_from,
-          dateTo: filters.date_to,
-          teamId: filters.team_id,
-          userId: filters.user_id,
-          taskId: filters.task_id,
-        }
-      : undefined,
-  });
+  const sessionKey = (args.session_key as string) ?? defaultSessionKey();
+  const globalKey = globalSessionKey();
+  const useGlobalFallback = globalKey && !args.session_key && globalKey !== sessionKey;
+
+  const searchFilters = filters
+    ? {
+        type: filters.type,
+        tags: filters.tags,
+        agentId: filters.agent_id,
+        dateFrom: filters.date_from,
+        dateTo: filters.date_to,
+        teamId: filters.team_id,
+        userId: filters.user_id,
+        taskId: filters.task_id,
+      }
+    : undefined;
+
+  let results: SearchResult[];
+  if (useGlobalFallback) {
+    const projectResults = await opts.storage.search(query, queryEmbedding, {
+      sessionKey,
+      limit,
+      offset: 0,
+      mode,
+      filters: searchFilters,
+    });
+    const remaining = limit - projectResults.length;
+    let globalResults: SearchResult[] = [];
+    if (remaining > 0) {
+      globalResults = await opts.storage.search(query, queryEmbedding, {
+        sessionKey: globalKey,
+        limit: remaining,
+        offset: 0,
+        mode,
+        filters: searchFilters,
+      });
+    }
+    const seen = new Set(projectResults.map((r) => r.entry.id));
+    results = [...projectResults, ...globalResults.filter((r) => !seen.has(r.entry.id))];
+  } else {
+    results = await opts.storage.search(query, queryEmbedding, {
+      sessionKey,
+      limit,
+      offset: 0,
+      mode,
+      filters: searchFilters,
+    });
+  }
 
   // Dedup near-identical captures (same first 60 chars) — keep highest score.
   results = dedupByContentPrefix(results, 60);
@@ -2053,11 +2108,16 @@ async function handleExplainRecall(
   const query = args.query as string;
   const captureId = args.capture_id as string | undefined;
   const sessionKey = (args.session_key as string) ?? defaultSessionKey();
+  const globalKey = globalSessionKey();
+  const useGlobalFallback = globalKey && !args.session_key && globalKey !== sessionKey;
   const mode = (args.mode as SearchMode) ?? "hybrid";
   const limit = Math.min((args.limit as number) ?? 10, 50);
   const { teamId, userId, taskId } = extractTenant(args);
 
-  // Run keyword and vector searches separately to get individual scores
+  // Run keyword and vector searches separately to get individual scores.
+  // Use global fallback to match recall() behavior.
+  const searchSessionKey = useGlobalFallback ? globalKey : sessionKey;
+
   let queryEmbedding: number[] | null = null;
   let vectorDegraded = false;
   if (mode === "hybrid" || mode === "vector") {
@@ -2074,7 +2134,7 @@ async function handleExplainRecall(
     mode === "vector"
       ? []
       : await opts.storage.search(query, null, {
-          sessionKey,
+          sessionKey: searchSessionKey,
           limit: limit * 3,
           offset: 0,
           mode: "keyword",
@@ -2086,7 +2146,7 @@ async function handleExplainRecall(
     mode === "keyword" || !queryEmbedding
       ? []
       : await opts.storage.search(query, queryEmbedding, {
-          sessionKey,
+          sessionKey: searchSessionKey,
           limit: limit * 3,
           offset: 0,
           mode: "vector",
@@ -2095,7 +2155,7 @@ async function handleExplainRecall(
 
   // Get hybrid results (what recall actually returns)
   const hybridResults: SearchResult[] = await opts.storage.search(query, queryEmbedding, {
-    sessionKey,
+    sessionKey: searchSessionKey,
     limit,
     offset: 0,
     mode,
@@ -2301,7 +2361,9 @@ async function handleForget(
   } else if (id) {
     result = await opts.storage.delete(id);
   } else if (filter) {
-    result = await opts.storage.deleteByFilter(filter);
+    // Scope filter to the current session to prevent cross-session data loss
+    const sessionKey = (args.session_key as string) ?? defaultSessionKey();
+    result = await opts.storage.deleteByFilter({ ...filter, sessionKey });
   } else {
     return {
       content: [
@@ -2369,7 +2431,11 @@ async function handleUpdate(
     return { content: [{ type: "text", text: `Error: Capture ${id} not found.` }], isError: true };
   }
 
-  const newContent = (args.content as string) ?? (row.content as string);
+  const rawContent = (args.content as string) ?? (row.content as string);
+  // Redact secrets if enabled — same as handleCapture
+  const { text: newContent } = opts.redactSecrets
+    ? redact(rawContent)
+    : { text: rawContent };
   const newTags = args.tags ? JSON.stringify(args.tags) : (row.tags as string);
   const newType = (args.type as string) ?? (row.type as string);
   const newTrust = args.verified ? "verified" : (row.trust_state as string);
@@ -2513,6 +2579,7 @@ async function handleConsolidate(
   let merged = 0;
   const softDelete = db.prepare("UPDATE captures SET deleted_at = ? WHERE id = ?");
   const deleteVec = db.prepare("DELETE FROM captures_vec WHERE id = ?");
+  const deleteAtoms = db.prepare("DELETE FROM atoms WHERE capture_id = ?");
   const mergeTx = db.transaction(() => {
     for (const g of groups) {
       const groupRows = g.ids
@@ -2523,6 +2590,7 @@ async function handleConsolidate(
       for (const dup of dups) {
         softDelete.run(Date.now(), dup!.id);
         deleteVec.run(dup!.id);
+        deleteAtoms.run(dup!.id);
         merged++;
       }
     }
@@ -2949,15 +3017,19 @@ async function handleSessionStart(
   opts: ServerOptions,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
   const sessionKey = (args.session_key as string) ?? defaultSessionKey();
+  const globalKey = globalSessionKey();
+  const useGlobalFallback = globalKey && !args.session_key && globalKey !== sessionKey;
   const contextQuery = args.context_query as string | undefined;
   const db = getDb(opts);
 
-  // Recent captures (last 5)
+  // Recent captures (last 5) from project session (+ global if configured)
+  const sessionKeys = useGlobalFallback ? [sessionKey, globalKey] : [sessionKey];
+  const placeholders = sessionKeys.map(() => "?").join(",");
   const recent = db
     .prepare(
-      "SELECT id, type, content, tags, created_at FROM captures WHERE deleted_at IS NULL AND session_key = ? ORDER BY created_at DESC LIMIT 5",
+      `SELECT id, type, content, tags, created_at FROM captures WHERE deleted_at IS NULL AND session_key IN (${placeholders}) ORDER BY created_at DESC LIMIT 5`,
     )
-    .all(sessionKey) as { id: string; type: string; content: string; tags: string; created_at: number }[];
+    .all(...sessionKeys) as { id: string; type: string; content: string; tags: string; created_at: number }[];
 
   // Correction KPIs
   const kpis = opts.storage.getCorrectionKPIs();

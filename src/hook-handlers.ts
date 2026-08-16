@@ -3154,7 +3154,10 @@ async function captureSessionTranscript(
   const contentHash = createHash("sha256").update(content).digest("hex");
 
   const db = new Database(dbPath);
-  const sessionKey = sid.slice(0, 16);
+  // Use hash(cwd) to match MCP server's session key, so auto-captured
+  // transcripts are visible to recall(). Fall back to sid.slice(0,16) only
+  // if cwd is unavailable (background process without env).
+  const sessionKey = hashPath(process.cwd());
   const now = Date.now();
   const id = generateId();
 
@@ -3446,7 +3449,7 @@ export function hookPreCompact(dbPath: string): void {
       const raw = Buffer.concat(chunks).toString("utf-8");
       const input = raw.trim() ? JSON.parse(raw) : {};
       const trigger = input.trigger ?? "unknown";
-      const sessionKey = input.session_id ?? input.cwd ?? process.cwd();
+      const sessionKey = hashPath(input.cwd ?? process.cwd());
 
       // Capture a compaction checkpoint
       const db = new Database(dbPath);
@@ -3581,26 +3584,31 @@ export function hookPostCompaction(dbPath: string): void {
     try {
       const raw = Buffer.concat(chunks).toString("utf-8");
       const input = raw.trim() ? JSON.parse(raw) : {};
-      const sessionKey = input.session_id ?? input.cwd ?? process.cwd();
+      const sessionKey = hashPath(input.cwd ?? process.cwd());
+      const globalKey = process.env.REMEM_GLOBAL_SESSION_KEY ?? null;
 
       // Recall recent memory using the same logic as SessionStart
       const { fileURLToPath } = await import("node:url");
       const schemaPath = join(dirname(fileURLToPath(import.meta.url)), "storage", "schema.sql");
       const db = new Database(dbPath, { readonly: true });
 
-      // Get recent captures (last 24h), prioritizing compaction checkpoints
+      // Get recent captures (last 24h) for THIS session (+ global if configured),
+      // prioritizing compaction checkpoints
       const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+      const sessionKeys = globalKey ? [sessionKey, globalKey] : [sessionKey];
+      const placeholders = sessionKeys.map(() => "?").join(",");
       const rows = db
         .prepare(
           `SELECT id, type, content, tags, created_at FROM captures
            WHERE deleted_at IS NULL AND trust_state != 'rejected'
            AND created_at >= ?
+           AND session_key IN (${placeholders})
            ORDER BY
              CASE WHEN tags LIKE '%checkpoint%' THEN 0 ELSE 1 END,
              created_at DESC
            LIMIT 15`,
         )
-        .all(cutoff) as {
+        .all(cutoff, ...sessionKeys) as {
         id: string;
         type: string;
         content: string;

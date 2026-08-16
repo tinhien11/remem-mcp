@@ -1213,6 +1213,9 @@ export class SQLiteBackend implements StorageBackend {
     if (captureCount > 0) {
       // Remove from vector index (no trigger for this)
       this.db.prepare("DELETE FROM captures_vec WHERE id = ?").run(id);
+      // Remove atoms so they don't outlive the capture (no FK cascade on soft delete)
+      const atomCount = this.db.prepare("DELETE FROM atoms WHERE capture_id = ?").run(id).changes;
+      return { captures: captureCount, atoms: atomCount, scenarios: 0 };
     }
 
     return {
@@ -1245,6 +1248,10 @@ export class SQLiteBackend implements StorageBackend {
     if (filter.taskId) {
       sql += " AND task_id = ?";
       params.push(filter.taskId);
+    }
+    if (filter.sessionKey) {
+      sql += " AND session_key = ?";
+      params.push(filter.sessionKey);
     }
     if (filter.tags && filter.tags.length > 0) {
       const tagConditions = filter.tags.map(() => "tags LIKE ?").join(" OR ");
@@ -1281,6 +1288,9 @@ export class SQLiteBackend implements StorageBackend {
     if (captureCount > 0) {
       // Remove from vector index (no trigger for this)
       this.db.prepare("DELETE FROM captures_vec WHERE id = ?").run(id);
+      // Remove atoms so rejected captures don't leave orphaned facts
+      const atomCount = this.db.prepare("DELETE FROM atoms WHERE capture_id = ?").run(id).changes;
+      return { captures: captureCount, atoms: atomCount, scenarios: 0 };
     }
 
     return { captures: captureCount, atoms: 0, scenarios: 0 };
@@ -1334,6 +1344,10 @@ export class SQLiteBackend implements StorageBackend {
         "UPDATE captures SET trust_state = 'stale', superseded_by = ? WHERE id = ? AND deleted_at IS NULL AND trust_state != 'rejected'",
       )
       .run(winnerId, loserId).changes;
+    if (updated > 0) {
+      // Remove loser's vector so dead embeddings don't accumulate in captures_vec
+      this.db.prepare("DELETE FROM captures_vec WHERE id = ?").run(loserId);
+    }
     return { winnerId, loserId, updated };
   }
 

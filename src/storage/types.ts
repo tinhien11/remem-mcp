@@ -91,6 +91,7 @@ export interface DeleteFilter {
   tags?: string[];
   type?: CaptureType;
   dateBefore?: string;
+  sessionKey?: string;
   teamId?: string;
   userId?: string;
   taskId?: string;

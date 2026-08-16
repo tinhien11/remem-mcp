@@ -63,18 +63,19 @@ export class Memory {
   }
 
   /** Capture a memory entry. Returns the ID, or null if duplicate. */
-  async capture(content: string, type: CaptureType, tags: string[] = [], _opts?: { sessionKey?: string }): Promise<string | null> {
+  async capture(content: string, type: CaptureType, tags: string[] = [], opts?: { sessionKey?: string }): Promise<string | null> {
     const { text: redactedContent } = this.redactSecrets ? redact(content) : { text: content };
+    const sessionKey = opts?.sessionKey ?? this.sessionKey;
 
     // Dedup check
     const contentHash = createHash("sha256").update(redactedContent).digest("hex");
-    const existing = await this.storage.findByContentHash(contentHash, this.sessionKey);
+    const existing = await this.storage.findByContentHash(contentHash, sessionKey);
     if (existing.length > 0) return null;
 
     const id = generateId();
     const entry: CaptureEntry = {
       id,
-      sessionKey: this.sessionKey,
+      sessionKey,
       agentId: "sdk",
       type,
       content: redactedContent,
@@ -122,7 +123,7 @@ export class Memory {
   /** Search with filters. */
   async search(
     query: string,
-    opts?: { mode?: SearchMode; filters?: SearchFilters; limit?: number },
+    opts?: { mode?: SearchMode; filters?: SearchFilters; limit?: number; sessionKey?: string },
   ): Promise<SearchResult[]> {
     const limit = Math.min(opts?.limit ?? 20, 100);
     const mode = opts?.mode ?? "hybrid";
@@ -134,6 +135,7 @@ export class Memory {
     }
 
     return this.storage.search(query, queryEmbedding, {
+      sessionKey: opts?.sessionKey ?? this.sessionKey,
       limit,
       offset: 0,
       mode,
