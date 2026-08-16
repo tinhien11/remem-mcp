@@ -1989,7 +1989,7 @@ async function handleRelated(
 
   // Search by tags (if any) — direct SQL, no FTS5
   if (sourceTags.length > 0) {
-    const tagMatches = await opts.storage.listByTags(sourceTags.slice(0, 10), 100);
+    const tagMatches = await opts.storage.listByTags(sourceTags.slice(0, 10), 100, sourceSessionKey);
     for (const entry of tagMatches) {
       if (entry.id === id) continue;
       const entryTags = entry.tags ?? [];

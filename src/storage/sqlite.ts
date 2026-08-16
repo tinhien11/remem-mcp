@@ -738,12 +738,18 @@ export class SQLiteBackend implements StorageBackend {
     return rows.map(rowToEntry);
   }
 
-  async listByTags(tags: string[], limit = 50): Promise<CaptureEntry[]> {
+  async listByTags(tags: string[], limit = 50, sessionKey?: string): Promise<CaptureEntry[]> {
     if (tags.length === 0) return [];
-    const escapeLike = (s: string) => s.replace(/[%_\\]/g, (c) => "\\" + c);
+    const escapeLike = (s: string) => s.replace(/[%_\\"]/g, (c) => "\\" + c);
     const tagConditions = tags.map(() => "tags LIKE ? ESCAPE '\\'").join(" OR ");
-    const sql = `SELECT * FROM captures WHERE (${tagConditions}) AND deleted_at IS NULL AND trust_state != 'rejected' AND superseded_by IS NULL ORDER BY created_at DESC LIMIT ?`;
-    const params = [...tags.map((t) => `%"${escapeLike(t)}"%`), limit];
+    let sql = `SELECT * FROM captures WHERE (${tagConditions}) AND deleted_at IS NULL AND trust_state != 'rejected' AND superseded_by IS NULL`;
+    const params: unknown[] = [...tags.map((t) => `%"${escapeLike(t)}"%`)];
+    if (sessionKey) {
+      sql += " AND session_key = ?";
+      params.push(sessionKey);
+    }
+    sql += " ORDER BY created_at DESC LIMIT ?";
+    params.push(limit);
     const rows = this.db.prepare(sql).all(...params) as DbRow[];
     return rows.map(rowToEntry);
   }
@@ -882,7 +888,7 @@ export class SQLiteBackend implements StorageBackend {
         params.push(filters.taskId);
       }
       if (filters?.tags && filters.tags.length > 0) {
-        const escapeLike = (s: string) => s.replace(/[%_\\]/g, (c) => "\\" + c);
+        const escapeLike = (s: string) => s.replace(/[%_\\"]/g, (c) => "\\" + c);
         const tagConditions = filters.tags.map(() => "c.tags LIKE ? ESCAPE '\\'").join(" OR ");
         sql += ` AND (${tagConditions})`;
         params.push(...filters.tags.map((t) => `%"${escapeLike(t)}"%`));
@@ -954,7 +960,7 @@ export class SQLiteBackend implements StorageBackend {
       params.push(filters.taskId);
     }
     if (filters?.tags && filters.tags.length > 0) {
-      const escapeLike = (s: string) => s.replace(/[%_\\]/g, (c) => "\\" + c);
+      const escapeLike = (s: string) => s.replace(/[%_\\"]/g, (c) => "\\" + c);
       const tagConditions = filters.tags.map(() => "c.tags LIKE ? ESCAPE '\\'").join(" OR ");
       sql += ` AND (${tagConditions})`;
       params.push(...filters.tags.map((t) => `%"${escapeLike(t)}"%`));
@@ -1261,7 +1267,7 @@ export class SQLiteBackend implements StorageBackend {
       params.push(filter.sessionKey);
     }
     if (filter.tags && filter.tags.length > 0) {
-      const escapeLike = (s: string) => s.replace(/[%_\\]/g, (c) => "\\" + c);
+      const escapeLike = (s: string) => s.replace(/[%_\\"]/g, (c) => "\\" + c);
       const tagConditions = filter.tags.map(() => "tags LIKE ? ESCAPE '\\'").join(" OR ");
       sql += ` AND (${tagConditions})`;
       params.push(...filter.tags.map((t) => `%"${escapeLike(t)}"%`));
@@ -1272,12 +1278,23 @@ export class SQLiteBackend implements StorageBackend {
     let captures = 0;
     let atoms = 0;
     let scenarios = 0;
-    for (const { id } of ids) {
-      const result = await this.delete(id);
-      captures += result.captures;
-      atoms += result.atoms;
-      scenarios += result.scenarios;
-    }
+    // Wrap in transaction so new captures matching the filter can't be
+    // inserted between SELECT and delete (atomic snapshot).
+    const softDelete = this.db.prepare("UPDATE captures SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL");
+    const deleteVec = this.db.prepare("DELETE FROM captures_vec WHERE id = ?");
+    const deleteAtoms = this.db.prepare("DELETE FROM atoms WHERE capture_id = ?");
+    const now = Date.now();
+    const tx = this.db.transaction(() => {
+      for (const { id } of ids) {
+        const c = softDelete.run(now, id).changes;
+        if (c > 0) {
+          captures += c;
+          deleteVec.run(id);
+          atoms += deleteAtoms.run(id).changes;
+        }
+      }
+    });
+    tx();
 
     return { captures, atoms, scenarios };
   }
@@ -1434,7 +1451,7 @@ export class SQLiteBackend implements StorageBackend {
     opts: { teamId?: string; agentId?: string; userId?: string; limit?: number } = {},
   ): Promise<AtomEntry[]> {
     // Atoms don't have FTS — use LIKE for keyword search
-    const escapeLike = (s: string) => s.replace(/[%_\\]/g, (c) => "\\" + c);
+    const escapeLike = (s: string) => s.replace(/[%_\\"]/g, (c) => "\\" + c);
     let sql = "SELECT * FROM atoms WHERE fact LIKE ? ESCAPE '\\'";
     const params: unknown[] = [`%${escapeLike(query)}%`];
     if (opts.teamId) {
@@ -1664,7 +1681,7 @@ export class SQLiteBackend implements StorageBackend {
     query: string,
     topK?: number,
   ): Promise<SkillEntry[]> {
-    const escapeLike = (s: string) => s.replace(/[%_\\]/g, (c) => "\\" + c);
+    const escapeLike = (s: string) => s.replace(/[%_\\"]/g, (c) => "\\" + c);
     let sql =
       "SELECT * FROM skills WHERE team_id = ? AND (agent_id = ? OR agent_id IS NULL) AND (name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')";
     const params: unknown[] = [teamId, agentId, `%${escapeLike(query)}%`, `%${escapeLike(query)}%`];

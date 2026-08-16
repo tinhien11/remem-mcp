@@ -198,7 +198,7 @@ export interface StorageBackend {
   ): Promise<SearchResult[]>;
 
   /** Find captures by tag (bypasses FTS5, direct SQL on tags column). */
-  listByTags(tags: string[], limit?: number): Promise<CaptureEntry[]>;
+  listByTags(tags: string[], limit?: number, sessionKey?: string): Promise<CaptureEntry[]>;
 
   /** Find captures with content hash matching the given content. Used for dedup.
    *  When agentId is provided, dedup is scoped to that agent — the same content
