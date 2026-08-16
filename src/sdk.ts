@@ -192,7 +192,10 @@ export class Memory {
         // Global search failure is non-fatal
       }
       const seen = new Set(projectResults.map((r) => r.entry.id));
-      return [...projectResults, ...globalResults.filter((r) => !seen.has(r.entry.id))].slice(0, limit);
+      return [...projectResults, ...globalResults.filter((r) => !seen.has(r.entry.id))].slice(
+        0,
+        limit,
+      );
     }
 
     return this.storage.search(query, queryEmbedding, {
@@ -242,7 +245,10 @@ export class Memory {
         // Global search failure is non-fatal
       }
       const seen = new Set(projectResults.map((r) => r.entry.id));
-      return [...projectResults, ...globalResults.filter((r) => !seen.has(r.entry.id))].slice(0, limit);
+      return [...projectResults, ...globalResults.filter((r) => !seen.has(r.entry.id))].slice(
+        0,
+        limit,
+      );
     }
 
     return this.storage.search(query, queryEmbedding, {
@@ -265,19 +271,22 @@ export class Memory {
   }
 
   /** Update an existing capture's content, tags, type, or trust state. */
-  async update(id: string, opts: {
-    content?: string;
-    tags?: string[];
-    type?: CaptureType;
-    verified?: boolean;
-  }): Promise<boolean> {
+  async update(
+    id: string,
+    opts: {
+      content?: string;
+      tags?: string[];
+      type?: CaptureType;
+      verified?: boolean;
+    },
+  ): Promise<boolean> {
     const existing = await this.storage.get(id);
     if (!existing) return false;
 
     const newContent = opts.content ?? existing.content;
     const newTags = opts.tags ?? existing.tags;
     const newType = opts.type ?? existing.type;
-    const newTrust = opts.verified ? "verified" : existing.trustState ?? "candidate";
+    const newTrust = opts.verified ? "verified" : (existing.trustState ?? "candidate");
 
     // Recompute content hash
     const contentHash = createHash("sha256").update(newContent).digest("hex");
@@ -289,9 +298,11 @@ export class Memory {
     ).run(newContent, JSON.stringify(newTags), newType, newTrust, contentHash, id);
 
     // Update FTS index
-    const rowid = (db.prepare("SELECT rowid FROM captures WHERE id = ?").get(id) as
-      | { rowid?: number }
-      | undefined)?.rowid;
+    const rowid = (
+      db.prepare("SELECT rowid FROM captures WHERE id = ?").get(id) as
+        | { rowid?: number }
+        | undefined
+    )?.rowid;
     if (rowid) {
       db.prepare(
         "INSERT INTO captures_fts(captures_fts, rowid, content, tags, type) VALUES('delete', ?, '', '', '')",
@@ -315,11 +326,7 @@ export class Memory {
   }
 
   /** Find and optionally merge duplicate captures by content similarity (Jaccard). */
-  async consolidate(opts: {
-    threshold?: number;
-    confirm?: boolean;
-    sessionKey?: string;
-  }): Promise<{
+  async consolidate(opts: { threshold?: number; confirm?: boolean; sessionKey?: string }): Promise<{
     groups: { ids: string[]; similarity: number; preview: string }[];
     merged: number;
   }> {

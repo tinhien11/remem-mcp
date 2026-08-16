@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHash } from "node:crypto";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
@@ -326,9 +326,7 @@ function detectNonJsFramework(cwd: string): string | null {
 
   // C# / .NET
   try {
-    const dotnetFiles = readdirSync(cwd).filter(
-      (f) => f.endsWith(".csproj") || f.endsWith(".sln"),
-    );
+    const dotnetFiles = readdirSync(cwd).filter((f) => f.endsWith(".csproj") || f.endsWith(".sln"));
     if (dotnetFiles.length > 0) {
       const content = readFileSync(join(cwd, dotnetFiles[0]), "utf-8");
       if (/\bMicrosoft\.NET\.Sdk\.Web\b/i.test(content)) return "ASP.NET Core";
@@ -399,8 +397,7 @@ function detectLintTool(): string | null {
       // fall through
     }
   }
-  if (existsSync(join(cwd, ".black")) || existsSync(join(cwd, "black-config.toml")))
-    return "Black";
+  if (existsSync(join(cwd, ".black")) || existsSync(join(cwd, "black-config.toml"))) return "Black";
   // Ruby
   if (existsSync(join(cwd, ".rubocop.yml")) || existsSync(join(cwd, ".rubocop.yaml")))
     return "RuboCop";
@@ -516,7 +513,7 @@ async function main(): Promise<void> {
         `This project uses ${pkgManager}. Use ${pkgManager} for all package operations (install, run, etc.).`,
         "decision",
         ["bootstrap", "package-manager", pkgManager],
-        { },
+        {},
       );
       if (id) captured++;
     }
@@ -528,7 +525,7 @@ async function main(): Promise<void> {
         `Project script: \`${pkgManager ? pkgManager + " run " : "npm run "}${name}\` runs: ${cmd}`,
         "decision",
         ["bootstrap", "script", name],
-        { },
+        {},
       );
       if (id) captured++;
     }
@@ -540,7 +537,7 @@ async function main(): Promise<void> {
         `This project uses ${framework}. Follow ${framework} conventions and patterns.`,
         "decision",
         ["bootstrap", "framework", framework.toLowerCase()],
-        { },
+        {},
       );
       if (id) captured++;
     }
@@ -552,7 +549,7 @@ async function main(): Promise<void> {
         `This project uses ${lintTool} for linting/formatting. Run it before committing.`,
         "decision",
         ["bootstrap", "lint", lintTool.toLowerCase()],
-        { },
+        {},
       );
       if (id) captured++;
     }
@@ -564,7 +561,7 @@ async function main(): Promise<void> {
         `Run tests with: \`${testCmd}\``,
         "decision",
         ["bootstrap", "test"],
-        { },
+        {},
       );
       if (id) captured++;
     }
@@ -573,7 +570,8 @@ async function main(): Promise<void> {
       console.log(`  Captured ${captured} project basics.`);
     } else {
       // Check if project files exist but captures were deduped (already captured before)
-      const hasProjectFiles = existsSync(join(process.cwd(), "package.json")) ||
+      const hasProjectFiles =
+        existsSync(join(process.cwd(), "package.json")) ||
         existsSync(join(process.cwd(), "Cargo.toml")) ||
         existsSync(join(process.cwd(), "go.mod")) ||
         existsSync(join(process.cwd(), "pyproject.toml"));
@@ -786,18 +784,13 @@ async function main(): Promise<void> {
       }
     }
     const outputFile =
-      output ??
-      `remem-mcp-export-${new Date().toISOString().replace(/[:.]/g, "-")}.md`;
+      output ?? `remem-mcp-export-${new Date().toISOString().replace(/[:.]/g, "-")}.md`;
     const flags = parseFlags(flagArgs);
     const filters: { sessionKey?: string; type?: string; tag?: string } = {};
     if (flags["session-key"]) filters.sessionKey = flags["session-key"];
-    if (flags["type"]) filters.type = flags["type"];
-    if (flags["tag"]) filters.tag = flags["tag"];
-    exportMarkdown(
-      dbPath,
-      outputFile,
-      Object.keys(filters).length > 0 ? filters : undefined,
-    );
+    if (flags.type) filters.type = flags.type;
+    if (flags.tag) filters.tag = flags.tag;
+    exportMarkdown(dbPath, outputFile, Object.keys(filters).length > 0 ? filters : undefined);
     return;
   }
   if (arg === "import") {

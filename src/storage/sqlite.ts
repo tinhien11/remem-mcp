@@ -351,9 +351,7 @@ export class SQLiteBackend implements StorageBackend {
   private rebuildFtsIfNeeded(migrationsRan: boolean): void {
     if (!migrationsRan) return;
     const hasFts = this.db
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='captures_fts'",
-      )
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='captures_fts'")
       .get() as { name: string } | undefined;
     if (!hasFts) return;
     // Rebuild FTS index for pre-migration captures
@@ -698,15 +696,25 @@ export class SQLiteBackend implements StorageBackend {
 
   /** Record that a correction was retrieved in search results. */
   incrementRetrievedCount(id: string): void {
-    this.db.prepare("UPDATE captures SET retrieved_count = retrieved_count + 1 WHERE id = ?").run(id);
+    this.db
+      .prepare("UPDATE captures SET retrieved_count = retrieved_count + 1 WHERE id = ?")
+      .run(id);
   }
 
   /** Record whether a correction was heeded or the error recurred. */
   recordCorrectionOutcome(id: string, outcome: "heeded" | "recurred"): void {
     if (outcome === "heeded") {
-      this.db.prepare("UPDATE captures SET heeded_count = heeded_count + 1, last_outcome = 'heeded' WHERE id = ?").run(id);
+      this.db
+        .prepare(
+          "UPDATE captures SET heeded_count = heeded_count + 1, last_outcome = 'heeded' WHERE id = ?",
+        )
+        .run(id);
     } else {
-      this.db.prepare("UPDATE captures SET recurrence_count = recurrence_count + 1, last_outcome = 'recurred' WHERE id = ?").run(id);
+      this.db
+        .prepare(
+          "UPDATE captures SET recurrence_count = recurrence_count + 1, last_outcome = 'recurred' WHERE id = ?",
+        )
+        .run(id);
     }
   }
 
@@ -722,7 +730,13 @@ export class SQLiteBackend implements StorageBackend {
       .prepare(
         "SELECT id, content, retrieved_count, heeded_count, recurrence_count FROM captures WHERE type = 'error' AND corrections > 0 AND deleted_at IS NULL",
       )
-      .all() as { id: string; content: string; retrieved_count: number; heeded_count: number; recurrence_count: number }[];
+      .all() as {
+      id: string;
+      content: string;
+      retrieved_count: number;
+      heeded_count: number;
+      recurrence_count: number;
+    }[];
 
     const candidates = rows.map((r) => {
       const total = r.heeded_count + r.recurrence_count;
@@ -732,16 +746,21 @@ export class SQLiteBackend implements StorageBackend {
 
     const totalHeeded = rows.reduce((s, r) => s + r.heeded_count, 0);
     const totalOutcomes = rows.reduce((s, r) => s + r.heeded_count + r.recurrence_count, 0);
-    const meanPrecision = candidates.length > 0
-      ? candidates.reduce((s, c) => s + c.precision, 0) / candidates.length
-      : 0;
+    const meanPrecision =
+      candidates.length > 0
+        ? candidates.reduce((s, c) => s + c.precision, 0) / candidates.length
+        : 0;
 
     return {
       totalCorrections: rows.length,
       avgPrecision: meanPrecision,
       heedRate: totalOutcomes > 0 ? totalHeeded / totalOutcomes : 0,
-      noiseCandidates: candidates.filter((c) => c.precision < 0.3).sort((a, b) => a.precision - b.precision),
-      highSignalCandidates: candidates.filter((c) => c.precision >= 0.8).sort((a, b) => b.precision - a.precision),
+      noiseCandidates: candidates
+        .filter((c) => c.precision < 0.3)
+        .sort((a, b) => a.precision - b.precision),
+      highSignalCandidates: candidates
+        .filter((c) => c.precision >= 0.8)
+        .sort((a, b) => b.precision - a.precision),
     };
   }
 
@@ -1128,9 +1147,10 @@ export class SQLiteBackend implements StorageBackend {
         // Auto-stale: if capture is older than STALE_MS and not already verified,
         // treat it as stale (0.1 trust boost) to naturally fade old memories.
         // Evergreen captures are never auto-staled.
-        const effectiveTrust = !evergreen && ageMs > STALE_MS && row.trust_state !== "verified"
-          ? "stale"
-          : (row.trust_state ?? "candidate");
+        const effectiveTrust =
+          !evergreen && ageMs > STALE_MS && row.trust_state !== "verified"
+            ? "stale"
+            : (row.trust_state ?? "candidate");
         const trustBoost = TRUST_BOOST[effectiveTrust] ?? 1.0;
         // Bayesian confidence: blend trust boost with evidence-based confidence.
         // Captures with confirmations get higher confidence, corrections lower it.
@@ -1139,9 +1159,8 @@ export class SQLiteBackend implements StorageBackend {
         const lastAccessedAt = (row as { last_accessed_at?: number }).last_accessed_at;
         const bayesian = this.bayesianConfidence(confirmations, corrections, lastAccessedAt);
         // Blend: 70% trust-state boost + 30% Bayesian evidence (when evidence exists)
-        const blendedBoost = (confirmations + corrections) > 0
-          ? trustBoost * 0.7 + bayesian * 1.5 * 0.3
-          : trustBoost;
+        const blendedBoost =
+          confirmations + corrections > 0 ? trustBoost * 0.7 + bayesian * 1.5 * 0.3 : trustBoost;
         const decayed = Number.isNaN(r.score) ? 0 : r.score * decay;
         // BM25 scores are negative (lower = better). For negative scores, divide by boost
         // so a lower boost makes the score more negative (ranks lower). For positive scores
@@ -1167,12 +1186,12 @@ export class SQLiteBackend implements StorageBackend {
         // This rewards "popular" memories that agents keep recalling.
         const accessCount = (row as { access_count?: number }).access_count ?? 0;
         const lastAccessed = (row as { last_accessed_at?: number }).last_accessed_at;
-        const accessBoost = accessCount > 0 && lastAccessed
-          ? 0.3 + 1.2 * (1 / (1 + (now - lastAccessed) / (7 * 24 * 60 * 60 * 1000))) // 7-day half-life
-          : 1.0; // No access data → neutral
-        const accessScored = biasedScore >= 0
-          ? biasedScore * accessBoost
-          : biasedScore / accessBoost;
+        const accessBoost =
+          accessCount > 0 && lastAccessed
+            ? 0.3 + 1.2 * (1 / (1 + (now - lastAccessed) / (7 * 24 * 60 * 60 * 1000))) // 7-day half-life
+            : 1.0; // No access data → neutral
+        const accessScored =
+          biasedScore >= 0 ? biasedScore * accessBoost : biasedScore / accessBoost;
         return { entry: rowToEntry(row), score: accessScored };
       })
       .filter((r): r is SearchResult => r !== null)
@@ -1359,10 +1378,12 @@ export class SQLiteBackend implements StorageBackend {
 
     let captures = 0;
     let atoms = 0;
-    let scenarios = 0;
+    const scenarios = 0;
     // Wrap in transaction so new captures matching the filter can't be
     // inserted between SELECT and delete (atomic snapshot).
-    const softDelete = this.db.prepare("UPDATE captures SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL");
+    const softDelete = this.db.prepare(
+      "UPDATE captures SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
+    );
     const deleteVec = this.db.prepare("DELETE FROM captures_vec WHERE id = ?");
     const deleteAtoms = this.db.prepare("DELETE FROM atoms WHERE capture_id = ?");
     const now = Date.now();

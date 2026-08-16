@@ -57,8 +57,17 @@ function callTool(name: string, args: Record<string, unknown>): Promise<any> {
 }
 
 /** Capture content and return the stored capture id. Handles both "Captured:" and "Duplicate:" responses. */
-async function captureId(content: string, sessionKey: string, tags: string[] = []): Promise<string> {
-  const resp = await callTool("capture", { content, type: "decision", tags, session_key: sessionKey });
+async function captureId(
+  content: string,
+  sessionKey: string,
+  tags: string[] = [],
+): Promise<string> {
+  const resp = await callTool("capture", {
+    content,
+    type: "decision",
+    tags,
+    session_key: sessionKey,
+  });
   expect(resp.result.isError).toBeFalsy();
   const text = resp.result.content[0].text;
   // "Captured: <id>" for new captures, "Duplicate: <id>" when content hash already exists.
@@ -239,8 +248,10 @@ describeOrSkip("consolidate MCP tool with batch_size (stdio)", () => {
     const sk = "batch-dup-detect";
     // Slightly different content (one word) so capture-time content-hash dedup
     // doesn't block the second one, but Jaccard similarity still exceeds 0.75.
-    const content1 = "We decided to use PostgreSQL with pgvector for vector storage and hybrid search alpha.";
-    const content2 = "We decided to use PostgreSQL with pgvector for vector storage and hybrid search beta.";
+    const content1 =
+      "We decided to use PostgreSQL with pgvector for vector storage and hybrid search alpha.";
+    const content2 =
+      "We decided to use PostgreSQL with pgvector for vector storage and hybrid search beta.";
     const id1 = await captureId(content1, sk, ["dup-detect"]);
     const id2 = await captureId(content2, sk, ["dup-detect"]);
     expect(id1).not.toBe(id2);
@@ -260,7 +271,8 @@ describeOrSkip("consolidate MCP tool with batch_size (stdio)", () => {
 
   it("consolidate with confirm=true merges duplicates (one is soft-deleted)", async () => {
     const sk = "batch-confirm-merge";
-    const content1 = "We chose Redis for caching with a TTL of 3600 seconds for session data alpha.";
+    const content1 =
+      "We chose Redis for caching with a TTL of 3600 seconds for session data alpha.";
     const content2 = "We chose Redis for caching with a TTL of 3600 seconds for session data beta.";
     const id1 = await captureId(content1, sk, ["confirm-merge"]);
     const id2 = await captureId(content2, sk, ["confirm-merge"]);
@@ -288,8 +300,10 @@ describeOrSkip("consolidate MCP tool with batch_size (stdio)", () => {
 
   it("consolidate with confirm=false only reports (both captures still exist)", async () => {
     const sk = "batch-report-only";
-    const content1 = "We selected FastAPI as the web framework for the Python backend service alpha.";
-    const content2 = "We selected FastAPI as the web framework for the Python backend service beta.";
+    const content1 =
+      "We selected FastAPI as the web framework for the Python backend service alpha.";
+    const content2 =
+      "We selected FastAPI as the web framework for the Python backend service beta.";
     const id1 = await captureId(content1, sk, ["report-only"]);
     const id2 = await captureId(content2, sk, ["report-only"]);
     expect(id1).not.toBe(id2);

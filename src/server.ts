@@ -18,6 +18,7 @@ import {
 } from "./codegraph/engine.js";
 import type { Embedder } from "./embedding/types.js";
 import type { PipelineContext, PipelineStage } from "./pipeline/types.js";
+import { classifyGlobalContent } from "./sdk.js";
 import { AuditLogger } from "./security/audit.js";
 import { checkContentLength, enforceQuota } from "./security/quota.js";
 import { redact } from "./security/redactor.js";
@@ -43,7 +44,6 @@ import {
   findOutdatedPages as wikiOutdated,
   searchWiki as wikiSearch,
 } from "./wiki/engine.js";
-import { classifyGlobalContent } from "./sdk.js";
 
 /** Default session key: hash of the current working directory. */
 function defaultSessionKey(): string {
@@ -204,7 +204,7 @@ const TOOLS: Tool[] = [
       "Call this tool after you complete a non-trivial task, make a decision, or fix a bug with a known root cause. " +
       "You can capture a single text string, or a list of role-based conversation messages. " +
       "To store cross-project knowledge (rules, conventions, learnings reusable across projects), " +
-      "pass session_key=\"global\" or auto_global=true — these appear in every project's recall automatically.",
+      'pass session_key="global" or auto_global=true — these appear in every project\'s recall automatically.',
     inputSchema: {
       type: "object",
       properties: {
@@ -1055,7 +1055,8 @@ const TOOLS: Tool[] = [
         outcome: {
           type: "string",
           enum: ["heeded", "recurred"],
-          description: "'heeded' = agent followed the correction. 'recurred' = same error repeated.",
+          description:
+            "'heeded' = agent followed the correction. 'recurred' = same error repeated.",
         },
       },
       required: ["capture_id", "outcome"],
@@ -1222,7 +1223,8 @@ export function createServer(opts: ServerOptions): Server {
       const db = getDb(opts);
       const sessionKey = defaultSessionKey();
       const globalKey = globalSessionKey();
-      const sessionKeys = globalKey && globalKey !== sessionKey ? [sessionKey, globalKey] : [sessionKey];
+      const sessionKeys =
+        globalKey && globalKey !== sessionKey ? [sessionKey, globalKey] : [sessionKey];
       const placeholders = sessionKeys.map(() => "?").join(",");
       const rows = db
         .prepare(
@@ -1707,8 +1709,7 @@ async function handleCapture(
         filters: { agentId, type },
       });
       const fuzzyDup = fuzzyMatches.find(
-        (r) =>
-          r.entry.content.slice(0, 60).trim().toLowerCase() === fuzzyPrefix,
+        (r) => r.entry.content.slice(0, 60).trim().toLowerCase() === fuzzyPrefix,
       );
       if (fuzzyDup) {
         // Defer the supersede until after the new capture is persisted, so a
@@ -1853,7 +1854,11 @@ async function handleCapture(
   const msgNote = messages ? ` (${messages.length} messages)` : "";
   const trustNote = trustState === "verified" ? " [verified]" : "";
   const supersedesNote = supersedes ? ` (supersedes ${supersedes})` : "";
-  const globalNote = autoClassified ? " [auto→global]" : (sessionKey === globalKey ? " [global]" : "");
+  const globalNote = autoClassified
+    ? " [auto→global]"
+    : sessionKey === globalKey
+      ? " [global]"
+      : "";
   return {
     content: [
       {
@@ -2042,7 +2047,11 @@ async function handleRelated(
 
   // Search by tags (if any) — direct SQL, no FTS5
   if (sourceTags.length > 0) {
-    const tagMatches = await opts.storage.listByTags(sourceTags.slice(0, 10), 100, sourceSessionKey);
+    const tagMatches = await opts.storage.listByTags(
+      sourceTags.slice(0, 10),
+      100,
+      sourceSessionKey,
+    );
     for (const entry of tagMatches) {
       if (entry.id === id) continue;
       const entryTags = entry.tags ?? [];
@@ -2553,9 +2562,7 @@ async function handleUpdate(
 
   const rawContent = (args.content as string) ?? (row.content as string);
   // Redact secrets if enabled — same as handleCapture
-  const { text: newContent } = opts.redactSecrets
-    ? redact(rawContent)
-    : { text: rawContent };
+  const { text: newContent } = opts.redactSecrets ? redact(rawContent) : { text: rawContent };
   const newTags = args.tags ? JSON.stringify(args.tags) : (row.tags as string);
   const newType = (args.type as string) ?? (row.type as string);
   const newTrust = args.verified ? "verified" : (row.trust_state as string);
@@ -2595,10 +2602,16 @@ async function handleConsolidate(
   const sessionKey = (args.session_key as string) ?? defaultSessionKey();
 
   if (threshold < 0 || threshold > 1) {
-    return { content: [{ type: "text", text: "Error: threshold must be between 0 and 1." }], isError: true };
+    return {
+      content: [{ type: "text", text: "Error: threshold must be between 0 and 1." }],
+      isError: true,
+    };
   }
   if (batchSize < 0) {
-    return { content: [{ type: "text", text: "Error: batch_size must be non-negative." }], isError: true };
+    return {
+      content: [{ type: "text", text: "Error: batch_size must be non-negative." }],
+      isError: true,
+    };
   }
 
   const db = getDb(opts);
@@ -2786,9 +2799,7 @@ async function handleStats(
   let sessionStats: { sessionKey: string; count: number }[] | null = null;
   if (sessionKey !== "all") {
     const sRow = db
-      .prepare(
-        "SELECT COUNT(*) as n FROM captures WHERE deleted_at IS NULL AND session_key = ?",
-      )
+      .prepare("SELECT COUNT(*) as n FROM captures WHERE deleted_at IS NULL AND session_key = ?")
       .get(sessionKey) as { n: number };
     sessionStats = [{ sessionKey, count: sRow.n }];
   } else {
@@ -2882,9 +2893,9 @@ async function handleHealth(
 
   // Total captures count (non-deleted)
   try {
-    const row = db
-      .prepare("SELECT COUNT(*) as n FROM captures WHERE deleted_at IS NULL")
-      .get() as { n: number };
+    const row = db.prepare("SELECT COUNT(*) as n FROM captures WHERE deleted_at IS NULL").get() as {
+      n: number;
+    };
     checks.totalCaptures = row.n;
   } catch (e) {
     checks.totalCaptures = { error: String(e) };
@@ -2893,9 +2904,9 @@ async function handleHealth(
 
   // Schema version
   try {
-    const row = db
-      .prepare("SELECT MAX(version) as version FROM schema_version")
-      .get() as { version: number | null };
+    const row = db.prepare("SELECT MAX(version) as version FROM schema_version").get() as {
+      version: number | null;
+    };
     checks.schemaVersion = row.version;
   } catch (e) {
     checks.schemaVersion = { error: String(e) };
@@ -2922,9 +2933,7 @@ async function handleHealth(
   // Last capture timestamp
   try {
     const row = db
-      .prepare(
-        "SELECT MAX(created_at) as last FROM captures WHERE deleted_at IS NULL",
-      )
+      .prepare("SELECT MAX(created_at) as last FROM captures WHERE deleted_at IS NULL")
       .get() as { last: number | null };
     checks.lastCapture = row.last ? new Date(row.last).toISOString() : null;
   } catch (e) {
@@ -2961,7 +2970,9 @@ async function handleConfirm(
   }
   const db = getDb(opts);
   const row = db
-    .prepare("SELECT id, confirmations, corrections FROM captures WHERE id = ? AND deleted_at IS NULL")
+    .prepare(
+      "SELECT id, confirmations, corrections FROM captures WHERE id = ? AND deleted_at IS NULL",
+    )
     .get(captureId) as { id: string; confirmations: number; corrections: number } | undefined;
   if (!row) {
     return {
@@ -3002,7 +3013,9 @@ async function handleCorrect(
   }
   const db = getDb(opts);
   const row = db
-    .prepare("SELECT id, confirmations, corrections FROM captures WHERE id = ? AND deleted_at IS NULL")
+    .prepare(
+      "SELECT id, confirmations, corrections FROM captures WHERE id = ? AND deleted_at IS NULL",
+    )
     .get(captureId) as { id: string; confirmations: number; corrections: number } | undefined;
   if (!row) {
     return {
@@ -3069,7 +3082,10 @@ async function handleSupersede(
       isError: true,
     };
   }
-  db.prepare("UPDATE captures SET superseded_by = ?, trust_state = 'stale' WHERE id = ?").run(newId, oldId);
+  db.prepare("UPDATE captures SET superseded_by = ?, trust_state = 'stale' WHERE id = ?").run(
+    newId,
+    oldId,
+  );
   return {
     content: [
       {
@@ -3089,13 +3105,20 @@ async function handleRecordOutcome(
   const outcome = args.outcome as string;
   if (!captureId || (outcome !== "heeded" && outcome !== "recurred")) {
     return {
-      content: [{ type: "text", text: "Error: capture_id and outcome ('heeded' or 'recurred') are required." }],
+      content: [
+        {
+          type: "text",
+          text: "Error: capture_id and outcome ('heeded' or 'recurred') are required.",
+        },
+      ],
       isError: true,
     };
   }
   const db = getDb(opts);
   const row = db
-    .prepare("SELECT id, heeded_count, recurrence_count FROM captures WHERE id = ? AND deleted_at IS NULL")
+    .prepare(
+      "SELECT id, heeded_count, recurrence_count FROM captures WHERE id = ? AND deleted_at IS NULL",
+    )
     .get(captureId) as { id: string; heeded_count: number; recurrence_count: number } | undefined;
   if (!row) {
     return {
@@ -3155,7 +3178,13 @@ async function handleSessionStart(
     .prepare(
       `SELECT id, type, content, tags, created_at FROM captures WHERE deleted_at IS NULL AND session_key IN (${placeholders}) ORDER BY created_at DESC LIMIT 5`,
     )
-    .all(...sessionKeys) as { id: string; type: string; content: string; tags: string; created_at: number }[];
+    .all(...sessionKeys) as {
+    id: string;
+    type: string;
+    content: string;
+    tags: string;
+    created_at: number;
+  }[];
 
   // Correction KPIs
   const kpis = opts.storage.getCorrectionKPIs();
@@ -3174,28 +3203,31 @@ async function handleSessionStart(
         console.error(`[remem-mcp] Embedding failed: ${err}`);
       }
       const reservedGlobal = useGlobalFallback ? 1 : 0;
-      const projectResults = await opts.storage.search(
-        contextQuery,
-        queryEmbedding,
-        { limit: 3 - reservedGlobal, offset: 0, mode: "hybrid", sessionKey },
-      );
+      const projectResults = await opts.storage.search(contextQuery, queryEmbedding, {
+        limit: 3 - reservedGlobal,
+        offset: 0,
+        mode: "hybrid",
+        sessionKey,
+      });
       let globalResults: SearchResult[] = [];
       if (useGlobalFallback) {
         try {
-          globalResults = await opts.storage.search(
-            contextQuery,
-            queryEmbedding,
-            { limit: reservedGlobal, offset: 0, mode: "hybrid", sessionKey: globalKey },
-          );
+          globalResults = await opts.storage.search(contextQuery, queryEmbedding, {
+            limit: reservedGlobal,
+            offset: 0,
+            mode: "hybrid",
+            sessionKey: globalKey,
+          });
         } catch {
           // Global search failure is non-fatal
         }
       }
       const seen = new Set(projectResults.map((r) => r.entry.id));
-      const all = [...projectResults, ...globalResults.filter((r) => !seen.has(r.entry.id))].slice(0, 3);
-      contextResults = all.map(
-        (r) => `[${r.entry.type}] ${r.entry.content.slice(0, 100)}`,
+      const all = [...projectResults, ...globalResults.filter((r) => !seen.has(r.entry.id))].slice(
+        0,
+        3,
       );
+      contextResults = all.map((r) => `[${r.entry.type}] ${r.entry.content.slice(0, 100)}`);
     } catch (err) {
       console.error(`[remem-mcp] session_start context query failed: ${err}`);
       contextResults = [];
@@ -3215,9 +3247,10 @@ async function handleSessionStart(
     correctionAlignment: {
       totalCorrections: kpis.totalCorrections,
       heedRate: kpis.heedRate,
-      alignment: kpis.totalCorrections > 0
-        ? `${Math.round(kpis.heedRate * 100)}% corrections heeded (${kpis.totalCorrections} total)`
-        : "No corrections recorded yet",
+      alignment:
+        kpis.totalCorrections > 0
+          ? `${Math.round(kpis.heedRate * 100)}% corrections heeded (${kpis.totalCorrections} total)`
+          : "No corrections recorded yet",
     },
     contextResults,
   };
@@ -3291,10 +3324,16 @@ async function handleSessionCheckpoint(
   const sessionKey = (args.session_key as string) ?? defaultSessionKey();
 
   if (!name || name.trim() === "") {
-    return { content: [{ type: "text", text: "Error: name is required and cannot be empty." }], isError: true };
+    return {
+      content: [{ type: "text", text: "Error: name is required and cannot be empty." }],
+      isError: true,
+    };
   }
   if (name.length > 100) {
-    return { content: [{ type: "text", text: "Error: name must be 100 characters or less." }], isError: true };
+    return {
+      content: [{ type: "text", text: "Error: name must be 100 characters or less." }],
+      isError: true,
+    };
   }
 
   const db = getDb(opts);
@@ -3304,7 +3343,13 @@ async function handleSessionCheckpoint(
     .prepare(
       "SELECT id, type, content, tags, created_at FROM captures WHERE deleted_at IS NULL AND session_key = ? ORDER BY created_at DESC LIMIT 20",
     )
-    .all(sessionKey) as { id: string; type: string; content: string; tags: string; created_at: number }[];
+    .all(sessionKey) as {
+    id: string;
+    type: string;
+    content: string;
+    tags: string;
+    created_at: number;
+  }[];
 
   // Store checkpoint as a capture with metadata
   const checkpointId = generateId();

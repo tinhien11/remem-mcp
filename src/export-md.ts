@@ -13,15 +13,7 @@ interface MdExportRow {
 }
 
 /** Ordered list of capture types for grouping in the export. */
-const TYPE_ORDER = [
-  "learning",
-  "decision",
-  "error",
-  "task",
-  "conversation",
-  "atom",
-  "pattern",
-];
+const TYPE_ORDER = ["learning", "decision", "error", "task", "conversation", "atom", "pattern"];
 
 /** Escape a string so it is safe to embed in a Markdown document body. */
 function escapeMd(text: string): string {
@@ -98,9 +90,7 @@ export function exportMarkdown(
 
   const orderedTypes = [
     ...TYPE_ORDER.filter((t) => byType.has(t)),
-    ...[...byType.keys()]
-      .filter((t) => !TYPE_ORDER.includes(t))
-      .sort((a, b) => a.localeCompare(b)),
+    ...[...byType.keys()].filter((t) => !TYPE_ORDER.includes(t)).sort((a, b) => a.localeCompare(b)),
   ];
 
   const lines: string[] = [];

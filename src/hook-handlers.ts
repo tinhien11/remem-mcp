@@ -591,7 +591,12 @@ export function hookStop(dbPath?: string): void {
 
   process.stdin.on("end", () => {
     clearTimeout(stdinTimeout);
-    let input: { stop_hook_active?: boolean; session_id?: string; transcript_path?: string; cwd?: string } = {};
+    let input: {
+      stop_hook_active?: boolean;
+      session_id?: string;
+      transcript_path?: string;
+      cwd?: string;
+    } = {};
     let validInput = true;
     try {
       const raw = Buffer.concat(chunks).toString("utf-8");
@@ -620,11 +625,13 @@ export function hookStop(dbPath?: string): void {
 
       if (tpath && existsSync(tpath)) {
         // Claude Code: transcript is already available — capture now
-        void captureSessionTranscript(dbPath, sid, tpath, input.cwd).then((capId) => {
-          logToFile(`Stop: direct capture for session ${sid}, id=${capId ?? "skipped"}`);
-        }).catch((err) => {
-          logToFile(`Stop: capture error - ${err}`);
-        });
+        void captureSessionTranscript(dbPath, sid, tpath, input.cwd)
+          .then((capId) => {
+            logToFile(`Stop: direct capture for session ${sid}, id=${capId ?? "skipped"}`);
+          })
+          .catch((err) => {
+            logToFile(`Stop: capture error - ${err}`);
+          });
       } else {
         // Devin CLI: transcript not yet written — spawn background waiter
         const scriptPath = process.argv[1];
@@ -961,104 +968,105 @@ export function hookPostToolUse(dbPath: string): void {
       // link the success to the previous error and upvote it
       if (!isError) {
         try {
-        const prevError = db
-          .prepare(
-            `SELECT id, metadata FROM captures
+          const prevError = db
+            .prepare(
+              `SELECT id, metadata FROM captures
              WHERE type = 'error' AND session_key = ? AND deleted_at IS NULL
              AND created_at > ?
              AND json_extract(metadata, '$.command') = ?
              ORDER BY created_at DESC LIMIT 1`,
-          )
-          .get(sessionKey, Date.now() - 7 * 86400000, command.slice(0, 200)) as { id: string; metadata: string } | undefined;
+            )
+            .get(sessionKey, Date.now() - 7 * 86400000, command.slice(0, 200)) as
+            | { id: string; metadata: string }
+            | undefined;
 
-        if (prevError) {
-          // Upvote the previous error (it was resolved)
-          const meta = JSON.parse(prevError.metadata);
-          const confidence = (meta.confidence ?? 2) + 1;
-          meta.resolved = true;
-          meta.resolved_at = new Date().toISOString();
-          meta.resolution = "Command succeeded after previous failure";
-          meta.confidence = confidence;
+          if (prevError) {
+            // Upvote the previous error (it was resolved)
+            const meta = JSON.parse(prevError.metadata);
+            const confidence = (meta.confidence ?? 2) + 1;
+            meta.resolved = true;
+            meta.resolved_at = new Date().toISOString();
+            meta.resolution = "Command succeeded after previous failure";
+            meta.confidence = confidence;
 
-          // [Feature 9] Record the fix that worked — extract from stdout (success output)
-          // This becomes the "proven fix" injected by PreToolUse for similar future errors
-          const successSummary = (stdout || "").trim().slice(0, 200);
-          if (successSummary) {
-            meta.fix_applied = `Command succeeded. Output: ${successSummary.slice(0, 150)}`;
-          } else {
-            meta.fix_applied = meta.correct_approach ?? "Command succeeded after fix.";
-          }
+            // [Feature 9] Record the fix that worked — extract from stdout (success output)
+            // This becomes the "proven fix" injected by PreToolUse for similar future errors
+            const successSummary = (stdout || "").trim().slice(0, 200);
+            if (successSummary) {
+              meta.fix_applied = `Command succeeded. Output: ${successSummary.slice(0, 150)}`;
+            } else {
+              meta.fix_applied = meta.correct_approach ?? "Command succeeded after fix.";
+            }
 
-          // [Recovery Pattern Library] Extract a structured recovery playbook.
-          // Combines anti_pattern + correct_approach + fix_applied into step-by-step guidance.
-          // (SRE pattern: runbooks / incident playbooks)
-          if (meta.attempt_count && meta.attempt_count >= 2) {
-            meta.recovery_pattern = {
-              steps: [
-                `1. Identify: ${meta.title ?? "the error"}`,
-                `2. Avoid: ${meta.anti_pattern ?? "the anti-pattern that caused this"}`,
-                `3. Apply: ${meta.correct_approach ?? "the correct approach"}`,
-                `4. Verify: ${meta.fix_applied?.slice(0, 80) ?? "run the command again"}`,
-              ],
+            // [Recovery Pattern Library] Extract a structured recovery playbook.
+            // Combines anti_pattern + correct_approach + fix_applied into step-by-step guidance.
+            // (SRE pattern: runbooks / incident playbooks)
+            if (meta.attempt_count && meta.attempt_count >= 2) {
+              meta.recovery_pattern = {
+                steps: [
+                  `1. Identify: ${meta.title ?? "the error"}`,
+                  `2. Avoid: ${meta.anti_pattern ?? "the anti-pattern that caused this"}`,
+                  `3. Apply: ${meta.correct_approach ?? "the correct approach"}`,
+                  `4. Verify: ${meta.fix_applied?.slice(0, 80) ?? "run the command again"}`,
+                ],
+                attempt_count: meta.attempt_count,
+                error_type: meta.error_type ?? "runtime",
+                extracted_at: new Date().toISOString(),
+              };
+            }
+
+            // [Fix Rollback Plan] Auto-generate a rollback plan for the fix.
+            // Safety net: if the fix causes issues, agent knows how to undo it.
+            const rollback = generateRollbackPlan(command, meta.fix_applied ?? "");
+            if (rollback) {
+              meta.rollback_plan = rollback;
+            }
+
+            // [Fix Provenance Chain] Mark provenance as auto_captured (system recorded it)
+            if (!meta.fix_provenance) {
+              meta.fix_provenance = "auto_captured";
+            }
+
+            // [Auto-Annotation] Regenerate notes with updated state (resolved, validated)
+            meta.auto_notes = generateAutoNotes({
               attempt_count: meta.attempt_count,
-              error_type: meta.error_type ?? "runtime",
-              extracted_at: new Date().toISOString(),
-            };
-          }
+              severity: meta.severity,
+              escalation_level: meta.escalation_level,
+              error_type: meta.error_type,
+              resolved: true,
+              fix_validated: meta.fix_validated,
+              drift_count: meta.drift_count,
+            });
 
-          // [Fix Rollback Plan] Auto-generate a rollback plan for the fix.
-          // Safety net: if the fix causes issues, agent knows how to undo it.
-          const rollback = generateRollbackPlan(command, meta.fix_applied ?? "");
-          if (rollback) {
-            meta.rollback_plan = rollback;
-          }
+            // [P0: A/B validation] Validate the fix — check if stdout contains
+            // error indicators (agent-learn pattern: only promote if proven)
+            // A "clean" success has no error keywords in stdout.
+            const lowerStdout = (stdout || "").toLowerCase();
+            const hasErrorIndicators =
+              /\b(errors?|failed|failure|exception|traceback|fatal)\b/.test(lowerStdout);
+            meta.fix_validated = !hasErrorIndicators;
+            if (hasErrorIndicators) {
+              logToFile(
+                `PostToolUse: fix recorded but UNVALIDATED (stdout contains error indicators) for ${prevError.id}`,
+              );
+            }
 
-          // [Fix Provenance Chain] Mark provenance as auto_captured (system recorded it)
-          if (!meta.fix_provenance) {
-            meta.fix_provenance = "auto_captured";
-          }
-
-          // [Auto-Annotation] Regenerate notes with updated state (resolved, validated)
-          meta.auto_notes = generateAutoNotes({
-            attempt_count: meta.attempt_count,
-            severity: meta.severity,
-            escalation_level: meta.escalation_level,
-            error_type: meta.error_type,
-            resolved: true,
-            fix_validated: meta.fix_validated,
-            drift_count: meta.drift_count,
-          });
-
-          // [P0: A/B validation] Validate the fix — check if stdout contains
-          // error indicators (agent-learn pattern: only promote if proven)
-          // A "clean" success has no error keywords in stdout.
-          const lowerStdout = (stdout || "").toLowerCase();
-          const hasErrorIndicators = /\b(errors?|failed|failure|exception|traceback|fatal)\b/.test(
-            lowerStdout,
-          );
-          meta.fix_validated = !hasErrorIndicators;
-          if (hasErrorIndicators) {
-            logToFile(
-              `PostToolUse: fix recorded but UNVALIDATED (stdout contains error indicators) for ${prevError.id}`,
+            db.prepare("UPDATE captures SET metadata = ? WHERE id = ?").run(
+              JSON.stringify(meta),
+              prevError.id,
             );
-          }
+            logToFile(
+              `PostToolUse: success correlation — upvoted error ${prevError.id} (confidence=${confidence}, fix recorded, validated=${meta.fix_validated})`,
+            );
 
-          db.prepare("UPDATE captures SET metadata = ? WHERE id = ?").run(
-            JSON.stringify(meta),
-            prevError.id,
-          );
-          logToFile(
-            `PostToolUse: success correlation — upvoted error ${prevError.id} (confidence=${confidence}, fix recorded, validated=${meta.fix_validated})`,
-          );
-
-          // [Fix Template Extraction] When an error is resolved, check if 2+ similar
-          // errors (same error_type) have similar fixes. If so, extract a reusable template.
-          // (Moves from specific fixes to generalizable principles)
-          if (meta.fix_validated && meta.fix_applied) {
-            try {
-              const similarFixes = db
-                .prepare(
-                  `SELECT
+            // [Fix Template Extraction] When an error is resolved, check if 2+ similar
+            // errors (same error_type) have similar fixes. If so, extract a reusable template.
+            // (Moves from specific fixes to generalizable principles)
+            if (meta.fix_validated && meta.fix_applied) {
+              try {
+                const similarFixes = db
+                  .prepare(
+                    `SELECT
                      json_extract(metadata, '$.fix_applied') as fix,
                      json_extract(metadata, '$.title') as title
                    FROM captures
@@ -1070,158 +1078,158 @@ export function hookPostToolUse(dbPath: string): void {
                    AND json_extract(metadata, '$.error_type') = ?
                    AND id != ?
                    ORDER BY created_at DESC LIMIT 5`,
-                )
-                .all(sessionKey, meta.error_type ?? "runtime", prevError.id) as {
-                fix: string;
-                title: string;
-              }[];
+                  )
+                  .all(sessionKey, meta.error_type ?? "runtime", prevError.id) as {
+                  fix: string;
+                  title: string;
+                }[];
 
-              if (similarFixes.length >= 2) {
-                // Check if fixes share a common pattern (simple word overlap)
-                const allFixes = [meta.fix_applied, ...similarFixes.map((s) => s.fix)];
-                const words = allFixes[0]
-                  .toLowerCase()
-                  .split(/\s+/)
-                  .filter(
-                    (w: string) => w.length > 3 && !["command", "succeeded", "output", "error"].includes(w),
+                if (similarFixes.length >= 2) {
+                  // Check if fixes share a common pattern (simple word overlap)
+                  const allFixes = [meta.fix_applied, ...similarFixes.map((s) => s.fix)];
+                  const words = allFixes[0]
+                    .toLowerCase()
+                    .split(/\s+/)
+                    .filter(
+                      (w: string) =>
+                        w.length > 3 && !["command", "succeeded", "output", "error"].includes(w),
+                    );
+                  const commonWords = words.filter((w: string) =>
+                    allFixes.slice(1).every((f) => f.toLowerCase().includes(w)),
                   );
-                const commonWords = words.filter((w: string) =>
-                  allFixes.slice(1).every((f) => f.toLowerCase().includes(w)),
-                );
 
-                if (commonWords.length >= 2) {
-                  // Template found — store it on the most recent error as a template marker
-                  meta.fix_template = {
-                    pattern: commonWords.join(" "),
-                    similar_fix_count: allFixes.length,
-                    error_type: meta.error_type ?? "runtime",
-                    extracted_at: new Date().toISOString(),
-                  };
-                  db.prepare("UPDATE captures SET metadata = ? WHERE id = ?").run(
-                    JSON.stringify(meta),
-                    prevError.id,
-                  );
-                  logToFile(
-                    `PostToolUse: FIX TEMPLATE extracted — pattern "${commonWords.join(" ")}" matches ${allFixes.length} fixes for ${meta.error_type ?? "runtime"} errors`,
-                  );
-                }
-              }
-            } catch {
-              // Non-fatal
-            }
-          }
-        }
-
-        // [P0: Harm gate] Check if a previously resolved error's command
-        // is NOW failing again — this means the "proven fix" caused a regression.
-        // Mark the original resolved error with harm_count to prevent re-injection.
-        // (errlore pattern: withhold harmful lessons)
-
-        // [Moat 2: Decision Learning] Auto-capture decisions from successful commands.
-        // Detects dependency choices, config decisions, commit-encoded decisions.
-        const decision = detectDecision(command, stdout);
-        if (decision) {
-          try {
-            const decId = `dec-${createHash("sha256")
-              .update(decision.choice + sessionKey)
-              .digest("hex")
-              .slice(0, 12)}`;
-            const existingDec = db
-              .prepare("SELECT id, metadata FROM captures WHERE id = ?")
-              .get(decId) as { id: string; metadata: string } | undefined;
-
-            // [Moat 2: Decision Conflict Detection] Check for contradictory decisions
-            const conflict = detectDecisionConflict(
-              db,
-              sessionKey,
-              decision.choice,
-              decision.decision_type,
-            );
-            if (conflict) {
-              logToFile(`PostToolUse: DECISION CONFLICT — ${conflict}`);
-            }
-
-            // [Moat 2: Decision Drift Detection] Check if a different decision was recently injected
-            // If so, the agent ignored the injected decision and chose differently → drift
-            try {
-              const driftRecords = checkAllDriftInjections(sessionKey);
-              for (const dr of driftRecords) {
-                if (dr.type === "decision" && dr.content_hash !== decId) {
-                  // A different decision was injected but agent chose this one instead
-                  const injectedDec = db
-                    .prepare("SELECT id, metadata FROM captures WHERE id = ?")
-                    .get(dr.content_hash) as { id: string; metadata: string } | undefined;
-                  if (injectedDec) {
-                    const injMeta = JSON.parse(injectedDec.metadata);
-                    injMeta.drift_count = (injMeta.drift_count ?? 0) + 1;
-                    injMeta.last_drift_at = new Date().toISOString();
+                  if (commonWords.length >= 2) {
+                    // Template found — store it on the most recent error as a template marker
+                    meta.fix_template = {
+                      pattern: commonWords.join(" "),
+                      similar_fix_count: allFixes.length,
+                      error_type: meta.error_type ?? "runtime",
+                      extracted_at: new Date().toISOString(),
+                    };
                     db.prepare("UPDATE captures SET metadata = ? WHERE id = ?").run(
-                      JSON.stringify(injMeta),
-                      injectedDec.id,
+                      JSON.stringify(meta),
+                      prevError.id,
                     );
                     logToFile(
-                      `PostToolUse: DECISION DRIFT — injected ${dr.content_hash} but agent chose ${decision.choice}`,
+                      `PostToolUse: FIX TEMPLATE extracted — pattern "${commonWords.join(" ")}" matches ${allFixes.length} fixes for ${meta.error_type ?? "runtime"} errors`,
                     );
                   }
                 }
+              } catch {
+                // Non-fatal
+              }
+            }
+          }
+
+          // [P0: Harm gate] Check if a previously resolved error's command
+          // is NOW failing again — this means the "proven fix" caused a regression.
+          // Mark the original resolved error with harm_count to prevent re-injection.
+          // (errlore pattern: withhold harmful lessons)
+
+          // [Moat 2: Decision Learning] Auto-capture decisions from successful commands.
+          // Detects dependency choices, config decisions, commit-encoded decisions.
+          const decision = detectDecision(command, stdout);
+          if (decision) {
+            try {
+              const decId = `dec-${createHash("sha256")
+                .update(decision.choice + sessionKey)
+                .digest("hex")
+                .slice(0, 12)}`;
+              const existingDec = db
+                .prepare("SELECT id, metadata FROM captures WHERE id = ?")
+                .get(decId) as { id: string; metadata: string } | undefined;
+
+              // [Moat 2: Decision Conflict Detection] Check for contradictory decisions
+              const conflict = detectDecisionConflict(
+                db,
+                sessionKey,
+                decision.choice,
+                decision.decision_type,
+              );
+              if (conflict) {
+                logToFile(`PostToolUse: DECISION CONFLICT — ${conflict}`);
+              }
+
+              // [Moat 2: Decision Drift Detection] Check if a different decision was recently injected
+              // If so, the agent ignored the injected decision and chose differently → drift
+              try {
+                const driftRecords = checkAllDriftInjections(sessionKey);
+                for (const dr of driftRecords) {
+                  if (dr.type === "decision" && dr.content_hash !== decId) {
+                    // A different decision was injected but agent chose this one instead
+                    const injectedDec = db
+                      .prepare("SELECT id, metadata FROM captures WHERE id = ?")
+                      .get(dr.content_hash) as { id: string; metadata: string } | undefined;
+                    if (injectedDec) {
+                      const injMeta = JSON.parse(injectedDec.metadata);
+                      injMeta.drift_count = (injMeta.drift_count ?? 0) + 1;
+                      injMeta.last_drift_at = new Date().toISOString();
+                      db.prepare("UPDATE captures SET metadata = ? WHERE id = ?").run(
+                        JSON.stringify(injMeta),
+                        injectedDec.id,
+                      );
+                      logToFile(
+                        `PostToolUse: DECISION DRIFT — injected ${dr.content_hash} but agent chose ${decision.choice}`,
+                      );
+                    }
+                  }
+                }
+              } catch {
+                // non-fatal
+              }
+
+              if (existingDec) {
+                // Decision already exists — upvote confidence
+                // [Moat 2: Follow Rate Tracking] Agent re-chose same decision → followed=true
+                const dMeta = JSON.parse(existingDec.metadata);
+                dMeta.confidence = (dMeta.confidence ?? 1) + 1;
+                dMeta.last_seen = new Date().toISOString();
+                dMeta.seen_count = (dMeta.seen_count ?? 1) + 1;
+                dMeta.followed = true;
+                dMeta.follow_count = (dMeta.follow_count ?? 0) + 1;
+                if (conflict) {
+                  dMeta.conflict_warning = conflict;
+                }
+                db.prepare("UPDATE captures SET metadata = ? WHERE id = ?").run(
+                  JSON.stringify(dMeta),
+                  decId,
+                );
+              } else {
+                const decContent = `Decision: ${decision.title}`;
+                const decHash = createHash("sha256").update(decContent).digest("hex").slice(0, 16);
+                db.prepare(
+                  "INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ).run(
+                  decId,
+                  sessionKey,
+                  "auto",
+                  "decision",
+                  decContent,
+                  decHash,
+                  JSON.stringify([decision.decision_type]),
+                  Date.now(),
+                  JSON.stringify({
+                    title: decision.title,
+                    decision_type: decision.decision_type,
+                    choice: decision.choice,
+                    rationale: decision.rationale,
+                    command: command.slice(0, 200),
+                    confidence: 1,
+                    seen_count: 1,
+                    followed: null,
+                    follow_count: 0,
+                    drift_count: 0,
+                    conflict_warning: conflict,
+                    first_seen: new Date().toISOString(),
+                    last_seen: new Date().toISOString(),
+                  }),
+                );
+                logToFile(`PostToolUse: captured decision — ${decision.title}`);
               }
             } catch {
               // non-fatal
             }
-
-            if (existingDec) {
-              // Decision already exists — upvote confidence
-              // [Moat 2: Follow Rate Tracking] Agent re-chose same decision → followed=true
-              const dMeta = JSON.parse(existingDec.metadata);
-              dMeta.confidence = (dMeta.confidence ?? 1) + 1;
-              dMeta.last_seen = new Date().toISOString();
-              dMeta.seen_count = (dMeta.seen_count ?? 1) + 1;
-              dMeta.followed = true;
-              dMeta.follow_count = (dMeta.follow_count ?? 0) + 1;
-              if (conflict) {
-                dMeta.conflict_warning = conflict;
-              }
-              db.prepare("UPDATE captures SET metadata = ? WHERE id = ?").run(
-                JSON.stringify(dMeta),
-                decId,
-              );
-            } else {
-              const decContent = `Decision: ${decision.title}`;
-              const decHash = createHash("sha256").update(decContent).digest("hex").slice(0, 16);
-              db.prepare(
-                "INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-              ).run(
-                decId,
-                sessionKey,
-                "auto",
-                "decision",
-                decContent,
-                decHash,
-                JSON.stringify([decision.decision_type]),
-                Date.now(),
-                JSON.stringify({
-                  title: decision.title,
-                  decision_type: decision.decision_type,
-                  choice: decision.choice,
-                  rationale: decision.rationale,
-                  command: command.slice(0, 200),
-                  confidence: 1,
-                  seen_count: 1,
-                  followed: null,
-                  follow_count: 0,
-                  drift_count: 0,
-                  conflict_warning: conflict,
-                  first_seen: new Date().toISOString(),
-                  last_seen: new Date().toISOString(),
-                }),
-              );
-              logToFile(`PostToolUse: captured decision — ${decision.title}`);
-            }
-          } catch {
-            // non-fatal
           }
-        }
-
         } finally {
           if (db.open) db.close();
         }
@@ -1269,9 +1277,7 @@ export function hookPostToolUse(dbPath: string): void {
 
       // Check for duplicate using semantic hash (same normalized error in last hour)
       const recent = db
-        .prepare(
-          "SELECT id FROM captures WHERE content_hash = ? AND created_at > ? LIMIT 1",
-        )
+        .prepare("SELECT id FROM captures WHERE content_hash = ? AND created_at > ? LIMIT 1")
         .get(contentHash, now - 3600000) as { id: string } | undefined;
 
       if (recent) {
@@ -1366,7 +1372,9 @@ export function hookPostToolUse(dbPath: string): void {
              AND json_extract(metadata, '$.command') = ?
              ORDER BY created_at DESC LIMIT 1`,
           )
-          .get(sessionKey, Date.now() - 30 * 86400000, command.slice(0, 200)) as { id: string; metadata: string } | undefined;
+          .get(sessionKey, Date.now() - 30 * 86400000, command.slice(0, 200)) as
+          | { id: string; metadata: string }
+          | undefined;
         if (prevResolved) {
           const rMeta = JSON.parse(prevResolved.metadata);
           rMeta.fix_harm_count = (rMeta.fix_harm_count ?? 0) + 1;
@@ -1409,7 +1417,9 @@ export function hookPostToolUse(dbPath: string): void {
              AND json_extract(metadata, '$.command') = ?
              ORDER BY created_at DESC LIMIT 1`,
           )
-          .get(sessionKey, Date.now() - 30 * 86400000, command.slice(0, 200)) as { id: string } | undefined;
+          .get(sessionKey, Date.now() - 30 * 86400000, command.slice(0, 200)) as
+          | { id: string }
+          | undefined;
         if (lineagePrev) {
           causedByErrorId = lineagePrev.id;
           logToFile(`PostToolUse: LINEAGE — new error may be caused by fix on ${lineagePrev.id}`);
@@ -1493,7 +1503,11 @@ export function hookPostToolUse(dbPath: string): void {
              AND json_extract(metadata, '$.error_type') != ?
              ORDER BY created_at DESC LIMIT 3`,
           )
-          .all(sessionKey, id, Date.now() - 10 * 60000, errorType) as { id: string; etype: string; title: string }[];
+          .all(sessionKey, id, Date.now() - 10 * 60000, errorType) as {
+          id: string;
+          etype: string;
+          title: string;
+        }[];
 
         for (const prev of recentErrors) {
           // Record correlation on the previous error

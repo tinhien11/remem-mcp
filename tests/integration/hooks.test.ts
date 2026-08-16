@@ -51,16 +51,7 @@ function makeDb(
   );
 
   for (const c of captures) {
-    stmt.run(
-      c.id,
-      sessionKey,
-      "test-agent",
-      c.type,
-      c.content,
-      c.tags ?? "[]",
-      Date.now(),
-      null,
-    );
+    stmt.run(c.id, sessionKey, "test-agent", c.type, c.content, c.tags ?? "[]", Date.now(), null);
   }
 
   db.close();
