@@ -138,7 +138,9 @@ const TOOLS: Tool[] = [
     name: "recall",
     description:
       "Retrieve relevant past memory. Call this tool before you answer the user. " +
-      "Use it when the user references past work or when the task needs project context.",
+      "Use it when the user references past work or when the task needs project context. " +
+      "Automatically searches both project memory and global cross-project memory (rules, learnings) " +
+      "when REMEM_GLOBAL_SESSION_KEY is configured.",
     inputSchema: {
       type: "object",
       properties: {
@@ -199,7 +201,9 @@ const TOOLS: Tool[] = [
     description:
       "Store a decision, a learning, or a task outcome to memory. " +
       "Call this tool after you complete a non-trivial task, make a decision, or fix a bug with a known root cause. " +
-      "You can capture a single text string, or a list of role-based conversation messages.",
+      "You can capture a single text string, or a list of role-based conversation messages. " +
+      "To store cross-project knowledge (rules, conventions, learnings reusable across projects), " +
+      "pass session_key=\"global\" — these appear in every project's recall automatically.",
     inputSchema: {
       type: "object",
       properties: {
@@ -236,7 +240,12 @@ const TOOLS: Tool[] = [
           description: "The type of the memory. Defaults to 'conversation' if omitted.",
         },
         tags: { type: "array", items: { type: "string" }, description: "Optional tags." },
-        session_key: { type: "string", description: "The session key. The default is hash(cwd)." },
+        session_key: {
+          type: "string",
+          description:
+            "The session key. The default is hash(cwd). Use 'global' to store cross-project knowledge " +
+            "(rules, conventions, learnings) that should appear in every project's recall.",
+        },
         metadata: { type: "object", description: "Optional metadata." },
         verified: {
           type: "boolean",
@@ -270,7 +279,9 @@ const TOOLS: Tool[] = [
     name: "search",
     description:
       "Search memory by keyword or by semantic similarity. " +
-      "Use this tool when recall is too broad and you need specific facts.",
+      "Use this tool when recall is too broad and you need specific facts. " +
+      "Automatically searches both project and global cross-project memory " +
+      "when REMEM_GLOBAL_SESSION_KEY is configured.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1057,7 +1068,8 @@ const TOOLS: Tool[] = [
     name: "session_start",
     description:
       "Open a session and return recent context. Call this at the start of a multi-turn conversation " +
-      "to get a summary of recent captures and correction alignment metrics.",
+      "to get a summary of recent captures and correction alignment metrics. " +
+      "Returns both project-specific and global cross-project memory when configured.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3157,8 +3169,10 @@ async function handleSessionStart(
     }
   }
 
-  const summary = {
+  const summary: Record<string, unknown> = {
     sessionKey,
+    globalMemoryEnabled: !!globalKey,
+    globalSessionKey: globalKey ?? undefined,
     recentCaptures: recent.map((r) => ({
       id: r.id,
       type: r.type,
@@ -3174,6 +3188,18 @@ async function handleSessionStart(
     },
     contextResults,
   };
+
+  // Show global captures separately so the agent knows they exist
+  if (globalKey && recent.some((r) => r.session_key === globalKey)) {
+    summary.globalCaptures = recent
+      .filter((r) => r.session_key === globalKey)
+      .map((r) => ({
+        id: r.id,
+        type: r.type,
+        preview: r.content.slice(0, 80),
+        createdAt: new Date(r.created_at).toISOString(),
+      }));
+  }
 
   return {
     content: [{ type: "text", text: JSON.stringify(summary, null, 2) }],

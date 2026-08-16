@@ -109,7 +109,21 @@ Pass `team_id`, `agent_id`, `user_id`, or `task_id` to isolate memory between te
 
 ## Global + project memory
 
-Set `REMEM_GLOBAL_SESSION_KEY=global` in MCP config to search both global (cross-project) and project memory. Global results rank first.
+Set `REMEM_GLOBAL_SESSION_KEY=global` in MCP config to enable cross-project memory.
+
+**How it works:**
+- `recall` and `search` automatically search both project and global memory. Project results appear first, then global.
+- `session_start` returns recent captures from both project and global sessions.
+- 3 slots are reserved for global results so cross-project knowledge isn't buried when project memory is large.
+
+**When to store global memory:**
+- Pass `session_key="global"` to `capture` for: coding conventions, tool preferences, recurring patterns, lessons that apply to any project.
+- Don't store global: project-specific bugs, file paths, one-off decisions.
+
+**Example:**
+```
+capture(content="Always run tests before committing", type="learning", session_key="global")
+```
 
 ## CLI commands
 
