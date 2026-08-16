@@ -58,7 +58,7 @@ is_known() {
 gen_prompt() {
   local area="$1"
   local iter="$2"
-  local f="$PROMPT_DIR/agent-iter-${iter}-$(echo "$area" | head -c 20 | tr ' ' '_').md"
+  local f="$PROMPT_DIR/agent-iter-${iter}-$(echo "$area" | head -c 20 | tr ' :/.' '____').md"
   cat > "$f" << EOF
 # Bug Hunt — Iteration $iter
 
