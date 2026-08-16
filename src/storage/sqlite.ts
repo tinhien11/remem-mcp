@@ -583,7 +583,11 @@ export class SQLiteBackend implements StorageBackend {
 
   async putVector(id: string, embedding: number[]): Promise<void> {
     const buffer = new Float32Array(embedding);
-    const stmt = this.db.prepare("INSERT INTO captures_vec (id, embedding) VALUES (?, ?)");
+    // INSERT OR REPLACE so re-embedding (e.g. after update) replaces the old vector
+    // instead of failing with UNIQUE constraint and leaving stale embedding.
+    const stmt = this.db.prepare(
+      "INSERT OR REPLACE INTO captures_vec (id, embedding) VALUES (?, ?)",
+    );
     stmt.run(id, Buffer.from(buffer.buffer));
   }
 
@@ -1195,26 +1199,20 @@ export class SQLiteBackend implements StorageBackend {
   }
 
   async delete(id: string): Promise<DeleteResult> {
-    // Soft delete: set deleted_at instead of hard delete
+    // Soft delete: set deleted_at instead of hard delete.
+    // The captures_au trigger automatically syncs FTS on UPDATE.
+    // Search filters by deleted_at IS NULL, so tombstoned captures are excluded.
+    // Do NOT manually FTS-delete — the trigger already handled it, and a manual
+    // delete with empty strings after the trigger re-inserted the entry corrupts
+    // the FTS index (SQLITE_CORRUPT_VTAB).
     const now = Date.now();
     const captureCount = this.db
       .prepare("UPDATE captures SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL")
       .run(now, id).changes;
 
     if (captureCount > 0) {
-      // Remove from search indexes (FTS + vector) so tombstoned captures are not retrievable
+      // Remove from vector index (no trigger for this)
       this.db.prepare("DELETE FROM captures_vec WHERE id = ?").run(id);
-      // FTS5 external content: use the 'delete' command to remove from index
-      const rowid = this.db.prepare("SELECT rowid FROM captures WHERE id = ?").get(id) as
-        | { rowid: number }
-        | undefined;
-      if (rowid) {
-        this.db
-          .prepare(
-            "INSERT INTO captures_fts(captures_fts, rowid, content, tags, type) VALUES('delete', ?, '', '', '')",
-          )
-          .run(rowid.rowid);
-      }
     }
 
     return {
@@ -1270,6 +1268,9 @@ export class SQLiteBackend implements StorageBackend {
   }
 
   async reject(id: string, reason: string): Promise<DeleteResult> {
+    // Same as delete(): the captures_au trigger syncs FTS on UPDATE.
+    // Search filters by trust_state != 'rejected' AND deleted_at IS NULL.
+    // Manual FTS delete after trigger re-insert corrupts the index.
     const now = Date.now();
     const captureCount = this.db
       .prepare(
@@ -1278,18 +1279,8 @@ export class SQLiteBackend implements StorageBackend {
       .run(reason, now, id).changes;
 
     if (captureCount > 0) {
-      // Remove from search indexes so rejected captures are not retrievable
+      // Remove from vector index (no trigger for this)
       this.db.prepare("DELETE FROM captures_vec WHERE id = ?").run(id);
-      const rowid = this.db.prepare("SELECT rowid FROM captures WHERE id = ?").get(id) as
-        | { rowid: number }
-        | undefined;
-      if (rowid) {
-        this.db
-          .prepare(
-            "INSERT INTO captures_fts(captures_fts, rowid, content, tags, type) VALUES('delete', ?, '', '', '')",
-          )
-          .run(rowid.rowid);
-      }
     }
 
     return { captures: captureCount, atoms: 0, scenarios: 0 };
