@@ -1424,21 +1424,26 @@ async function handleRecall(
       mode,
       filters: { teamId, userId, taskId, agentId, type: typeFilter },
     });
-    // Then search global memory for remaining slots (rules, cross-project decisions)
-    const remaining = limit - projectResults.length;
+    // Always search global memory too — global rules/learnings should appear
+    // even when project has enough results to fill the limit. Reserve at least
+    // 3 slots for global so cross-project knowledge isn't buried.
+    const globalLimit = Math.max(3, limit - projectResults.length);
     let globalResults: SearchResult[] = [];
-    if (remaining > 0) {
+    try {
       globalResults = await opts.storage.search(query, queryEmbedding, {
         sessionKey: globalKey,
-        limit: remaining,
+        limit: globalLimit,
         offset: 0,
         mode,
         filters: { teamId, userId, taskId, agentId, type: typeFilter },
       });
+    } catch {
+      // Global search failure is non-fatal
     }
-    // Merge: project first, then global (dedup by id)
+    // Merge: project first, then global (dedup by id), cap at limit
     const seen = new Set(projectResults.map((r) => r.entry.id));
-    results = [...projectResults, ...globalResults.filter((r) => !seen.has(r.entry.id))];
+    const merged = [...projectResults, ...globalResults.filter((r) => !seen.has(r.entry.id))];
+    results = merged.slice(0, limit);
   } else {
     results = await opts.storage.search(query, queryEmbedding, {
       sessionKey,
@@ -1875,19 +1880,23 @@ async function handleSearch(
       mode,
       filters: searchFilters,
     });
-    const remaining = limit - projectResults.length;
+    // Always search global — reserve at least 3 slots for cross-project knowledge
+    const globalLimit = Math.max(3, limit - projectResults.length);
     let globalResults: SearchResult[] = [];
-    if (remaining > 0) {
+    try {
       globalResults = await opts.storage.search(query, queryEmbedding, {
         sessionKey: globalKey,
-        limit: remaining,
+        limit: globalLimit,
         offset: 0,
         mode,
         filters: searchFilters,
       });
+    } catch {
+      // Global search failure is non-fatal
     }
     const seen = new Set(projectResults.map((r) => r.entry.id));
-    results = [...projectResults, ...globalResults.filter((r) => !seen.has(r.entry.id))];
+    const merged = [...projectResults, ...globalResults.filter((r) => !seen.has(r.entry.id))];
+    results = merged.slice(0, limit);
   } else {
     results = await opts.storage.search(query, queryEmbedding, {
       sessionKey,
@@ -2137,19 +2146,23 @@ async function searchWithGlobalFallback(
     mode: params.mode,
     filters: { teamId: params.teamId, userId: params.userId, taskId: params.taskId },
   });
-  const remaining = params.limit - projectResults.length;
+  // Always search global — reserve at least 3 slots for cross-project knowledge
+  const globalLimit = Math.max(3, params.limit - projectResults.length);
   let globalResults: SearchResult[] = [];
-  if (remaining > 0) {
+  try {
     globalResults = await storage.search(params.query, params.queryEmbedding, {
       sessionKey: params.globalKey,
-      limit: remaining,
+      limit: globalLimit,
       offset: 0,
       mode: params.mode,
       filters: { teamId: params.teamId, userId: params.userId, taskId: params.taskId },
     });
+  } catch {
+    // Global search failure is non-fatal
   }
   const seen = new Set(projectResults.map((r) => r.entry.id));
-  return [...projectResults, ...globalResults.filter((r) => !seen.has(r.entry.id))];
+  const merged = [...projectResults, ...globalResults.filter((r) => !seen.has(r.entry.id))];
+  return merged.slice(0, params.limit);
 }
 
 /**
@@ -3124,17 +3137,19 @@ async function handleSessionStart(
       );
       let globalResults: SearchResult[] = [];
       if (useGlobalFallback) {
-        const remaining = 3 - projectResults.length;
-        if (remaining > 0) {
+        // Always search global — don't skip when project has enough results
+        try {
           globalResults = await opts.storage.search(
             contextQuery,
             queryEmbedding,
-            { limit: remaining, offset: 0, mode: "hybrid", sessionKey: globalKey },
+            { limit: 3, offset: 0, mode: "hybrid", sessionKey: globalKey },
           );
+        } catch {
+          // Global search failure is non-fatal
         }
       }
       const seen = new Set(projectResults.map((r) => r.entry.id));
-      const all = [...projectResults, ...globalResults.filter((r) => !seen.has(r.entry.id))];
+      const all = [...projectResults, ...globalResults.filter((r) => !seen.has(r.entry.id))].slice(0, 3);
       contextResults = all.map(
         (r) => `[${r.entry.type}] ${r.entry.content.slice(0, 100)}`,
       );
