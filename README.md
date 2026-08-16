@@ -194,6 +194,7 @@ All settings have defaults. Config file is optional: `~/.config/remem-mcp/config
 | DB path | `REMEM_DB_PATH` | `~/.local/share/remem-mcp/memory.db` |
 | Cross-project memory | `REMEM_GLOBAL_SESSION_KEY` | _(unset)_ |
 | Cross-project errors | `REMEM_GLOBAL_ERRORS` | _(unset, set to `1`)_ |
+| Auto-global classification | `auto_global=true` on capture | _(off)_ |
 | Suppress hook feedback | `REMEM_QUIET` | _(unset, set to `1`)_ |
 | Retro window (days) | `REMEM_RETRO_DAYS` | `7` |
 | Core-only mode (disable advanced tools) | `REMEM_CORE_ONLY` | _(unset, set to `1`)_ |
