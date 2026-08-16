@@ -251,6 +251,8 @@ export class SQLiteBackend implements StorageBackend {
         this.migrateV3ToV4();
         this.migrateV4ToV5();
         this.migrateV5ToV6();
+        this.migrateV6ToV7();
+        this.migrateV7ToV8();
         // Now run the full schema to create any remaining tables/triggers/indexes
         this.runSchema();
         this.writeSchemaVersion(CURRENT_SCHEMA_VERSION);
