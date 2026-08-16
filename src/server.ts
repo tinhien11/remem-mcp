@@ -1416,23 +1416,22 @@ async function handleRecall(
 
   let results: SearchResult[];
   if (useGlobalFallback) {
-    // Search project memory first (gets full limit — project context is primary)
+    // Reserve 3 slots for global so cross-project knowledge isn't buried
+    // when project has enough results to fill the limit.
+    const reservedGlobal = Math.min(3, limit);
+    const projectLimit = limit - reservedGlobal;
     const projectResults = await opts.storage.search(query, queryEmbedding, {
       sessionKey,
-      limit,
+      limit: projectLimit,
       offset,
       mode,
       filters: { teamId, userId, taskId, agentId, type: typeFilter },
     });
-    // Always search global memory too — global rules/learnings should appear
-    // even when project has enough results to fill the limit. Reserve at least
-    // 3 slots for global so cross-project knowledge isn't buried.
-    const globalLimit = Math.max(3, limit - projectResults.length);
     let globalResults: SearchResult[] = [];
     try {
       globalResults = await opts.storage.search(query, queryEmbedding, {
         sessionKey: globalKey,
-        limit: globalLimit,
+        limit: reservedGlobal,
         offset: 0,
         mode,
         filters: { teamId, userId, taskId, agentId, type: typeFilter },
@@ -1873,20 +1872,20 @@ async function handleSearch(
 
   let results: SearchResult[];
   if (useGlobalFallback) {
+    const reservedGlobal = Math.min(3, limit);
+    const projectLimit = limit - reservedGlobal;
     const projectResults = await opts.storage.search(query, queryEmbedding, {
       sessionKey,
-      limit,
+      limit: projectLimit,
       offset: 0,
       mode,
       filters: searchFilters,
     });
-    // Always search global — reserve at least 3 slots for cross-project knowledge
-    const globalLimit = Math.max(3, limit - projectResults.length);
     let globalResults: SearchResult[] = [];
     try {
       globalResults = await opts.storage.search(query, queryEmbedding, {
         sessionKey: globalKey,
-        limit: globalLimit,
+        limit: reservedGlobal,
         offset: 0,
         mode,
         filters: searchFilters,
@@ -2141,18 +2140,17 @@ async function searchWithGlobalFallback(
   }
   const projectResults = await storage.search(params.query, params.queryEmbedding, {
     sessionKey: params.sessionKey,
-    limit: params.limit,
+    limit: Math.max(1, params.limit - Math.min(3, params.limit)),
     offset: 0,
     mode: params.mode,
     filters: { teamId: params.teamId, userId: params.userId, taskId: params.taskId },
   });
-  // Always search global — reserve at least 3 slots for cross-project knowledge
-  const globalLimit = Math.max(3, params.limit - projectResults.length);
+  const reservedGlobal = Math.min(3, params.limit);
   let globalResults: SearchResult[] = [];
   try {
     globalResults = await storage.search(params.query, params.queryEmbedding, {
       sessionKey: params.globalKey,
-      limit: globalLimit,
+      limit: reservedGlobal,
       offset: 0,
       mode: params.mode,
       filters: { teamId: params.teamId, userId: params.userId, taskId: params.taskId },
@@ -3130,19 +3128,19 @@ async function handleSessionStart(
       } catch (err) {
         console.error(`[remem-mcp] Embedding failed: ${err}`);
       }
+      const reservedGlobal = useGlobalFallback ? 1 : 0;
       const projectResults = await opts.storage.search(
         contextQuery,
         queryEmbedding,
-        { limit: 3, offset: 0, mode: "hybrid", sessionKey },
+        { limit: 3 - reservedGlobal, offset: 0, mode: "hybrid", sessionKey },
       );
       let globalResults: SearchResult[] = [];
       if (useGlobalFallback) {
-        // Always search global — don't skip when project has enough results
         try {
           globalResults = await opts.storage.search(
             contextQuery,
             queryEmbedding,
-            { limit: 3, offset: 0, mode: "hybrid", sessionKey: globalKey },
+            { limit: reservedGlobal, offset: 0, mode: "hybrid", sessionKey: globalKey },
           );
         } catch {
           // Global search failure is non-fatal
