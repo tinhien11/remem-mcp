@@ -2096,6 +2096,58 @@ async function handleRelated(
 }
 
 /**
+ * Run a search mirroring handleRecall's global-fallback behavior: search the
+ * project session with the full limit first, then the global session for any
+ * remaining slots, and merge by id (project first, global deduped against it).
+ * When useGlobalFallback is false, this is a plain single-session search.
+ */
+async function searchWithGlobalFallback(
+  storage: StorageBackend,
+  params: {
+    query: string;
+    queryEmbedding: number[] | null;
+    useGlobalFallback: boolean | "" | null;
+    sessionKey: string;
+    globalKey: string | undefined;
+    teamId: string | undefined;
+    userId: string | undefined;
+    taskId: string | undefined;
+    limit: number;
+    mode: SearchMode;
+  },
+): Promise<SearchResult[]> {
+  if (!params.useGlobalFallback || !params.globalKey || params.globalKey === params.sessionKey) {
+    return storage.search(params.query, params.queryEmbedding, {
+      sessionKey: params.sessionKey,
+      limit: params.limit,
+      offset: 0,
+      mode: params.mode,
+      filters: { teamId: params.teamId, userId: params.userId, taskId: params.taskId },
+    });
+  }
+  const projectResults = await storage.search(params.query, params.queryEmbedding, {
+    sessionKey: params.sessionKey,
+    limit: params.limit,
+    offset: 0,
+    mode: params.mode,
+    filters: { teamId: params.teamId, userId: params.userId, taskId: params.taskId },
+  });
+  const remaining = params.limit - projectResults.length;
+  let globalResults: SearchResult[] = [];
+  if (remaining > 0) {
+    globalResults = await storage.search(params.query, params.queryEmbedding, {
+      sessionKey: params.globalKey,
+      limit: remaining,
+      offset: 0,
+      mode: params.mode,
+      filters: { teamId: params.teamId, userId: params.userId, taskId: params.taskId },
+    });
+  }
+  const seen = new Set(projectResults.map((r) => r.entry.id));
+  return [...projectResults, ...globalResults.filter((r) => !seen.has(r.entry.id))];
+}
+
+/**
  * Handle the explain_recall tool.
  * Shows WHY each result was recalled: BM25 score, vector score, RRF fused score,
  * rank, and matching keywords. If capture_id is provided, explains why that
@@ -2114,10 +2166,6 @@ async function handleExplainRecall(
   const limit = Math.min((args.limit as number) ?? 10, 50);
   const { teamId, userId, taskId } = extractTenant(args);
 
-  // Run keyword and vector searches separately to get individual scores.
-  // Use global fallback to match recall() behavior.
-  const searchSessionKey = useGlobalFallback ? globalKey : sessionKey;
-
   let queryEmbedding: number[] | null = null;
   let vectorDegraded = false;
   if (mode === "hybrid" || mode === "vector") {
@@ -2129,37 +2177,48 @@ async function handleExplainRecall(
     }
   }
 
+  // When REMEM_GLOBAL_SESSION_KEY is set and no explicit session_key was passed,
+  // mirror handleRecall: search the project session with the full limit first,
+  // then the global session for any remaining slots, and merge by id (project
+  // first). Without this, all three searches below would run against the global
+  // session only and project captures would be reported as "NOT in top N" even
+  // though recall() would return them.
+  const searchOpts = {
+    query,
+    queryEmbedding,
+    useGlobalFallback,
+    sessionKey,
+    globalKey,
+    teamId,
+    userId,
+    taskId,
+  };
+
   // Get keyword-only results
   const keywordResults: SearchResult[] =
     mode === "vector"
       ? []
-      : await opts.storage.search(query, null, {
-          sessionKey: searchSessionKey,
+      : await searchWithGlobalFallback(opts.storage, {
+          ...searchOpts,
           limit: limit * 3,
-          offset: 0,
           mode: "keyword",
-          filters: { teamId, userId, taskId },
         });
 
   // Get vector-only results
   const vectorResults: SearchResult[] =
     mode === "keyword" || !queryEmbedding
       ? []
-      : await opts.storage.search(query, queryEmbedding, {
-          sessionKey: searchSessionKey,
+      : await searchWithGlobalFallback(opts.storage, {
+          ...searchOpts,
           limit: limit * 3,
-          offset: 0,
           mode: "vector",
-          filters: { teamId, userId, taskId },
         });
 
   // Get hybrid results (what recall actually returns)
-  const hybridResults: SearchResult[] = await opts.storage.search(query, queryEmbedding, {
-    sessionKey: searchSessionKey,
+  const hybridResults: SearchResult[] = await searchWithGlobalFallback(opts.storage, {
+    ...searchOpts,
     limit,
-    offset: 0,
     mode,
-    filters: { teamId, userId, taskId },
   });
 
   // Build score lookup maps
