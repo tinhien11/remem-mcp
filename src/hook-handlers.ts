@@ -419,7 +419,15 @@ export function hookRecall(dbPath: string): void {
   process.stdin.on("end", () => {
     try {
       const input = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
-      const sessionKey = input.session_id ? input.session_id.slice(0, 16) : undefined;
+      // Primary sessionKey: hash(cwd) — matches what the MCP server and
+      // hookPostToolUse use, so user captures and error captures (stored
+      // under hash(cwd)) are visible at session start.
+      const cwd = input.cwd ?? process.cwd();
+      const sessionKey = hashPath(cwd);
+      // Auto-captured transcripts (hookStop/hookPostToolUse error path) are
+      // stored under session_id.slice(0,16). Also query that key so
+      // auto-captures from the current session still appear.
+      const autoCaptureKey = input.session_id ? input.session_id.slice(0, 16) : undefined;
 
       // Query recent captures from the DB
       // Try immutable mode first (no WAL writes needed), fall back to readonly
@@ -474,6 +482,18 @@ export function hookRecall(dbPath: string): void {
           .prepare(`${otherSql} AND session_key = ? ORDER BY created_at DESC LIMIT 5`)
           .all(sessionKey) as typeof rows;
         rows.push(...sessionOthers.filter((r) => !seen.has(r.id)));
+        // Also query auto-captured transcripts keyed by session_id.slice(0,16)
+        // (hookStop/hookPostToolUse error path) so they appear at session start.
+        if (autoCaptureKey && autoCaptureKey !== sessionKey) {
+          const autoErrors = db
+            .prepare(`${errorSql} AND session_key = ? ORDER BY created_at DESC LIMIT 5`)
+            .all(autoCaptureKey) as typeof rows;
+          rows.push(...autoErrors.filter((r) => !seen.has(r.id)));
+          const autoOthers = db
+            .prepare(`${otherSql} AND session_key = ? ORDER BY created_at DESC LIMIT 5`)
+            .all(autoCaptureKey) as typeof rows;
+          rows.push(...autoOthers.filter((r) => !seen.has(r.id)));
+        }
       }
 
       // If no results with session_key, query all captures
