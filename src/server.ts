@@ -1620,6 +1620,7 @@ async function handleCapture(
   // or audit summaries with only minor differences. Keep the newest, supersede the old.
   const newId = generateId();
   const fuzzyPrefix = redactedContent.slice(0, 60).trim().toLowerCase();
+  let fuzzyDupId: string | null = null;
   if (fuzzyPrefix.length >= 10) {
     try {
       const fuzzyMatches = await opts.storage.search(fuzzyPrefix, null, {
@@ -1634,8 +1635,9 @@ async function handleCapture(
           r.entry.content.slice(0, 60).trim().toLowerCase() === fuzzyPrefix,
       );
       if (fuzzyDup) {
-        // Supersede the older capture instead of blocking — the new one may have updated info.
-        await opts.storage.supersede(fuzzyDup.entry.id, newId).catch(() => {});
+        // Defer the supersede until after the new capture is persisted, so a
+        // failed put can't leave the old capture pointing at a non-existent id.
+        fuzzyDupId = fuzzyDup.entry.id;
       }
     } catch {
       // Fuzzy dedup is best-effort — don't block capture if it fails.
@@ -1673,6 +1675,17 @@ async function handleCapture(
       ],
       isError: true,
     };
+  }
+
+  // Now that the new capture is persisted, supersede the fuzzy-dup older
+  // capture (if any). Doing this before put would leave a dangling
+  // superseded_by pointing at a non-existent id if put failed.
+  if (fuzzyDupId) {
+    try {
+      await opts.storage.supersede(fuzzyDupId, id);
+    } catch (err) {
+      console.error(`[remem-mcp] Fuzzy supersede failed: ${err}`);
+    }
   }
 
   // If supersedes is set, mark the old capture as stale.
