@@ -98,7 +98,7 @@ export class Memory {
   /** Recall relevant memory. */
   async recall(
     query: string,
-    opts?: { limit?: number; mode?: SearchMode },
+    opts?: { limit?: number; mode?: SearchMode; sessionKey?: string },
   ): Promise<SearchResult[]> {
     const limit = Math.min(opts?.limit ?? 10, 50);
     const mode = opts?.mode ?? "hybrid";
@@ -113,7 +113,7 @@ export class Memory {
     }
 
     return this.storage.search(query, queryEmbedding, {
-      sessionKey: this.sessionKey,
+      sessionKey: opts?.sessionKey ?? this.sessionKey,
       limit,
       offset: 0,
       mode,

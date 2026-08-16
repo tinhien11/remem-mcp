@@ -740,9 +740,10 @@ export class SQLiteBackend implements StorageBackend {
 
   async listByTags(tags: string[], limit = 50): Promise<CaptureEntry[]> {
     if (tags.length === 0) return [];
-    const tagConditions = tags.map(() => "tags LIKE ?").join(" OR ");
+    const escapeLike = (s: string) => s.replace(/[%_\\]/g, (c) => "\\" + c);
+    const tagConditions = tags.map(() => "tags LIKE ? ESCAPE '\\'").join(" OR ");
     const sql = `SELECT * FROM captures WHERE (${tagConditions}) AND deleted_at IS NULL AND trust_state != 'rejected' AND superseded_by IS NULL ORDER BY created_at DESC LIMIT ?`;
-    const params = [...tags.map((t) => `%"${t}"%`), limit];
+    const params = [...tags.map((t) => `%"${escapeLike(t)}"%`), limit];
     const rows = this.db.prepare(sql).all(...params) as DbRow[];
     return rows.map(rowToEntry);
   }
@@ -881,9 +882,10 @@ export class SQLiteBackend implements StorageBackend {
         params.push(filters.taskId);
       }
       if (filters?.tags && filters.tags.length > 0) {
-        const tagConditions = filters.tags.map(() => "c.tags LIKE ?").join(" OR ");
+        const escapeLike = (s: string) => s.replace(/[%_\\]/g, (c) => "\\" + c);
+        const tagConditions = filters.tags.map(() => "c.tags LIKE ? ESCAPE '\\'").join(" OR ");
         sql += ` AND (${tagConditions})`;
-        params.push(...filters.tags.map((t) => `%"${t}"%`));
+        params.push(...filters.tags.map((t) => `%"${escapeLike(t)}"%`));
       }
       if (filters?.dateFrom) {
         sql += " AND c.created_at >= ?";
@@ -952,9 +954,10 @@ export class SQLiteBackend implements StorageBackend {
       params.push(filters.taskId);
     }
     if (filters?.tags && filters.tags.length > 0) {
-      const tagConditions = filters.tags.map(() => "c.tags LIKE ?").join(" OR ");
+      const escapeLike = (s: string) => s.replace(/[%_\\]/g, (c) => "\\" + c);
+      const tagConditions = filters.tags.map(() => "c.tags LIKE ? ESCAPE '\\'").join(" OR ");
       sql += ` AND (${tagConditions})`;
-      params.push(...filters.tags.map((t) => `%"${t}"%`));
+      params.push(...filters.tags.map((t) => `%"${escapeLike(t)}"%`));
     }
     if (filters?.dateFrom) {
       sql += " AND c.created_at >= ?";
@@ -1206,15 +1209,19 @@ export class SQLiteBackend implements StorageBackend {
     // delete with empty strings after the trigger re-inserted the entry corrupts
     // the FTS index (SQLITE_CORRUPT_VTAB).
     const now = Date.now();
-    const captureCount = this.db
-      .prepare("UPDATE captures SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL")
-      .run(now, id).changes;
-
+    let captureCount = 0;
+    let atomCount = 0;
+    const tx = this.db.transaction(() => {
+      captureCount = this.db
+        .prepare("UPDATE captures SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL")
+        .run(now, id).changes;
+      if (captureCount > 0) {
+        this.db.prepare("DELETE FROM captures_vec WHERE id = ?").run(id);
+        atomCount = this.db.prepare("DELETE FROM atoms WHERE capture_id = ?").run(id).changes;
+      }
+    });
+    tx();
     if (captureCount > 0) {
-      // Remove from vector index (no trigger for this)
-      this.db.prepare("DELETE FROM captures_vec WHERE id = ?").run(id);
-      // Remove atoms so they don't outlive the capture (no FK cascade on soft delete)
-      const atomCount = this.db.prepare("DELETE FROM atoms WHERE capture_id = ?").run(id).changes;
       return { captures: captureCount, atoms: atomCount, scenarios: 0 };
     }
 
@@ -1280,17 +1287,21 @@ export class SQLiteBackend implements StorageBackend {
     // Search filters by trust_state != 'rejected' AND deleted_at IS NULL.
     // Manual FTS delete after trigger re-insert corrupts the index.
     const now = Date.now();
-    const captureCount = this.db
-      .prepare(
-        "UPDATE captures SET trust_state = 'rejected', rejection_reason = ?, deleted_at = ? WHERE id = ? AND deleted_at IS NULL AND trust_state != 'rejected'",
-      )
-      .run(reason, now, id).changes;
-
+    let captureCount = 0;
+    let atomCount = 0;
+    const tx = this.db.transaction(() => {
+      captureCount = this.db
+        .prepare(
+          "UPDATE captures SET trust_state = 'rejected', rejection_reason = ?, deleted_at = ? WHERE id = ? AND deleted_at IS NULL AND trust_state != 'rejected'",
+        )
+        .run(reason, now, id).changes;
+      if (captureCount > 0) {
+        this.db.prepare("DELETE FROM captures_vec WHERE id = ?").run(id);
+        atomCount = this.db.prepare("DELETE FROM atoms WHERE capture_id = ?").run(id).changes;
+      }
+    });
+    tx();
     if (captureCount > 0) {
-      // Remove from vector index (no trigger for this)
-      this.db.prepare("DELETE FROM captures_vec WHERE id = ?").run(id);
-      // Remove atoms so rejected captures don't leave orphaned facts
-      const atomCount = this.db.prepare("DELETE FROM atoms WHERE capture_id = ?").run(id).changes;
       return { captures: captureCount, atoms: atomCount, scenarios: 0 };
     }
 
@@ -1423,8 +1434,9 @@ export class SQLiteBackend implements StorageBackend {
     opts: { teamId?: string; agentId?: string; userId?: string; limit?: number } = {},
   ): Promise<AtomEntry[]> {
     // Atoms don't have FTS — use LIKE for keyword search
-    let sql = "SELECT * FROM atoms WHERE fact LIKE ?";
-    const params: unknown[] = [`%${query}%`];
+    const escapeLike = (s: string) => s.replace(/[%_\\]/g, (c) => "\\" + c);
+    let sql = "SELECT * FROM atoms WHERE fact LIKE ? ESCAPE '\\'";
+    const params: unknown[] = [`%${escapeLike(query)}%`];
     if (opts.teamId) {
       sql += " AND team_id = ?";
       params.push(opts.teamId);
@@ -1652,9 +1664,10 @@ export class SQLiteBackend implements StorageBackend {
     query: string,
     topK?: number,
   ): Promise<SkillEntry[]> {
+    const escapeLike = (s: string) => s.replace(/[%_\\]/g, (c) => "\\" + c);
     let sql =
-      "SELECT * FROM skills WHERE team_id = ? AND (agent_id = ? OR agent_id IS NULL) AND (name LIKE ? OR description LIKE ?)";
-    const params: unknown[] = [teamId, agentId, `%${query}%`, `%${query}%`];
+      "SELECT * FROM skills WHERE team_id = ? AND (agent_id = ? OR agent_id IS NULL) AND (name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')";
+    const params: unknown[] = [teamId, agentId, `%${escapeLike(query)}%`, `%${escapeLike(query)}%`];
     sql += " ORDER BY updated_at DESC LIMIT ?";
     params.push(topK ?? 10);
     const rows = this.db.prepare(sql).all(...params) as SkillDbRow[];

@@ -1197,13 +1197,18 @@ export function createServer(opts: ServerOptions): Server {
     const uri = request.params.uri;
 
     if (uri === "remem-mcp://recent") {
-      // Direct SQL query — search("") returns [] because escapeFtsQuery('') is empty
+      // Direct SQL query — search("") returns [] because escapeFtsQuery('') is empty.
+      // Filter by current session (+ global if configured) to prevent cross-session leaks.
       const db = getDb(opts);
+      const sessionKey = defaultSessionKey();
+      const globalKey = globalSessionKey();
+      const sessionKeys = globalKey && globalKey !== sessionKey ? [sessionKey, globalKey] : [sessionKey];
+      const placeholders = sessionKeys.map(() => "?").join(",");
       const rows = db
         .prepare(
-          "SELECT id, session_key, agent_id, type, content, tags, created_at, trust_state, superseded_by, team_id, user_id, task_id, content_hash FROM captures WHERE deleted_at IS NULL AND trust_state != 'rejected' AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 20",
+          `SELECT id, session_key, agent_id, type, content, tags, created_at, trust_state, superseded_by, team_id, user_id, task_id, content_hash FROM captures WHERE deleted_at IS NULL AND trust_state != 'rejected' AND superseded_by IS NULL AND session_key IN (${placeholders}) ORDER BY created_at DESC LIMIT 20`,
         )
-        .all() as Record<string, unknown>[];
+        .all(...sessionKeys) as Record<string, unknown>[];
       const results: SearchResult[] = rows.map((r, i) => ({
         entry: {
           id: r.id as string,
@@ -3093,15 +3098,28 @@ async function handleSessionStart(
   // Correction KPIs
   const kpis = opts.storage.getCorrectionKPIs();
 
-  // Optional context query
+  // Optional context query (with global fallback)
   let contextResults: string[] = [];
   if (contextQuery) {
-    const results = await opts.storage.search(
+    const projectResults = await opts.storage.search(
       contextQuery,
       await opts.embedder.embed(contextQuery),
       { limit: 3, offset: 0, mode: "hybrid", sessionKey },
     );
-    contextResults = results.map(
+    let globalResults: SearchResult[] = [];
+    if (useGlobalFallback) {
+      const remaining = 3 - projectResults.length;
+      if (remaining > 0) {
+        globalResults = await opts.storage.search(
+          contextQuery,
+          await opts.embedder.embed(contextQuery),
+          { limit: remaining, offset: 0, mode: "hybrid", sessionKey: globalKey },
+        );
+      }
+    }
+    const seen = new Set(projectResults.map((r) => r.entry.id));
+    const all = [...projectResults, ...globalResults.filter((r) => !seen.has(r.entry.id))];
+    contextResults = all.map(
       (r) => `[${r.entry.type}] ${r.entry.content.slice(0, 100)}`,
     );
   }
@@ -3147,7 +3165,7 @@ async function handleSessionEnd(
   const id = generateId();
   const entry: CaptureEntry = {
     id,
-    sessionKey: defaultSessionKey(),
+    sessionKey: (args.session_key as string) ?? defaultSessionKey(),
     agentId: detectAgentId(),
     type: "task",
     content: summary,
@@ -3174,7 +3192,7 @@ async function handleSessionCheckpoint(
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
   const name = args.name as string;
   const summary = (args.summary as string) ?? "";
-  const sessionKey = defaultSessionKey();
+  const sessionKey = (args.session_key as string) ?? defaultSessionKey();
 
   if (!name || name.trim() === "") {
     return { content: [{ type: "text", text: "Error: name is required and cannot be empty." }], isError: true };

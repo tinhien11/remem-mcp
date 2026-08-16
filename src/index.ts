@@ -505,7 +505,8 @@ async function main(): Promise<void> {
     console.log("\nCapturing project basics...");
     const { Memory } = await import("./sdk.js");
     const mem = new Memory();
-    const sessionKey = process.cwd();
+    // SDK constructor already hashes process.cwd() as the default sessionKey.
+    // Don't pass raw cwd — that would store under a different key than recall() uses.
     let captured = 0;
 
     // Detect package manager
@@ -515,7 +516,7 @@ async function main(): Promise<void> {
         `This project uses ${pkgManager}. Use ${pkgManager} for all package operations (install, run, etc.).`,
         "decision",
         ["bootstrap", "package-manager", pkgManager],
-        { sessionKey },
+        { },
       );
       if (id) captured++;
     }
@@ -527,7 +528,7 @@ async function main(): Promise<void> {
         `Project script: \`${pkgManager ? pkgManager + " run " : "npm run "}${name}\` runs: ${cmd}`,
         "decision",
         ["bootstrap", "script", name],
-        { sessionKey },
+        { },
       );
       if (id) captured++;
     }
@@ -539,7 +540,7 @@ async function main(): Promise<void> {
         `This project uses ${framework}. Follow ${framework} conventions and patterns.`,
         "decision",
         ["bootstrap", "framework", framework.toLowerCase()],
-        { sessionKey },
+        { },
       );
       if (id) captured++;
     }
@@ -551,7 +552,7 @@ async function main(): Promise<void> {
         `This project uses ${lintTool} for linting/formatting. Run it before committing.`,
         "decision",
         ["bootstrap", "lint", lintTool.toLowerCase()],
-        { sessionKey },
+        { },
       );
       if (id) captured++;
     }
@@ -563,7 +564,7 @@ async function main(): Promise<void> {
         `Run tests with: \`${testCmd}\``,
         "decision",
         ["bootstrap", "test"],
-        { sessionKey },
+        { },
       );
       if (id) captured++;
     }
