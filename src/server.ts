@@ -2511,19 +2511,9 @@ async function handleUpdate(
     "UPDATE captures SET content = ?, tags = ?, type = ?, trust_state = ?, content_hash = ? WHERE id = ?",
   ).run(newContent, newTags, newType, newTrust, contentHash, id);
 
-  // Update FTS index
-  const rowid =
-    row.rowid ?? (db.prepare("SELECT rowid FROM captures WHERE id = ?").get(id) as { rowid?: number } | undefined)?.rowid;
-  if (rowid) {
-    db.prepare(
-      "INSERT INTO captures_fts(captures_fts, rowid, content, tags, type) VALUES('delete', ?, '', '', '')",
-    ).run(rowid);
-    db.prepare(
-      "INSERT INTO captures_fts (rowid, id, content, tags, type) VALUES (?, ?, ?, ?, ?)",
-    ).run(rowid, id, newContent, newTags, newType);
-  }
-
-  // Re-embed if content changed so vector search returns fresh results
+  // FTS index is synced automatically by the captures_au AFTER UPDATE trigger
+  // — no manual delete+insert needed here. Re-embed if content changed so
+  // vector search returns fresh results.
   if (args.content && args.content !== (row.content as string)) {
     try {
       const embedding = await opts.embedder.embed(newContent);
@@ -2659,7 +2649,11 @@ async function handleConsolidate(
       }
     }
   });
-  mergeTx();
+  try {
+    mergeTx();
+  } catch (err) {
+    return { content: [{ type: "text", text: `Error: ${err}` }], isError: true };
+  }
 
   return {
     content: [
@@ -2919,7 +2913,11 @@ async function handleConfirm(
       isError: true,
     };
   }
-  db.prepare("UPDATE captures SET confirmations = confirmations + 1 WHERE id = ?").run(captureId);
+  try {
+    db.prepare("UPDATE captures SET confirmations = confirmations + 1 WHERE id = ?").run(captureId);
+  } catch (err) {
+    return { content: [{ type: "text", text: `Error: ${err}` }], isError: true };
+  }
   const alpha = 1 + row.confirmations + 1;
   const beta = 1 + row.corrections;
   const confidence = alpha / (alpha + beta);
@@ -2956,9 +2954,13 @@ async function handleCorrect(
       isError: true,
     };
   }
-  db.prepare("UPDATE captures SET corrections = corrections + 1 WHERE id = ?").run(captureId);
-  if (reason) {
-    db.prepare("UPDATE captures SET rejection_reason = ? WHERE id = ?").run(reason, captureId);
+  try {
+    db.prepare("UPDATE captures SET corrections = corrections + 1 WHERE id = ?").run(captureId);
+    if (reason) {
+      db.prepare("UPDATE captures SET rejection_reason = ? WHERE id = ?").run(reason, captureId);
+    }
+  } catch (err) {
+    return { content: [{ type: "text", text: `Error: ${err}` }], isError: true };
   }
   const alpha = 1 + row.confirmations;
   const beta = 1 + row.corrections + 1;
@@ -3045,7 +3047,11 @@ async function handleRecordOutcome(
       isError: true,
     };
   }
-  opts.storage.recordCorrectionOutcome(captureId, outcome as "heeded" | "recurred");
+  try {
+    opts.storage.recordCorrectionOutcome(captureId, outcome as "heeded" | "recurred");
+  } catch (err) {
+    return { content: [{ type: "text", text: `Error: ${err}` }], isError: true };
+  }
   const total = row.heeded_count + row.recurrence_count + 1;
   const heeded = outcome === "heeded" ? row.heeded_count + 1 : row.heeded_count;
   const precision = total > 0 ? heeded / total : 0;
@@ -3098,30 +3104,44 @@ async function handleSessionStart(
   // Correction KPIs
   const kpis = opts.storage.getCorrectionKPIs();
 
-  // Optional context query (with global fallback)
+  // Optional context query (with global fallback). Embedding/search failures
+  // must not reject the whole session_start — degrade to empty context instead.
   let contextResults: string[] = [];
   if (contextQuery) {
-    const projectResults = await opts.storage.search(
-      contextQuery,
-      await opts.embedder.embed(contextQuery),
-      { limit: 3, offset: 0, mode: "hybrid", sessionKey },
-    );
-    let globalResults: SearchResult[] = [];
-    if (useGlobalFallback) {
-      const remaining = 3 - projectResults.length;
-      if (remaining > 0) {
-        globalResults = await opts.storage.search(
-          contextQuery,
-          await opts.embedder.embed(contextQuery),
-          { limit: remaining, offset: 0, mode: "hybrid", sessionKey: globalKey },
-        );
+    try {
+      // Compute embedding first (mirror handleRecall) so a single embedder
+      // failure doesn't blow up both the project and global searches.
+      let queryEmbedding: number[] | null = null;
+      try {
+        queryEmbedding = await opts.embedder.embed(contextQuery);
+      } catch (err) {
+        console.error(`[remem-mcp] Embedding failed: ${err}`);
       }
+      const projectResults = await opts.storage.search(
+        contextQuery,
+        queryEmbedding,
+        { limit: 3, offset: 0, mode: "hybrid", sessionKey },
+      );
+      let globalResults: SearchResult[] = [];
+      if (useGlobalFallback) {
+        const remaining = 3 - projectResults.length;
+        if (remaining > 0) {
+          globalResults = await opts.storage.search(
+            contextQuery,
+            queryEmbedding,
+            { limit: remaining, offset: 0, mode: "hybrid", sessionKey: globalKey },
+          );
+        }
+      }
+      const seen = new Set(projectResults.map((r) => r.entry.id));
+      const all = [...projectResults, ...globalResults.filter((r) => !seen.has(r.entry.id))];
+      contextResults = all.map(
+        (r) => `[${r.entry.type}] ${r.entry.content.slice(0, 100)}`,
+      );
+    } catch (err) {
+      console.error(`[remem-mcp] session_start context query failed: ${err}`);
+      contextResults = [];
     }
-    const seen = new Set(projectResults.map((r) => r.entry.id));
-    const all = [...projectResults, ...globalResults.filter((r) => !seen.has(r.entry.id))];
-    contextResults = all.map(
-      (r) => `[${r.entry.type}] ${r.entry.content.slice(0, 100)}`,
-    );
   }
 
   const summary = {
@@ -3172,7 +3192,11 @@ async function handleSessionEnd(
     tags: [...tags, "session-end"],
     createdAt: Date.now(),
   };
-  await opts.storage.put(entry);
+  try {
+    await opts.storage.put(entry);
+  } catch (err) {
+    return { content: [{ type: "text", text: `Error: ${err}` }], isError: true };
+  }
   try {
     const embedding = await opts.embedder.embed(summary);
     await opts.storage.putVector(id, embedding);
@@ -3228,7 +3252,11 @@ async function handleSessionCheckpoint(
       captureCount: recent.length,
     },
   };
-  await opts.storage.put(entry);
+  try {
+    await opts.storage.put(entry);
+  } catch (err) {
+    return { content: [{ type: "text", text: `Error: ${err}` }], isError: true };
+  }
   try {
     const embedding = await opts.embedder.embed(checkpointContent);
     await opts.storage.putVector(checkpointId, embedding);
@@ -3403,7 +3431,12 @@ async function handleHandoff(
 
   const dedupPayload = JSON.stringify({ task, status, progress, decisions, files, nextSteps });
   const contentHash = createHash("sha256").update(dedupPayload).digest("hex");
-  const existing = await opts.storage.findByContentHash(contentHash, sessionKey);
+  let existing: CaptureEntry[] = [];
+  try {
+    existing = await opts.storage.findByContentHash(contentHash, sessionKey);
+  } catch (err) {
+    return { content: [{ type: "text", text: `Error: ${err}` }], isError: true };
+  }
   if (existing.length > 0) {
     return {
       content: [
@@ -3440,7 +3473,11 @@ async function handleHandoff(
     taskId,
   };
 
-  await opts.storage.put(entry);
+  try {
+    await opts.storage.put(entry);
+  } catch (err) {
+    return { content: [{ type: "text", text: `Error: ${err}` }], isError: true };
+  }
 
   try {
     const embedding = await opts.embedder.embed(content);
@@ -3528,7 +3565,12 @@ async function handleAdr(
 
   const dedupPayload = JSON.stringify({ title, context, decision, alternatives, consequences });
   const contentHash = createHash("sha256").update(dedupPayload).digest("hex");
-  const existing = await opts.storage.findByContentHash(contentHash, sessionKey);
+  let existing: CaptureEntry[] = [];
+  try {
+    existing = await opts.storage.findByContentHash(contentHash, sessionKey);
+  } catch (err) {
+    return { content: [{ type: "text", text: `Error: ${err}` }], isError: true };
+  }
   if (existing.length > 0) {
     return {
       content: [
@@ -3565,7 +3607,11 @@ async function handleAdr(
     taskId,
   };
 
-  await opts.storage.put(entry);
+  try {
+    await opts.storage.put(entry);
+  } catch (err) {
+    return { content: [{ type: "text", text: `Error: ${err}` }], isError: true };
+  }
 
   try {
     const embedding = await opts.embedder.embed(content);
@@ -3619,7 +3665,11 @@ async function handleKnowledgeCreate(
     createdAt: Date.now(),
   };
 
-  await opts.storage.putKnowledge(entry);
+  try {
+    await opts.storage.putKnowledge(entry);
+  } catch (err) {
+    return { content: [{ type: "text", text: `Error: ${err}` }], isError: true };
+  }
 
   opts.audit.log({
     tool: "knowledge_create",
@@ -3668,7 +3718,12 @@ async function handleKnowledgeDelete(
   opts: ServerOptions,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
   const knowledgeIds = args.knowledge_ids as string[];
-  const count = await opts.storage.deleteKnowledge(knowledgeIds);
+  let count: number;
+  try {
+    count = await opts.storage.deleteKnowledge(knowledgeIds);
+  } catch (err) {
+    return { content: [{ type: "text", text: `Error: ${err}` }], isError: true };
+  }
   opts.audit.log({
     tool: "knowledge_delete",
     argsHash: AuditLogger.hashArgs({ knowledgeIds }),
@@ -3766,11 +3821,15 @@ async function handleCodegraphIndex(
   }
 
   let results: import("./codegraph/engine.js").IndexResult[];
-  if (stat.isDirectory()) {
-    results = await cgIndexDirectory(db, path, repoPath, teamId, maxFiles);
-  } else {
-    const result = await cgIndexFile(db, path, repoPath, teamId);
-    results = [result];
+  try {
+    if (stat.isDirectory()) {
+      results = await cgIndexDirectory(db, path, repoPath, teamId, maxFiles);
+    } else {
+      const result = await cgIndexFile(db, path, repoPath, teamId);
+      results = [result];
+    }
+  } catch (err) {
+    return { content: [{ type: "text", text: `Error: ${err}` }], isError: true };
   }
 
   const indexed = results.filter((r) => !r.skipped);
@@ -4013,11 +4072,15 @@ async function handleWikiIngest(
   }
 
   let results: import("./wiki/engine.js").IngestResult[];
-  if (stat.isDirectory()) {
-    results = wikiIngestDir(db, path, repoPath, teamId, maxFiles);
-  } else {
-    const result = wikiIngestFile(db, path, repoPath, teamId);
-    results = [result];
+  try {
+    if (stat.isDirectory()) {
+      results = wikiIngestDir(db, path, repoPath, teamId, maxFiles);
+    } else {
+      const result = wikiIngestFile(db, path, repoPath, teamId);
+      results = [result];
+    }
+  } catch (err) {
+    return { content: [{ type: "text", text: `Error: ${err}` }], isError: true };
   }
 
   const ingested = results.filter((r) => !r.skipped);

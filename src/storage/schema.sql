@@ -1,5 +1,5 @@
 -- Schema for remem-mcp
--- Version: 7
+-- Version: 8
 --
 -- This file runs on the first start. It creates all tables, triggers, and indexes.
 -- It uses CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS.
@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
   version INTEGER NOT NULL,
   applied_at INTEGER NOT NULL
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_schema_version_unique ON schema_version(version);
 
 -- L0: Raw captures (always populated)
 CREATE TABLE IF NOT EXISTS captures (

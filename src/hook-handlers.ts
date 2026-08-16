@@ -49,6 +49,17 @@ function logToFile(text: string): void {
   }
 }
 
+/** Safely parse a tags JSON string. Returns [] on null/undefined/parse error. */
+function safeParseTags(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 /**
  * [Drift Detection] Get the temp file path for tracking error injections.
  * Each session gets its own file. Injections are logged here by PreToolUse
@@ -413,11 +424,14 @@ export function hookRecall(dbPath: string): void {
   const chunks: Buffer[] = [];
   process.stdin.setEncoding("utf-8");
   process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
+  const stdinTimeout = setTimeout(() => process.stdout.write(JSON.stringify({})), 5000);
+  stdinTimeout.unref();
   process.stdin.on("data", (chunk) => {
     chunks.push(Buffer.from(chunk));
   });
 
   process.stdin.on("end", () => {
+    clearTimeout(stdinTimeout);
     try {
       const input = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
       // Primary sessionKey: hash(cwd) — matches what the MCP server and
@@ -513,7 +527,7 @@ export function hookRecall(dbPath: string): void {
       const lines: string[] = ["[remem-mcp] Recent project memory:"];
       for (const row of rows) {
         const date = new Date(row.created_at).toISOString().split("T")[0];
-        const tags = row.tags ? (JSON.parse(row.tags) as string[]) : [];
+        const tags = safeParseTags(row.tags);
         const tagStr = tags.length > 0 ? ` [${tags.join(", ")}]` : "";
         // Truncate content to 200 chars for context injection
         const content = row.content.length > 200 ? `${row.content.slice(0, 200)}...` : row.content;
@@ -569,11 +583,14 @@ export function hookStop(dbPath?: string): void {
   const chunks: Buffer[] = [];
   process.stdin.setEncoding("utf-8");
   process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
+  const stdinTimeout = setTimeout(() => process.stdout.write(JSON.stringify({})), 5000);
+  stdinTimeout.unref();
   process.stdin.on("data", (chunk) => {
     chunks.push(Buffer.from(chunk));
   });
 
   process.stdin.on("end", () => {
+    clearTimeout(stdinTimeout);
     let input: { stop_hook_active?: boolean; session_id?: string; transcript_path?: string; cwd?: string } = {};
     let validInput = true;
     try {
@@ -700,11 +717,14 @@ export function hookPostToolUse(dbPath: string): void {
   const chunks: Buffer[] = [];
   process.stdin.setEncoding("utf-8");
   process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
+  const stdinTimeout = setTimeout(() => process.stdout.write(JSON.stringify({})), 5000);
+  stdinTimeout.unref();
   process.stdin.on("data", (chunk) => {
     chunks.push(Buffer.from(chunk));
   });
 
   process.stdin.on("end", () => {
+    clearTimeout(stdinTimeout);
     try {
       const raw = Buffer.concat(chunks).toString("utf-8");
       if (!raw.trim()) {
@@ -940,6 +960,7 @@ export function hookPostToolUse(dbPath: string): void {
       // [Feature 4] Success correlation: if command succeeds and previously failed,
       // link the success to the previous error and upvote it
       if (!isError) {
+        try {
         const prevError = db
           .prepare(
             `SELECT id, metadata FROM captures
@@ -1201,7 +1222,9 @@ export function hookPostToolUse(dbPath: string): void {
           }
         }
 
-        db.close();
+        } finally {
+          if (db.open) db.close();
+        }
         process.stdout.write(JSON.stringify({}));
         return;
       }
@@ -1323,6 +1346,9 @@ export function hookPostToolUse(dbPath: string): void {
               Date.now(),
               recent.id,
             );
+            // Also delete from captures_vec and atoms to avoid orphans
+            db.prepare("DELETE FROM captures_vec WHERE id = ?").run(recent.id);
+            db.prepare("DELETE FROM atoms WHERE capture_id = ?").run(recent.id);
             logToFile(`PostToolUse: pruned error ${recent.id} (confidence reached 0)`);
           }
         }
@@ -1552,11 +1578,14 @@ export function hookPreToolUse(dbPath: string): void {
   const chunks: Buffer[] = [];
   process.stdin.setEncoding("utf-8");
   process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
+  const stdinTimeout = setTimeout(() => process.stdout.write(JSON.stringify({})), 5000);
+  stdinTimeout.unref();
   process.stdin.on("data", (chunk) => {
     chunks.push(Buffer.from(chunk));
   });
 
   process.stdin.on("end", () => {
+    clearTimeout(stdinTimeout);
     try {
       const raw = Buffer.concat(chunks).toString("utf-8");
       if (!raw.trim()) {
@@ -3182,8 +3211,12 @@ async function captureSessionTranscript(
     .all(sessionKey, sid) as { id: string }[];
   if (stale.length > 0) {
     const delStmt = db.prepare("DELETE FROM captures WHERE id = ?");
+    const delVec = db.prepare("DELETE FROM captures_vec WHERE id = ?");
+    const delAtoms = db.prepare("DELETE FROM atoms WHERE capture_id = ?");
     for (const row of stale) {
       delStmt.run(row.id);
+      delVec.run(row.id);
+      delAtoms.run(row.id);
     }
     logToFile(`Stop: removed ${stale.length} previous capture(s) for session ${sid}`);
   }
@@ -3248,11 +3281,14 @@ export function hookSessionEnd(dbPath: string): void {
   const chunks: Buffer[] = [];
   process.stdin.setEncoding("utf-8");
   process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
+  const stdinTimeout = setTimeout(() => process.stdout.write(JSON.stringify({})), 5000);
+  stdinTimeout.unref();
   process.stdin.on("data", (chunk) => {
     chunks.push(Buffer.from(chunk));
   });
 
   process.stdin.on("end", () => {
+    clearTimeout(stdinTimeout);
     try {
       const input = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
       const sessionId = input.session_id ?? "unknown";
@@ -3364,59 +3400,62 @@ export async function hookPostCommit(dbPath: string): Promise<void> {
     const { indexFile } = await import("./codegraph/engine.js");
 
     const db = new Database(dbPath);
-    db.pragma("journal_mode = WAL");
-    sqliteVec.load(db);
-
-    // Ensure schema exists (create tables if missing)
-    const schemaPath = join(dirname(fileURLToPath(import.meta.url)), "storage", "schema.sql");
     try {
-      const schema = readFileSync(schemaPath, "utf-8");
-      db.exec(schema);
-    } catch {
-      // Schema file not found — tables may already exist
-    }
+      db.pragma("journal_mode = WAL");
+      sqliteVec.load(db);
 
-    // Index supported code files
-    const SUPPORTED_EXT = [
-      ".ts",
-      ".tsx",
-      ".js",
-      ".jsx",
-      ".mjs",
-      ".cjs",
-      ".py",
-      ".go",
-      ".rs",
-      ".java",
-      ".c",
-      ".h",
-      ".cpp",
-      ".cc",
-      ".hpp",
-      ".cs",
-    ];
-    let indexed = 0;
-    let skipped = 0;
-    const repoRoot = execSync("git rev-parse --show-toplevel", { encoding: "utf-8" }).trim();
-
-    for (const file of files) {
-      const ext = file.slice(file.lastIndexOf(".")).toLowerCase();
-      if (!SUPPORTED_EXT.includes(ext)) {
-        skipped++;
-        continue;
-      }
+      // Ensure schema exists (create tables if missing)
+      const schemaPath = join(dirname(fileURLToPath(import.meta.url)), "storage", "schema.sql");
       try {
-        const fullPath = join(repoRoot, file);
-        await indexFile(db, fullPath, repoRoot, null);
-        indexed++;
+        const schema = readFileSync(schemaPath, "utf-8");
+        db.exec(schema);
       } catch {
-        // Skip on error (file may not exist, parse error, etc.)
-        skipped++;
+        // Schema file not found — tables may already exist
       }
-    }
 
-    db.close();
-    logToFile(`PostCommit: indexed ${indexed} file(s), skipped ${skipped}`);
+      // Index supported code files
+      const SUPPORTED_EXT = [
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        ".mjs",
+        ".cjs",
+        ".py",
+        ".go",
+        ".rs",
+        ".java",
+        ".c",
+        ".h",
+        ".cpp",
+        ".cc",
+        ".hpp",
+        ".cs",
+      ];
+      let indexed = 0;
+      let skipped = 0;
+      const repoRoot = execSync("git rev-parse --show-toplevel", { encoding: "utf-8" }).trim();
+
+      for (const file of files) {
+        const ext = file.slice(file.lastIndexOf(".")).toLowerCase();
+        if (!SUPPORTED_EXT.includes(ext)) {
+          skipped++;
+          continue;
+        }
+        try {
+          const fullPath = join(repoRoot, file);
+          await indexFile(db, fullPath, repoRoot, null);
+          indexed++;
+        } catch {
+          // Skip on error (file may not exist, parse error, etc.)
+          skipped++;
+        }
+      }
+
+      logToFile(`PostCommit: indexed ${indexed} file(s), skipped ${skipped}`);
+    } finally {
+      db.close();
+    }
     process.stdout.write(JSON.stringify({}));
   } catch (err) {
     process.stderr.write(`[remem-mcp hook-post-commit] Error: ${err}\n`);
@@ -3443,11 +3482,14 @@ export function hookPreCompact(dbPath: string): void {
   const chunks: Buffer[] = [];
   process.stdin.setEncoding("utf-8");
   process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
+  const stdinTimeout = setTimeout(() => process.stdout.write(JSON.stringify({})), 5000);
+  stdinTimeout.unref();
   process.stdin.on("data", (chunk) => {
     chunks.push(Buffer.from(chunk));
   });
 
   process.stdin.on("end", async () => {
+    clearTimeout(stdinTimeout);
     try {
       const raw = Buffer.concat(chunks).toString("utf-8");
       const input = raw.trim() ? JSON.parse(raw) : {};
@@ -3456,91 +3498,93 @@ export function hookPreCompact(dbPath: string): void {
 
       // Capture a compaction checkpoint
       const db = new Database(dbPath);
-      db.pragma("journal_mode = WAL");
-
-      // Load sqlite-vec before schema (schema.sql creates captures_vec using vec0)
-      try {
-        const sqliteVec = await import("sqlite-vec");
-        sqliteVec.load(db);
-      } catch {
-        // sqlite-vec not available — captures_vec won't be created
-      }
-
-      // Ensure schema exists (create tables if missing)
-      try {
-        const { fileURLToPath } = await import("node:url");
-        const schemaPath = join(dirname(fileURLToPath(import.meta.url)), "storage", "schema.sql");
-        if (existsSync(schemaPath)) {
-          db.exec(readFileSync(schemaPath, "utf-8"));
-        }
-      } catch {
-        // Schema may already exist or file not found — non-fatal
-      }
-
-      const checkpointId = `ckpt-${createHash("sha256")
-        .update(sessionKey + Date.now())
-        .digest("hex")
-        .slice(0, 12)}`;
-
-      const summary =
-        `Context compaction triggered (${trigger}). ` +
-        `Session checkpoint saved. After compaction, recall recent memory to recover ` +
-        `decisions made, approaches tried, and what was verified working.`;
-
-      // Insert as a task-type capture so it shows up in recall
-      db.prepare(
-        `INSERT INTO captures (id, type, content, tags, metadata, session_key, agent_id, created_at)
-         VALUES (?, 'task', ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        checkpointId,
-        summary,
-        JSON.stringify(["compaction", "checkpoint", trigger]),
-        JSON.stringify({
-          checkpoint: true,
-          trigger,
-          compacted_at: new Date().toISOString(),
-          session_key: sessionKey,
-        }),
-        sessionKey,
-        "remem-mcp-hook",
-        Date.now(),
-      );
-
-      // Also capture recent conversation messages if available
-      // (Claude Code sends transcript_path in some versions)
       let transcriptNote = "";
-      if (input.transcript_path && existsSync(input.transcript_path)) {
-        try {
-          const transcript = readFileSync(input.transcript_path, "utf-8");
-          // Extract last ~2000 chars of conversation as a checkpoint
-          const recent = transcript.slice(-2000);
-          const transcriptId = `txcpt-${createHash("sha256")
-            .update(sessionKey + "transcript" + Date.now())
-            .digest("hex")
-            .slice(0, 12)}`;
-          db.prepare(
-            `INSERT INTO captures (id, type, content, tags, metadata, session_key, agent_id, created_at)
-             VALUES (?, 'task', ?, ?, ?, ?, ?, ?)`,
-          ).run(
-            transcriptId,
-            `Pre-compaction transcript excerpt:\n${recent}`,
-            JSON.stringify(["compaction", "transcript-excerpt"]),
-            JSON.stringify({
-              checkpoint: true,
-              source: "transcript",
-              compacted_at: new Date().toISOString(),
-            }),
-            sessionKey,
-            "remem-mcp-hook",
-            Date.now(),
-          );
-          transcriptNote = " + transcript excerpt";
-        } catch {
-          // Non-fatal — transcript capture is supplementary
-        }
-      }
+      try {
+        db.pragma("journal_mode = WAL");
 
-      db.close();
+        // Load sqlite-vec before schema (schema.sql creates captures_vec using vec0)
+        try {
+          const sqliteVec = await import("sqlite-vec");
+          sqliteVec.load(db);
+        } catch {
+          // sqlite-vec not available — captures_vec won't be created
+        }
+
+        // Ensure schema exists (create tables if missing)
+        try {
+          const { fileURLToPath } = await import("node:url");
+          const schemaPath = join(dirname(fileURLToPath(import.meta.url)), "storage", "schema.sql");
+          if (existsSync(schemaPath)) {
+            db.exec(readFileSync(schemaPath, "utf-8"));
+          }
+        } catch {
+          // Schema may already exist or file not found — non-fatal
+        }
+
+        const checkpointId = `ckpt-${createHash("sha256")
+          .update(sessionKey + Date.now())
+          .digest("hex")
+          .slice(0, 12)}`;
+
+        const summary =
+          `Context compaction triggered (${trigger}). ` +
+          `Session checkpoint saved. After compaction, recall recent memory to recover ` +
+          `decisions made, approaches tried, and what was verified working.`;
+
+        // Insert as a task-type capture so it shows up in recall
+        db.prepare(
+          `INSERT INTO captures (id, type, content, tags, metadata, session_key, agent_id, created_at)
+           VALUES (?, 'task', ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          checkpointId,
+          summary,
+          JSON.stringify(["compaction", "checkpoint", trigger]),
+          JSON.stringify({
+            checkpoint: true,
+            trigger,
+            compacted_at: new Date().toISOString(),
+            session_key: sessionKey,
+          }),
+          sessionKey,
+          "remem-mcp-hook",
+          Date.now(),
+        );
+
+        // Also capture recent conversation messages if available
+        // (Claude Code sends transcript_path in some versions)
+        if (input.transcript_path && existsSync(input.transcript_path)) {
+          try {
+            const transcript = readFileSync(input.transcript_path, "utf-8");
+            // Extract last ~2000 chars of conversation as a checkpoint
+            const recent = transcript.slice(-2000);
+            const transcriptId = `txcpt-${createHash("sha256")
+              .update(sessionKey + "transcript" + Date.now())
+              .digest("hex")
+              .slice(0, 12)}`;
+            db.prepare(
+              `INSERT INTO captures (id, type, content, tags, metadata, session_key, agent_id, created_at)
+               VALUES (?, 'task', ?, ?, ?, ?, ?, ?)`,
+            ).run(
+              transcriptId,
+              `Pre-compaction transcript excerpt:\n${recent}`,
+              JSON.stringify(["compaction", "transcript-excerpt"]),
+              JSON.stringify({
+                checkpoint: true,
+                source: "transcript",
+                compacted_at: new Date().toISOString(),
+              }),
+              sessionKey,
+              "remem-mcp-hook",
+              Date.now(),
+            );
+            transcriptNote = " + transcript excerpt";
+          } catch {
+            // Non-fatal — transcript capture is supplementary
+          }
+        }
+      } finally {
+        db.close();
+      }
 
       logToFile(
         `PreCompact: saved checkpoint${transcriptNote} for session ${sessionKey} (trigger=${trigger})`,
@@ -3588,11 +3632,14 @@ export function hookPostCompaction(dbPath: string): void {
   const chunks: Buffer[] = [];
   process.stdin.setEncoding("utf-8");
   process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
+  const stdinTimeout = setTimeout(() => process.stdout.write(JSON.stringify({})), 5000);
+  stdinTimeout.unref();
   process.stdin.on("data", (chunk) => {
     chunks.push(Buffer.from(chunk));
   });
 
   process.stdin.on("end", async () => {
+    clearTimeout(stdinTimeout);
     try {
       const raw = Buffer.concat(chunks).toString("utf-8");
       const input = raw.trim() ? JSON.parse(raw) : {};
@@ -3643,7 +3690,7 @@ export function hookPostCompaction(dbPath: string): void {
       ];
 
       for (const row of rows) {
-        const tags = row.tags ? JSON.parse(row.tags) : [];
+        const tags = safeParseTags(row.tags);
         const isCheckpoint = tags.includes("checkpoint");
         const marker = isCheckpoint ? " [CHECKPOINT]" : "";
         const preview = row.content.slice(0, 200).replace(/\n/g, " ");

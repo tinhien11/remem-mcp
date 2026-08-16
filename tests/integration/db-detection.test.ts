@@ -107,7 +107,7 @@ describe("Integration: database detection and migration", () => {
     const backend = new SQLiteBackend(testDbPath);
 
     // The backup file must exist.
-    expect(existsSync(`${testDbPath}.bak`)).toBe(true);
+    expect(existsSync(`${testDbPath}.bak.v0`)).toBe(true);
 
     // The schema_version table must now exist.
     const db2 = new Database(testDbPath);
@@ -131,7 +131,7 @@ describe("Integration: database detection and migration", () => {
     backend.close();
 
     // No backup file must exist for a fresh database.
-    expect(existsSync(`${testDbPath}.bak`)).toBe(false);
+    expect(existsSync(`${testDbPath}.bak.v0`)).toBe(false);
   });
 
   it("creates a backup when migrating an old database", () => {
@@ -160,6 +160,6 @@ describe("Integration: database detection and migration", () => {
     backend.close();
 
     // The backup file must exist.
-    expect(existsSync(`${testDbPath}.bak`)).toBe(true);
+    expect(existsSync(`${testDbPath}.bak.v0`)).toBe(true);
   });
 });

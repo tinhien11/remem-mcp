@@ -218,8 +218,9 @@ export class SQLiteBackend implements StorageBackend {
     if (!readonly) {
       try {
         this.detectAndMigrate(dbPath);
-      } catch {
-        // Migration failed — non-fatal, schema might already be correct
+      } catch (err) {
+        console.error(`[remem-mcp] Migration failed: ${err}`);
+        throw err;
       }
     }
   }
@@ -228,6 +229,7 @@ export class SQLiteBackend implements StorageBackend {
    * Detect the database state and run the correct migration path.
    */
   private detectAndMigrate(dbPath: string): void {
+    let migrationsRan = false;
     const hasVersionTable = this.db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'")
       .get() as { name: string } | undefined;
@@ -245,18 +247,22 @@ export class SQLiteBackend implements StorageBackend {
       } else {
         // Old database without versioning. Backup, then run incremental migrations
         // to add missing columns before running the full schema (which creates new tables).
-        this.backupDatabase(dbPath);
-        this.migrateV1ToV2();
-        this.migrateV2ToV3();
-        this.migrateV3ToV4();
-        this.migrateV4ToV5();
-        this.migrateV5ToV6();
-        this.migrateV6ToV7();
-        this.migrateV7ToV8();
-        // Now run the full schema to create any remaining tables/triggers/indexes
-        this.runSchema();
-        this.writeSchemaVersion(CURRENT_SCHEMA_VERSION);
+        migrationsRan = true;
+        this.backupDatabase(dbPath, 0);
+        this.db.transaction(() => {
+          this.migrateV1ToV2();
+          this.migrateV2ToV3();
+          this.migrateV3ToV4();
+          this.migrateV4ToV5();
+          this.migrateV5ToV6();
+          this.migrateV6ToV7();
+          this.migrateV7ToV8();
+          // Now run the full schema to create any remaining tables/triggers/indexes
+          this.runSchema();
+          this.writeSchemaVersion(CURRENT_SCHEMA_VERSION);
+        })();
       }
+      this.rebuildFtsIfNeeded(migrationsRan);
       return;
     }
 
@@ -267,50 +273,96 @@ export class SQLiteBackend implements StorageBackend {
     const currentVersion = row?.version ?? 0;
 
     if (currentVersion < 1) {
-      this.backupDatabase(dbPath);
-      this.runSchema();
-      this.writeSchemaVersion(1);
+      migrationsRan = true;
+      this.backupDatabase(dbPath, 0);
+      this.db.transaction(() => {
+        this.runSchema();
+        this.writeSchemaVersion(1);
+      })();
     }
     if (currentVersion < 2) {
-      this.backupDatabase(dbPath);
-      this.migrateV1ToV2();
-      this.writeSchemaVersion(2);
+      migrationsRan = true;
+      this.backupDatabase(dbPath, 1);
+      this.db.transaction(() => {
+        this.migrateV1ToV2();
+        this.writeSchemaVersion(2);
+      })();
     }
     if (currentVersion < 3) {
-      this.backupDatabase(dbPath);
-      this.migrateV2ToV3();
-      this.writeSchemaVersion(3);
+      migrationsRan = true;
+      this.backupDatabase(dbPath, 2);
+      this.db.transaction(() => {
+        this.migrateV2ToV3();
+        this.writeSchemaVersion(3);
+      })();
     }
     if (currentVersion < 4) {
-      this.backupDatabase(dbPath);
-      this.migrateV3ToV4();
-      this.writeSchemaVersion(4);
+      migrationsRan = true;
+      this.backupDatabase(dbPath, 3);
+      this.db.transaction(() => {
+        this.migrateV3ToV4();
+        this.writeSchemaVersion(4);
+      })();
     }
     if (currentVersion < 5) {
-      this.backupDatabase(dbPath);
-      this.migrateV4ToV5();
-      this.writeSchemaVersion(5);
+      migrationsRan = true;
+      this.backupDatabase(dbPath, 4);
+      this.db.transaction(() => {
+        this.migrateV4ToV5();
+        this.writeSchemaVersion(5);
+      })();
     }
     if (currentVersion < 6) {
+      migrationsRan = true;
+      this.backupDatabase(dbPath, 5);
       // Tables are created by runSchema() via CREATE TABLE IF NOT EXISTS.
       // Run schema to create CodeGraph + Wiki tables.
-      this.runSchema();
-      this.migrateV5ToV6();
-      this.writeSchemaVersion(6);
+      this.db.transaction(() => {
+        this.runSchema();
+        this.migrateV5ToV6();
+        this.writeSchemaVersion(6);
+      })();
     }
     if (currentVersion < 7) {
-      this.migrateV6ToV7();
-      this.writeSchemaVersion(7);
+      migrationsRan = true;
+      this.backupDatabase(dbPath, 6);
+      this.db.transaction(() => {
+        this.migrateV6ToV7();
+        this.writeSchemaVersion(7);
+      })();
     }
     if (currentVersion < 8) {
-      this.migrateV7ToV8();
-      this.writeSchemaVersion(8);
+      migrationsRan = true;
+      this.backupDatabase(dbPath, 7);
+      this.db.transaction(() => {
+        this.migrateV7ToV8();
+        this.writeSchemaVersion(8);
+      })();
     }
+    this.rebuildFtsIfNeeded(migrationsRan);
   }
 
-  /** Backup the database to a .bak file. */
-  private backupDatabase(dbPath: string): void {
-    const backupPath = `${dbPath}.bak`;
+  /**
+   * Rebuild the FTS index if migrations were run, so pre-migration captures
+   * that exist in the captures table but are absent from captures_fts get
+   * indexed. No-op when no migrations ran (fresh DB already populates FTS
+   * via triggers) or when the FTS table does not exist yet.
+   */
+  private rebuildFtsIfNeeded(migrationsRan: boolean): void {
+    if (!migrationsRan) return;
+    const hasFts = this.db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='captures_fts'",
+      )
+      .get() as { name: string } | undefined;
+    if (!hasFts) return;
+    // Rebuild FTS index for pre-migration captures
+    this.db.exec("INSERT INTO captures_fts(captures_fts) VALUES('rebuild')");
+  }
+
+  /** Backup the database to a versioned .bak file. */
+  private backupDatabase(dbPath: string, fromVersion: number): void {
+    const backupPath = `${dbPath}.bak.v${fromVersion}`;
     try {
       this.db.pragma("wal_checkpoint(FULL)");
       copyFileSync(dbPath, backupPath);
@@ -502,13 +554,27 @@ export class SQLiteBackend implements StorageBackend {
 
   /** Migrate schema v6 → v7: add access tracking + Bayesian confidence columns. */
   private migrateV6ToV7(): void {
-    const cols = this.db.prepare("PRAGMA table_info(captures)").all() as { name: string }[];
-    const hasAccessCount = cols.some((c) => c.name === "access_count");
-    if (!hasAccessCount) {
+    // Check EACH column individually so an interrupted migration (crash after
+    // the first ALTER but before the rest) resumes correctly on retry instead
+    // of being skipped because the sentinel column already exists.
+    let addedAny = false;
+    try {
       this.db.exec("ALTER TABLE captures ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0");
+      addedAny = true;
+    } catch {}
+    try {
       this.db.exec("ALTER TABLE captures ADD COLUMN last_accessed_at INTEGER");
+      addedAny = true;
+    } catch {}
+    try {
       this.db.exec("ALTER TABLE captures ADD COLUMN confirmations INTEGER NOT NULL DEFAULT 0");
+      addedAny = true;
+    } catch {}
+    try {
       this.db.exec("ALTER TABLE captures ADD COLUMN corrections INTEGER NOT NULL DEFAULT 0");
+      addedAny = true;
+    } catch {}
+    if (addedAny) {
       console.error("[remem-mcp] Added access tracking + Bayesian confidence columns");
     }
     console.error("[remem-mcp] Migrated schema v6 → v7 (access tracking + confidence)");
@@ -516,13 +582,27 @@ export class SQLiteBackend implements StorageBackend {
 
   /** Migrate schema v7 → v8: add correction outcome tracking columns. */
   private migrateV7ToV8(): void {
-    const cols = this.db.prepare("PRAGMA table_info(captures)").all() as { name: string }[];
-    const hasRetrievedCount = cols.some((c) => c.name === "retrieved_count");
-    if (!hasRetrievedCount) {
+    // Check EACH column individually so an interrupted migration (crash after
+    // the first ALTER but before the rest) resumes correctly on retry instead
+    // of being skipped because the sentinel column already exists.
+    let addedAny = false;
+    try {
       this.db.exec("ALTER TABLE captures ADD COLUMN retrieved_count INTEGER NOT NULL DEFAULT 0");
+      addedAny = true;
+    } catch {}
+    try {
       this.db.exec("ALTER TABLE captures ADD COLUMN heeded_count INTEGER NOT NULL DEFAULT 0");
+      addedAny = true;
+    } catch {}
+    try {
       this.db.exec("ALTER TABLE captures ADD COLUMN recurrence_count INTEGER NOT NULL DEFAULT 0");
+      addedAny = true;
+    } catch {}
+    try {
       this.db.exec("ALTER TABLE captures ADD COLUMN last_outcome TEXT");
+      addedAny = true;
+    } catch {}
+    if (addedAny) {
       console.error("[remem-mcp] Added correction outcome tracking columns");
     }
     console.error("[remem-mcp] Migrated schema v7 → v8 (correction outcome tracking)");
