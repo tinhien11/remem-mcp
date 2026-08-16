@@ -268,20 +268,27 @@ export class Memory {
       return { groups, merged: 0 };
     }
 
-    // Merge: keep oldest, soft-delete rest
+    // Merge: keep oldest, soft-delete rest (transactional)
     let merged = 0;
-    for (const g of groups) {
-      const groupRows = g.ids
-        .map((id) => rows.find((r) => r.id === id))
-        .filter(Boolean)
-        .sort((a, b) => a!.created_at - b!.created_at);
-      const dups = groupRows.slice(1);
-      for (const dup of dups) {
-        db.prepare("UPDATE captures SET deleted_at = ? WHERE id = ?").run(Date.now(), dup!.id);
-        db.prepare("DELETE FROM captures_vec WHERE id = ?").run(dup!.id);
-        merged++;
+    const softDelete = db.prepare("UPDATE captures SET deleted_at = ? WHERE id = ?");
+    const deleteVec = db.prepare("DELETE FROM captures_vec WHERE id = ?");
+    const deleteAtoms = db.prepare("DELETE FROM atoms WHERE capture_id = ?");
+    const mergeTx = db.transaction(() => {
+      for (const g of groups) {
+        const groupRows = g.ids
+          .map((id) => rows.find((r) => r.id === id))
+          .filter(Boolean)
+          .sort((a, b) => a!.created_at - b!.created_at);
+        const dups = groupRows.slice(1);
+        for (const dup of dups) {
+          softDelete.run(Date.now(), dup!.id);
+          deleteVec.run(dup!.id);
+          deleteAtoms.run(dup!.id);
+          merged++;
+        }
       }
-    }
+    });
+    mergeTx();
 
     return { groups, merged };
   }
