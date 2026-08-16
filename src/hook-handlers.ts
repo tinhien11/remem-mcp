@@ -417,6 +417,7 @@ export function hookRecall(dbPath: string): void {
   });
 
   process.stdin.on("end", () => {
+      process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
     try {
       const input = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
       // Primary sessionKey: hash(cwd) — matches what the MCP server and
@@ -443,12 +444,12 @@ export function hookRecall(dbPath: string): void {
       const errorSql = `
         SELECT id, type, content, tags, created_at
         FROM captures
-        WHERE type = 'error'
+        WHERE type = 'error' AND deleted_at IS NULL AND trust_state != 'rejected'
       `;
       const otherSql = `
         SELECT id, type, content, tags, created_at
         FROM captures
-        WHERE type IN ('decision', 'learning', 'task')
+        WHERE type IN ('decision', 'learning', 'task') AND deleted_at IS NULL AND trust_state != 'rejected'
       `;
 
       const rows: {
@@ -496,17 +497,8 @@ export function hookRecall(dbPath: string): void {
         }
       }
 
-      // If no results with session_key, query all captures
-      if (rows.length === 0) {
-        const allErrors = db
-          .prepare(`${errorSql} ORDER BY created_at DESC LIMIT 5`)
-          .all() as typeof rows;
-        rows.push(...allErrors);
-        const allOthers = db
-          .prepare(`${otherSql} ORDER BY created_at DESC LIMIT 5`)
-          .all() as typeof rows;
-        rows.push(...allOthers);
-      }
+      // No all-captures fallback — that would leak other projects' memory.
+      // If no results, the session simply starts with no injected context.
 
       db.close();
 
@@ -581,7 +573,8 @@ export function hookStop(dbPath?: string): void {
   });
 
   process.stdin.on("end", () => {
-    let input: { stop_hook_active?: boolean; session_id?: string; transcript_path?: string } = {};
+      process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
+    let input: { stop_hook_active?: boolean; session_id?: string; transcript_path?: string; cwd?: string } = {};
     let validInput = true;
     try {
       const raw = Buffer.concat(chunks).toString("utf-8");
@@ -610,8 +603,10 @@ export function hookStop(dbPath?: string): void {
 
       if (tpath && existsSync(tpath)) {
         // Claude Code: transcript is already available — capture now
-        void captureSessionTranscript(dbPath, sid, tpath).then((capId) => {
+        void captureSessionTranscript(dbPath, sid, tpath, input.cwd).then((capId) => {
           logToFile(`Stop: direct capture for session ${sid}, id=${capId ?? "skipped"}`);
+        }).catch((err) => {
+          logToFile(`Stop: capture error - ${err}`);
         });
       } else {
         // Devin CLI: transcript not yet written — spawn background waiter
@@ -709,6 +704,7 @@ export function hookPostToolUse(dbPath: string): void {
   });
 
   process.stdin.on("end", () => {
+      process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
     try {
       const raw = Buffer.concat(chunks).toString("utf-8");
       if (!raw.trim()) {
@@ -788,7 +784,7 @@ export function hookPostToolUse(dbPath: string): void {
                 content,
                 hash,
                 JSON.stringify([pattern.pattern_type, pattern.language]),
-                new Date().toISOString().replace("T", " ").replace("Z", ""),
+                Date.now(),
                 JSON.stringify({
                   tool: toolName,
                   title: pattern.title,
@@ -947,12 +943,12 @@ export function hookPostToolUse(dbPath: string): void {
         const prevError = db
           .prepare(
             `SELECT id, metadata FROM captures
-             WHERE type = 'error' AND session_key = ?
-             AND created_at > datetime('now', '-7 days')
+             WHERE type = 'error' AND session_key = ? AND deleted_at IS NULL
+             AND created_at > ?
              AND json_extract(metadata, '$.command') = ?
              ORDER BY created_at DESC LIMIT 1`,
           )
-          .get(sessionKey, command.slice(0, 200)) as { id: string; metadata: string } | undefined;
+          .get(sessionKey, Date.now() - 7 * 86400000, command.slice(0, 200)) as { id: string; metadata: string } | undefined;
 
         if (prevError) {
           // Upvote the previous error (it was resolved)
@@ -1181,7 +1177,7 @@ export function hookPostToolUse(dbPath: string): void {
                 decContent,
                 decHash,
                 JSON.stringify([decision.decision_type]),
-                new Date().toISOString().replace("T", " ").replace("Z", ""),
+                Date.now(),
                 JSON.stringify({
                   title: decision.title,
                   decision_type: decision.decision_type,
@@ -1246,14 +1242,14 @@ export function hookPostToolUse(dbPath: string): void {
       const semanticContent = `Command failed: ${command}\nError (${errorType}): ${normalizedError}`;
       const contentHash = createHash("sha256").update(semanticContent).digest("hex").slice(0, 16);
       const id = generateId();
-      const now = new Date().toISOString().replace("T", " ").replace("Z", "");
+      const now = Date.now();
 
       // Check for duplicate using semantic hash (same normalized error in last hour)
       const recent = db
         .prepare(
-          "SELECT id FROM captures WHERE content_hash = ? AND created_at > datetime('now', '-1 hour') LIMIT 1",
+          "SELECT id FROM captures WHERE content_hash = ? AND created_at > ? LIMIT 1",
         )
-        .get(contentHash) as { id: string } | undefined;
+        .get(contentHash, now - 3600000) as { id: string } | undefined;
 
       if (recent) {
         // [Feature 5] Downvote the existing error — it recurred (ExpeL + Midas pattern)
@@ -1324,7 +1320,7 @@ export function hookPostToolUse(dbPath: string): void {
           // [Feature 5] Prune if confidence reaches 0 (ExpeL removal threshold)
           if (meta.confidence <= 0) {
             db.prepare("UPDATE captures SET deleted_at = ? WHERE id = ?").run(
-              new Date().toISOString().replace("T", " ").replace("Z", ""),
+              Date.now(),
               recent.id,
             );
             logToFile(`PostToolUse: pruned error ${recent.id} (confidence reached 0)`);
@@ -1337,14 +1333,14 @@ export function hookPostToolUse(dbPath: string): void {
         const prevResolved = db
           .prepare(
             `SELECT id, metadata FROM captures
-             WHERE type = 'error' AND session_key = ?
-             AND created_at > datetime('now', '-30 days')
+             WHERE type = 'error' AND session_key = ? AND deleted_at IS NULL
+             AND created_at > ?
              AND json_extract(metadata, '$.resolved') = 1
              AND json_extract(metadata, '$.fix_applied') IS NOT NULL
              AND json_extract(metadata, '$.command') = ?
              ORDER BY created_at DESC LIMIT 1`,
           )
-          .get(sessionKey, command.slice(0, 200)) as { id: string; metadata: string } | undefined;
+          .get(sessionKey, Date.now() - 30 * 86400000, command.slice(0, 200)) as { id: string; metadata: string } | undefined;
         if (prevResolved) {
           const rMeta = JSON.parse(prevResolved.metadata);
           rMeta.fix_harm_count = (rMeta.fix_harm_count ?? 0) + 1;
@@ -1380,14 +1376,14 @@ export function hookPostToolUse(dbPath: string): void {
         const lineagePrev = db
           .prepare(
             `SELECT id FROM captures
-             WHERE type = 'error' AND session_key = ?
-             AND created_at > datetime('now', '-30 days')
+             WHERE type = 'error' AND session_key = ? AND deleted_at IS NULL
+             AND created_at > ?
              AND json_extract(metadata, '$.resolved') = 1
              AND json_extract(metadata, '$.fix_applied') IS NOT NULL
              AND json_extract(metadata, '$.command') = ?
              ORDER BY created_at DESC LIMIT 1`,
           )
-          .get(sessionKey, command.slice(0, 200)) as { id: string } | undefined;
+          .get(sessionKey, Date.now() - 30 * 86400000, command.slice(0, 200)) as { id: string } | undefined;
         if (lineagePrev) {
           causedByErrorId = lineagePrev.id;
           logToFile(`PostToolUse: LINEAGE — new error may be caused by fix on ${lineagePrev.id}`);
@@ -1467,11 +1463,11 @@ export function hookPostToolUse(dbPath: string): void {
              WHERE type = 'error' AND deleted_at IS NULL
              AND session_key = ?
              AND id != ?
-             AND created_at > datetime('now', '-10 minutes')
+             AND created_at > ?
              AND json_extract(metadata, '$.error_type') != ?
              ORDER BY created_at DESC LIMIT 3`,
           )
-          .all(sessionKey, id, errorType) as { id: string; etype: string; title: string }[];
+          .all(sessionKey, id, Date.now() - 10 * 60000, errorType) as { id: string; etype: string; title: string }[];
 
         for (const prev of recentErrors) {
           // Record correlation on the previous error
@@ -1560,6 +1556,7 @@ export function hookPreToolUse(dbPath: string): void {
   });
 
   process.stdin.on("end", () => {
+      process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
     try {
       const raw = Buffer.concat(chunks).toString("utf-8");
       if (!raw.trim()) {
@@ -1611,11 +1608,11 @@ export function hookPreToolUse(dbPath: string): void {
                  FROM captures
                  WHERE type = 'error' AND deleted_at IS NULL
                  AND session_key = ?
-                 AND created_at > datetime('now', '-30 days')
+                 AND created_at > ?
                  AND (content LIKE ? OR content LIKE ?)
                  ORDER BY created_at DESC LIMIT 3`,
               )
-              .all(sessionKey, `%${basename}%`, `%${filePath}%`) as {
+              .all(sessionKey, Date.now() - 30 * 86400000, `%${basename}%`, `%${filePath}%`) as {
               title: string;
               etype: string;
               anti: string;
@@ -1816,7 +1813,7 @@ export function hookPreToolUse(dbPath: string): void {
           `SELECT id, content, content_hash, tags, created_at, metadata, session_key FROM captures
            WHERE type = 'error' ${sessionFilter}
            AND deleted_at IS NULL
-           AND created_at > datetime('now', '-30 days')
+           AND created_at > ?
            AND json_extract(metadata, '$.resolved') IS NOT true
            ORDER BY
                     CASE json_extract(metadata, '$.severity')
@@ -1829,7 +1826,7 @@ export function hookPreToolUse(dbPath: string): void {
                     CAST(json_extract(metadata, '$.confidence') AS INTEGER) DESC,
                     created_at DESC LIMIT 5`,
         )
-        .all(...params) as {
+        .all(...params, Date.now() - 30 * 86400000) as {
         id: string;
         content: string;
         content_hash: string | null;
@@ -1942,7 +1939,7 @@ export function hookPreToolUse(dbPath: string): void {
           const decDb = new Database(dbPath, { readonly: true });
           const lowerCmd = command.toLowerCase();
           let decQuery = "";
-          const decParams: (string | number)[] = [sessionKey];
+          const decParams: (string | number)[] = [sessionKey, Date.now() - 90 * 86400000];
 
           if (
             lowerCmd.includes("npm install") ||
@@ -1957,7 +1954,7 @@ export function hookPreToolUse(dbPath: string): void {
                WHERE type = 'decision' AND deleted_at IS NULL
                AND session_key = ?
                AND json_extract(metadata, '$.decision_type') = 'dependency'
-               AND created_at > datetime('now', '-90 days')
+               AND created_at > ?
                ORDER BY CAST(json_extract(metadata, '$.confidence') AS INTEGER) DESC LIMIT 3`;
           } else if (lowerCmd.includes("git commit")) {
             decQuery = `SELECT json_extract(metadata, '$.title') as title,
@@ -1968,7 +1965,7 @@ export function hookPreToolUse(dbPath: string): void {
                WHERE type = 'decision' AND deleted_at IS NULL
                AND session_key = ?
                AND json_extract(metadata, '$.decision_type') = 'commit'
-               AND created_at > datetime('now', '-90 days')
+               AND created_at > ?
                ORDER BY created_at DESC LIMIT 3`;
           }
 
@@ -1993,7 +1990,7 @@ export function hookPreToolUse(dbPath: string): void {
                    WHERE type = 'decision' AND deleted_at IS NULL
                    AND session_key != ?
                    AND json_extract(metadata, '$.decision_type') = ?
-                   AND created_at > datetime('now', '-90 days')
+                   AND created_at > ?
                    ORDER BY CAST(json_extract(metadata, '$.confidence') AS INTEGER) DESC LIMIT 2`,
                 )
                 .all(
@@ -2003,6 +2000,7 @@ export function hookPreToolUse(dbPath: string): void {
                     lowerCmd.includes("cargo add")
                     ? "dependency"
                     : "commit",
+                  Date.now() - 90 * 86400000,
                 ) as {
                 title: string;
                 choice: string;
@@ -2172,7 +2170,7 @@ export function hookPreToolUse(dbPath: string): void {
         const decDb = new Database(dbPath, { readonly: true });
         const lowerCmd = command.toLowerCase();
         let decQuery = "";
-        const decParams: (string | number)[] = [sessionKey];
+        const decParams: (string | number)[] = [sessionKey, Date.now() - 90 * 86400000];
 
         if (
           lowerCmd.includes("npm install") ||
@@ -2189,7 +2187,7 @@ export function hookPreToolUse(dbPath: string): void {
              WHERE type = 'decision' AND deleted_at IS NULL
              AND session_key = ?
              AND json_extract(metadata, '$.decision_type') = 'dependency'
-             AND created_at > datetime('now', '-90 days')
+             AND created_at > ?
              ORDER BY CAST(json_extract(metadata, '$.confidence') AS INTEGER) DESC LIMIT 3`;
         } else if (lowerCmd.includes("git commit")) {
           // Inject commit-encoded decisions
@@ -2202,7 +2200,7 @@ export function hookPreToolUse(dbPath: string): void {
              WHERE type = 'decision' AND deleted_at IS NULL
              AND session_key = ?
              AND json_extract(metadata, '$.decision_type') = 'commit'
-             AND created_at > datetime('now', '-90 days')
+             AND created_at > ?
              ORDER BY created_at DESC LIMIT 3`;
         }
 
@@ -2229,7 +2227,7 @@ export function hookPreToolUse(dbPath: string): void {
                  WHERE type = 'decision' AND deleted_at IS NULL
                  AND session_key != ?
                  AND json_extract(metadata, '$.decision_type') = ?
-                 AND created_at > datetime('now', '-90 days')
+                 AND created_at > ?
                  ORDER BY CAST(json_extract(metadata, '$.confidence') AS INTEGER) DESC LIMIT 2`,
               )
               .all(
@@ -2239,6 +2237,7 @@ export function hookPreToolUse(dbPath: string): void {
                   lowerCmd.includes("cargo add")
                   ? "dependency"
                   : "commit",
+                Date.now() - 90 * 86400000,
               ) as {
               title: string;
               choice: string;
@@ -2358,7 +2357,8 @@ function checkDangerousCommand(command: string): string | null {
   const lower = command.toLowerCase();
 
   // git push --force / git push -f (without branch = force push ALL branches)
-  if (/git\s+push\s+(--force|-f|--force-with-lease)/.test(lower)) {
+  // --force-with-lease is safer — only warn on bare --force / -f
+  if (/git\s+push\s+(--force|-f)(?!\S)/.test(lower)) {
     const hasBranch = /git\s+push\s+\S+\s+\S+/.test(command);
     return hasBranch
       ? `[remem-mcp] ⚠ DANGER: git push --force detected.\n` +
@@ -2758,11 +2758,11 @@ function detectCrossProjectPattern(
         `SELECT session_key, content, metadata, created_at FROM captures
          WHERE type = 'error' AND session_key != ?
          AND deleted_at IS NULL
-         AND created_at > datetime('now', '-30 days')
+         AND created_at > ?
          AND json_extract(metadata, '$.error_type') = ?
          ORDER BY created_at DESC LIMIT 10`,
       )
-      .all(currentSessionKey, errorType) as {
+      .all(currentSessionKey, Date.now() - 30 * 86400000, errorType) as {
       session_key: string;
       content: string;
       metadata: string;
@@ -3033,6 +3033,7 @@ async function captureSessionTranscript(
   dbPath: string,
   sessionId?: string,
   transcriptPath?: string | null,
+  cwd?: string,
 ): Promise<string | null> {
   const sid = sessionId ?? "unknown";
 
@@ -3155,9 +3156,9 @@ async function captureSessionTranscript(
 
   const db = new Database(dbPath);
   // Use hash(cwd) to match MCP server's session key, so auto-captured
-  // transcripts are visible to recall(). Fall back to sid.slice(0,16) only
-  // if cwd is unavailable (background process without env).
-  const sessionKey = hashPath(process.cwd());
+  // transcripts are visible to recall(). Use the caller's cwd if provided,
+  // otherwise fall back to process.cwd().
+  const sessionKey = hashPath(cwd ?? process.cwd());
   const now = Date.now();
   const id = generateId();
 
@@ -3251,6 +3252,7 @@ export function hookSessionEnd(dbPath: string): void {
   });
 
   process.stdin.on("end", () => {
+      process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
     try {
       const input = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
       const sessionId = input.session_id ?? "unknown";
@@ -3366,7 +3368,7 @@ export async function hookPostCommit(dbPath: string): Promise<void> {
     sqliteVec.load(db);
 
     // Ensure schema exists (create tables if missing)
-    const schemaPath = join(dirname(fileURLToPath(import.meta.url)), "schema.sql");
+    const schemaPath = join(dirname(fileURLToPath(import.meta.url)), "storage", "schema.sql");
     try {
       const schema = readFileSync(schemaPath, "utf-8");
       db.exec(schema);
@@ -3445,6 +3447,7 @@ export function hookPreCompact(dbPath: string): void {
   });
 
   process.stdin.on("end", async () => {
+      process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
     try {
       const raw = Buffer.concat(chunks).toString("utf-8");
       const input = raw.trim() ? JSON.parse(raw) : {};
@@ -3454,6 +3457,14 @@ export function hookPreCompact(dbPath: string): void {
       // Capture a compaction checkpoint
       const db = new Database(dbPath);
       db.pragma("journal_mode = WAL");
+
+      // Load sqlite-vec before schema (schema.sql creates captures_vec using vec0)
+      try {
+        const sqliteVec = await import("sqlite-vec");
+        sqliteVec.load(db);
+      } catch {
+        // sqlite-vec not available — captures_vec won't be created
+      }
 
       // Ensure schema exists (create tables if missing)
       try {
@@ -3581,6 +3592,7 @@ export function hookPostCompaction(dbPath: string): void {
   });
 
   process.stdin.on("end", async () => {
+      process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
     try {
       const raw = Buffer.concat(chunks).toString("utf-8");
       const input = raw.trim() ? JSON.parse(raw) : {};

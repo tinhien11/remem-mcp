@@ -800,7 +800,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     const realSessionKey = hashPath(tmpDir);
 
     // Insert an error 31 days old
-    const oldDate = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString();
+    const oldDate = Date.now() - 31 * 24 * 60 * 60 * 1000;
     const meta = {
       command: "npm run lint",
       error_type: "lint",
@@ -999,10 +999,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     // We need to simulate time passing — update the created_at to be > 1 hour ago
     const Database2 = require("better-sqlite3");
     const db2 = new Database2(dbPath);
-    const oneHourAgo = new Date(Date.now() - 2 * 60 * 60 * 1000)
-      .toISOString()
-      .replace("T", " ")
-      .replace("Z", "");
+    const oneHourAgo = Date.now() - 2 * 60 * 60 * 1000;
     db2.prepare("UPDATE captures SET created_at = ? WHERE type = 'error'").run(oneHourAgo);
     db2.close();
 
@@ -1134,10 +1131,7 @@ describe("Integration: error learning — agent gets smart from mistakes", () =>
     // Manually set the error's created_at to 10 days ago
     const Database = require("better-sqlite3");
     const db2 = new Database(dbPath);
-    const oldDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000)
-      .toISOString()
-      .replace("T", " ")
-      .replace("Z", "");
+    const oldDate = Date.now() - 10 * 24 * 60 * 60 * 1000;
     db2.prepare("UPDATE captures SET created_at = ? WHERE type = 'error'").run(oldDate);
     db2.close();
 

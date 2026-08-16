@@ -320,17 +320,20 @@ describe("Regression: read-only DB fallback", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "remem-readonly-reg-"));
     dbPath = join(tmpDir, "memory.db");
+    // hook-recall uses hashPath(cwd) as sessionKey — match that so captures are found
+    const { createHash } = require("node:crypto");
+    const hashedCwd = createHash("sha256").update("/tmp").digest("hex").slice(0, 16);
     makeDb(dbPath, [
       {
         id: "1",
-        session_key: "test-session",
+        session_key: hashedCwd,
         type: "decision",
         content: "Use SQLite for local-first storage",
         tags: '["arch"]',
       },
       {
         id: "2",
-        session_key: "test-session",
+        session_key: hashedCwd,
         type: "learning",
         content: "FTS5 supports BM25 ranking natively",
         tags: '["search"]',

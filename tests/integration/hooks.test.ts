@@ -25,6 +25,9 @@ function makeDb(
   db.pragma("journal_mode = WAL");
 
   // Create schema manually (no sqlite-vec needed for hook-recall which uses readonly)
+  // Must include deleted_at and trust_state columns — hook-recall queries them.
+  const { createHash } = require("node:crypto");
+  const sessionKey = createHash("sha256").update(process.cwd()).digest("hex").slice(0, 16);
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL, applied_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS captures (
@@ -36,19 +39,21 @@ function makeDb(
       content_hash TEXT,
       tags TEXT,
       created_at INTEGER NOT NULL,
-      metadata TEXT
+      metadata TEXT,
+      deleted_at TEXT,
+      trust_state TEXT
     );
     INSERT INTO schema_version VALUES (1, ${Date.now()});
   `);
 
   const stmt = db.prepare(
-    "INSERT INTO captures (id, session_key, agent_id, type, content, tags, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO captures (id, session_key, agent_id, type, content, tags, created_at, metadata, trust_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'candidate')",
   );
 
   for (const c of captures) {
     stmt.run(
       c.id,
-      "test-session",
+      sessionKey,
       "test-agent",
       c.type,
       c.content,
