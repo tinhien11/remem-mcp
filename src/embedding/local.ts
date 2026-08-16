@@ -1,4 +1,3 @@
-import { pipeline } from "@huggingface/transformers";
 import type { Embedder } from "./types.js";
 
 /**
@@ -6,6 +5,10 @@ import type { Embedder } from "./types.js";
  * The vector has 384 dimensions. No API key is needed.
  *
  * The first run downloads the model. Subsequent runs load the model from the disk cache.
+ *
+ * The `@huggingface/transformers` import is deferred to first use so that
+ * environments without the ONNX native module (e.g. CI Linux) can still load
+ * the module — only `embed()` calls will fail there.
  */
 export class LocalEmbedder implements Embedder {
   readonly dimension = 384;
@@ -27,6 +30,9 @@ export class LocalEmbedder implements Embedder {
       return;
     }
     this.initPromise = (async () => {
+      // Lazy import so the ONNX native module is only loaded when embedding
+      // is actually needed (not at module load time).
+      const { pipeline } = await import("@huggingface/transformers");
       this.extractor = (await pipeline(
         "feature-extraction",
         this.model,
