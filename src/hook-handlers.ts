@@ -412,12 +412,12 @@ export function hookRecall(dbPath: string): void {
   // Read stdin
   const chunks: Buffer[] = [];
   process.stdin.setEncoding("utf-8");
+  process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
   process.stdin.on("data", (chunk) => {
     chunks.push(Buffer.from(chunk));
   });
 
   process.stdin.on("end", () => {
-      process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
     try {
       const input = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
       // Primary sessionKey: hash(cwd) — matches what the MCP server and
@@ -568,12 +568,12 @@ export function hookRecall(dbPath: string): void {
 export function hookStop(dbPath?: string): void {
   const chunks: Buffer[] = [];
   process.stdin.setEncoding("utf-8");
+  process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
   process.stdin.on("data", (chunk) => {
     chunks.push(Buffer.from(chunk));
   });
 
   process.stdin.on("end", () => {
-      process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
     let input: { stop_hook_active?: boolean; session_id?: string; transcript_path?: string; cwd?: string } = {};
     let validInput = true;
     try {
@@ -699,12 +699,12 @@ export function hookStop(dbPath?: string): void {
 export function hookPostToolUse(dbPath: string): void {
   const chunks: Buffer[] = [];
   process.stdin.setEncoding("utf-8");
+  process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
   process.stdin.on("data", (chunk) => {
     chunks.push(Buffer.from(chunk));
   });
 
   process.stdin.on("end", () => {
-      process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
     try {
       const raw = Buffer.concat(chunks).toString("utf-8");
       if (!raw.trim()) {
@@ -1551,12 +1551,12 @@ Before retrying, reflect on WHY this failed and what you should do differently. 
 export function hookPreToolUse(dbPath: string): void {
   const chunks: Buffer[] = [];
   process.stdin.setEncoding("utf-8");
+  process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
   process.stdin.on("data", (chunk) => {
     chunks.push(Buffer.from(chunk));
   });
 
   process.stdin.on("end", () => {
-      process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
     try {
       const raw = Buffer.concat(chunks).toString("utf-8");
       if (!raw.trim()) {
@@ -3247,12 +3247,12 @@ async function captureSessionTranscript(
 export function hookSessionEnd(dbPath: string): void {
   const chunks: Buffer[] = [];
   process.stdin.setEncoding("utf-8");
+  process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
   process.stdin.on("data", (chunk) => {
     chunks.push(Buffer.from(chunk));
   });
 
   process.stdin.on("end", () => {
-      process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
     try {
       const input = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
       const sessionId = input.session_id ?? "unknown";
@@ -3442,12 +3442,12 @@ export async function hookPostCommit(dbPath: string): Promise<void> {
 export function hookPreCompact(dbPath: string): void {
   const chunks: Buffer[] = [];
   process.stdin.setEncoding("utf-8");
+  process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
   process.stdin.on("data", (chunk) => {
     chunks.push(Buffer.from(chunk));
   });
 
   process.stdin.on("end", async () => {
-      process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
     try {
       const raw = Buffer.concat(chunks).toString("utf-8");
       const input = raw.trim() ? JSON.parse(raw) : {};
@@ -3587,12 +3587,12 @@ Compaction trigger: ${trigger}`;
 export function hookPostCompaction(dbPath: string): void {
   const chunks: Buffer[] = [];
   process.stdin.setEncoding("utf-8");
+  process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
   process.stdin.on("data", (chunk) => {
     chunks.push(Buffer.from(chunk));
   });
 
   process.stdin.on("end", async () => {
-      process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
     try {
       const raw = Buffer.concat(chunks).toString("utf-8");
       const input = raw.trim() ? JSON.parse(raw) : {};
