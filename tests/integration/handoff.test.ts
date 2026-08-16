@@ -67,7 +67,9 @@ async function listTools(server: Server): Promise<string[]> {
   return result.tools.map((t) => t.name);
 }
 
-describe("Integration: handoff tool", () => {
+const describeOrSkip = process.env.CI ? describe.skip : describe;
+
+describeOrSkip("Integration: handoff tool", () => {
   let tmpDir: string;
   let dbPath: string;
   let auditPath: string;

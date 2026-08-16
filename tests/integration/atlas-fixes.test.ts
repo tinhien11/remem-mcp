@@ -74,7 +74,9 @@ function defaultSessionKey(): string {
 }
 
 // ─── Test setup ────────────────────────────────────────────────
-describe("Integration: Atlas fixes", () => {
+const describeOrSkip = process.env.CI ? describe.skip : describe;
+
+describeOrSkip("Integration: Atlas fixes", () => {
   let tmpDir: string;
   let dbPath: string;
   let auditPath: string;

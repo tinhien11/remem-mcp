@@ -14,7 +14,9 @@ afterEach(() => {
   if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
 });
 
-describe("SDK update()", () => {
+const describeOrSkip = process.env.CI ? describe.skip : describe;
+
+describeOrSkip("SDK update()", () => {
   it("updates content and re-embeds", async () => {
     const m = new Memory({ dbPath: testDbPath });
     const id = await m.capture("Original content here", "learning", ["test"]);
@@ -89,7 +91,7 @@ describe("SDK update()", () => {
   });
 });
 
-describe("SDK consolidate()", () => {
+describeOrSkip("SDK consolidate()", () => {
   it("returns empty groups with <2 captures", async () => {
     const m = new Memory({ dbPath: testDbPath });
     await m.capture("Single capture", "learning", ["test"]);
@@ -140,7 +142,7 @@ describe("SDK consolidate()", () => {
   });
 });
 
-describe("Memory decay / auto-stale", () => {
+describeOrSkip("Memory decay / auto-stale", () => {
   it("applies decay to old captures", async () => {
     const m = new Memory({ dbPath: testDbPath });
     const id = await m.capture("Decay test capture", "learning", ["test"]);

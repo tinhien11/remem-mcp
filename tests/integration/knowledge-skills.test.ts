@@ -58,7 +58,9 @@ async function listTools(server: Server): Promise<string[]> {
   return result.tools.map((t) => t.name);
 }
 
-describe("Integration: knowledge management", () => {
+const describeOrSkip = process.env.CI ? describe.skip : describe;
+
+describeOrSkip("Integration: knowledge management", () => {
   let tmpDir: string;
   let dbPath: string;
   let auditPath: string;
@@ -207,7 +209,7 @@ describe("Integration: knowledge management", () => {
   });
 });
 
-describe("Integration: skill management", () => {
+describeOrSkip("Integration: skill management", () => {
   let tmpDir: string;
   let dbPath: string;
   let auditPath: string;

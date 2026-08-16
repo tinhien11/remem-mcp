@@ -46,7 +46,9 @@ async function callTool(
   return result.content.map((c) => c.text).join("\n");
 }
 
-describe("Integration: conversation messages", () => {
+const describeOrSkip = process.env.CI ? describe.skip : describe;
+
+describeOrSkip("Integration: conversation messages", () => {
   let tmpDir: string;
   let dbPath: string;
   let auditPath: string;

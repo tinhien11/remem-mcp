@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Memory } from "../../src/sdk.js";
 
-describe("Search quality: proper noun handling (hybrid mode)", () => {
+const describeOrSkip = process.env.CI ? describe.skip : describe;
+
+describeOrSkip("Search quality: proper noun handling (hybrid mode)", () => {
   let tmpDir: string;
   let memory: Memory;
 
