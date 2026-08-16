@@ -1677,7 +1677,11 @@ async function handleCapture(
 
   // If supersedes is set, mark the old capture as stale.
   if (supersedes) {
-    await opts.storage.supersede(supersedes, id);
+    try {
+      await opts.storage.supersede(supersedes, id);
+    } catch (err) {
+      console.error(`[remem-mcp] Supersede failed: ${err}`);
+    }
   }
 
   let embedding: number[] | null = null;
@@ -2376,6 +2380,16 @@ async function handleUpdate(
     ).run(rowid, id, newContent, newTags, newType);
   }
 
+  // Re-embed if content changed so vector search returns fresh results
+  if (args.content && args.content !== (row.content as string)) {
+    try {
+      const embedding = await opts.embedder.embed(newContent);
+      await opts.storage.putVector(id, embedding);
+    } catch (err) {
+      console.error(`[remem-mcp] Re-embedding failed: ${err}`);
+    }
+  }
+
   return {
     content: [{ type: "text", text: `Updated: ${id}\nType: ${newType}\nTrust: ${newTrust}` }],
   };
@@ -2997,8 +3011,12 @@ async function handleSessionEnd(
     createdAt: Date.now(),
   };
   await opts.storage.put(entry);
-  const embedding = await opts.embedder.embed(summary);
-  await opts.storage.putVector(id, embedding);
+  try {
+    const embedding = await opts.embedder.embed(summary);
+    await opts.storage.putVector(id, embedding);
+  } catch (err) {
+    console.error(`[remem-mcp] Embedding failed: ${err}`);
+  }
 
   return {
     content: [{ type: "text", text: `Session ended. Summary captured: ${id}` }],
@@ -3049,8 +3067,12 @@ async function handleSessionCheckpoint(
     },
   };
   await opts.storage.put(entry);
-  const embedding = await opts.embedder.embed(checkpointContent);
-  await opts.storage.putVector(checkpointId, embedding);
+  try {
+    const embedding = await opts.embedder.embed(checkpointContent);
+    await opts.storage.putVector(checkpointId, embedding);
+  } catch (err) {
+    console.error(`[remem-mcp] Embedding failed: ${err}`);
+  }
 
   return {
     content: [
@@ -3095,7 +3117,15 @@ async function handleResolve(
     };
   }
 
-  const result = await opts.storage.supersede(loser, winner);
+  let result: Awaited<ReturnType<typeof opts.storage.supersede>>;
+  try {
+    result = await opts.storage.supersede(loser, winner);
+  } catch (err) {
+    return {
+      content: [{ type: "text", text: `Error: Supersede failed: ${err}` }],
+      isError: true,
+    };
+  }
 
   if (result.updated === 0) {
     return {
