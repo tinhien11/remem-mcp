@@ -913,7 +913,12 @@ export class SQLiteBackend implements StorageBackend {
       return this.fetchEntries(bm25Results, limit, offset, temporalIntent);
     }
     if (mode === "vector") {
-      return this.fetchEntries(vecResults, limit, offset, temporalIntent);
+      // vecResults carry raw L2 distance (lower = better). fetchEntriesById expects
+      // higher = better (it multiplies by trust/recency boosts and sorts descending),
+      // so convert to a similarity score before handing off — otherwise the worst
+      // matches would be boosted and sorted to the top.
+      const similarityResults = vecResults.map((r) => ({ id: r.id, score: 1 / (1 + r.score) }));
+      return this.fetchEntries(similarityResults, limit, offset, temporalIntent);
     }
 
     // Hybrid: fuse with RRF.

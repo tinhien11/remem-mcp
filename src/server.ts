@@ -1241,7 +1241,7 @@ export function createServer(opts: ServerOptions): Server {
           tags: r.tags ? JSON.parse(r.tags as string) : [],
           createdAt: r.created_at as number,
           trustState: (r.trust_state as TrustState) ?? "candidate",
-          supersededBy: r.superseded_by as string | null,
+          supersededBy: (r.superseded_by as string | null) ?? undefined,
           teamId: r.team_id as string | undefined,
           userId: r.user_id as string | undefined,
           taskId: r.task_id as string | undefined,
@@ -1434,14 +1434,16 @@ async function handleRecall(
   // Project-specific captures are always more relevant than generic cross-project
   // rules when the user is working in a project directory.
   const globalKey = globalSessionKey();
-  const useGlobalFallback = globalKey && !args.session_key && globalKey !== sessionKey;
+  const useGlobalFallback = !!globalKey && !args.session_key && globalKey !== sessionKey;
 
   let results: SearchResult[];
   if (useGlobalFallback) {
     // Reserve 3 slots for global so cross-project knowledge isn't buried
-    // when project has enough results to fill the limit.
+    // when project has enough results to fill the limit. Always leave the
+    // project search at least 1 slot — project captures are more relevant
+    // and must not be zeroed out entirely for small limits (e.g. limit: 2).
     const reservedGlobal = Math.min(3, limit);
-    const projectLimit = limit - reservedGlobal;
+    const projectLimit = Math.max(1, limit - reservedGlobal);
     const projectResults = await opts.storage.search(query, queryEmbedding, {
       sessionKey,
       limit: projectLimit,
@@ -1905,7 +1907,7 @@ async function handleSearch(
 
   const sessionKey = (args.session_key as string) ?? defaultSessionKey();
   const globalKey = globalSessionKey();
-  const useGlobalFallback = globalKey && !args.session_key && globalKey !== sessionKey;
+  const useGlobalFallback = !!globalKey && !args.session_key && globalKey !== sessionKey;
 
   const searchFilters = filters
     ? {
@@ -1922,8 +1924,10 @@ async function handleSearch(
 
   let results: SearchResult[];
   if (useGlobalFallback) {
+    // Always leave the project search at least 1 slot — project captures are
+    // more relevant and must not be zeroed out entirely for small limits.
     const reservedGlobal = Math.min(3, limit);
-    const projectLimit = limit - reservedGlobal;
+    const projectLimit = Math.max(1, limit - reservedGlobal);
     const projectResults = await opts.storage.search(query, queryEmbedding, {
       sessionKey,
       limit: projectLimit,
@@ -2175,7 +2179,7 @@ async function searchWithGlobalFallback(
     queryEmbedding: number[] | null;
     useGlobalFallback: boolean | "" | null;
     sessionKey: string;
-    globalKey: string | undefined;
+    globalKey: string | null | undefined;
     teamId: string | undefined;
     userId: string | undefined;
     taskId: string | undefined;
@@ -2231,7 +2235,7 @@ async function handleExplainRecall(
   const captureId = args.capture_id as string | undefined;
   const sessionKey = (args.session_key as string) ?? defaultSessionKey();
   const globalKey = globalSessionKey();
-  const useGlobalFallback = globalKey && !args.session_key && globalKey !== sessionKey;
+  const useGlobalFallback = !!globalKey && !args.session_key && globalKey !== sessionKey;
   const mode = (args.mode as SearchMode) ?? "hybrid";
   const limit = Math.min((args.limit as number) ?? 10, 50);
   const { teamId, userId, taskId } = extractTenant(args);
@@ -2258,7 +2262,7 @@ async function handleExplainRecall(
     queryEmbedding,
     useGlobalFallback,
     sessionKey,
-    globalKey,
+    globalKey: globalKey ?? undefined,
     teamId,
     userId,
     taskId,
@@ -3082,10 +3086,18 @@ async function handleSupersede(
       isError: true,
     };
   }
-  db.prepare("UPDATE captures SET superseded_by = ?, trust_state = 'stale' WHERE id = ?").run(
-    newId,
-    oldId,
-  );
+  const { updated } = await opts.storage.supersede(oldId, newId);
+  if (updated === 0) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Error: Old capture ${oldId} could not be superseded (it may already be rejected).`,
+        },
+      ],
+      isError: true,
+    };
+  }
   return {
     content: [
       {
@@ -3167,7 +3179,7 @@ async function handleSessionStart(
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
   const sessionKey = (args.session_key as string) ?? defaultSessionKey();
   const globalKey = globalSessionKey();
-  const useGlobalFallback = globalKey && !args.session_key && globalKey !== sessionKey;
+  const useGlobalFallback = !!globalKey && !args.session_key && globalKey !== sessionKey;
   const contextQuery = args.context_query as string | undefined;
   const db = getDb(opts);
 
@@ -3176,10 +3188,11 @@ async function handleSessionStart(
   const placeholders = sessionKeys.map(() => "?").join(",");
   const recent = db
     .prepare(
-      `SELECT id, type, content, tags, created_at FROM captures WHERE deleted_at IS NULL AND session_key IN (${placeholders}) ORDER BY created_at DESC LIMIT 5`,
+      `SELECT id, session_key, type, content, tags, created_at FROM captures WHERE deleted_at IS NULL AND session_key IN (${placeholders}) ORDER BY created_at DESC LIMIT 5`,
     )
     .all(...sessionKeys) as {
     id: string;
+    session_key: string;
     type: string;
     content: string;
     tags: string;
