@@ -57,6 +57,59 @@ function globalSessionKey(): string | null {
   return process.env.REMEM_GLOBAL_SESSION_KEY ?? null;
 }
 
+/**
+ * Auto-classify content as global (cross-project) or project-specific.
+ * Heuristic: generic rules/conventions/learnings → global; content with
+ * file paths, line numbers, project names, or specific identifiers → project.
+ */
+function classifyGlobal(content: string, type: CaptureType): boolean {
+  // Only learning/decision/task types are candidates for global.
+  // Conversations, errors, and atoms stay project-scoped.
+  if (type !== "learning" && type !== "decision" && type !== "task") return false;
+
+  const lower = content.toLowerCase();
+
+  // Project-specific signals → NOT global
+  const projectSignals = [
+    /\b\/[a-z]/i,           // file paths: /src, /Users
+    /\b\w+\/\w+\.\w{1,5}\b/, // path/file.ext
+    /line\s*\d+/i,          // line numbers
+    /\b\d{4,}\b/,           // large numbers (IDs, timestamps)
+    /\bcommit\s+[0-9a-f]{7,}/i, // commit hashes
+    /\bsrc\//,              // src/ paths
+    /\bdist\//,             // dist/ paths
+    /\btests?\//,           // tests/ paths
+  ];
+  for (const sig of projectSignals) {
+    if (sig.test(content)) return false;
+  }
+
+  // Global signals: generic rules, conventions, patterns
+  const globalSignals = [
+    /\balways\s+/i,         // "always run tests"
+    /\bnever\s+/i,          // "never commit secrets"
+    /\brule\b/i,            // "rule: ..."
+    /\bconvention\b/i,      // "convention: ..."
+    /\bpattern\b/i,         // "pattern: ..."
+    /\bprefer\b/i,          // "prefer X over Y"
+    /\bavoid\b/i,           // "avoid doing X"
+    /\bshould\b/i,          // "you should ..."
+    /\bbest\s+practice\b/i, // "best practice"
+  ];
+  let globalScore = 0;
+  for (const sig of globalSignals) {
+    if (sig.test(lower)) globalScore++;
+  }
+
+  // Short, generic content (no project-specific identifiers) → global
+  if (content.length < 300 && globalScore >= 1) return true;
+
+  // Very short + learning type → likely a rule
+  if (content.length < 150 && type === "learning") return true;
+
+  return false;
+}
+
 /** Detect the agent ID from environment variables. */
 function detectAgentId(): string {
   if (process.env.DEVIN_SESSION_ID) return "devin";
@@ -203,7 +256,7 @@ const TOOLS: Tool[] = [
       "Call this tool after you complete a non-trivial task, make a decision, or fix a bug with a known root cause. " +
       "You can capture a single text string, or a list of role-based conversation messages. " +
       "To store cross-project knowledge (rules, conventions, learnings reusable across projects), " +
-      "pass session_key=\"global\" — these appear in every project's recall automatically.",
+      "pass session_key=\"global\" or auto_global=true — these appear in every project's recall automatically.",
     inputSchema: {
       type: "object",
       properties: {
@@ -263,6 +316,13 @@ const TOOLS: Tool[] = [
           default: false,
           description:
             "Set this to true to force capture even if the content was previously rejected. Use this only when the rejection reason no longer applies.",
+        },
+        auto_global: {
+          type: "boolean",
+          default: false,
+          description:
+            "Set to true to auto-classify: generic rules/learnings go to global, project-specific content stays in project. " +
+            "Only applies when session_key is not explicitly set. Requires REMEM_GLOBAL_SESSION_KEY to be configured.",
         },
         format: {
           type: "string",
@@ -1560,7 +1620,29 @@ async function handleCapture(
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
   const type = (args.type as CaptureType) ?? "conversation";
   const tags = (args.tags as string[]) ?? [];
-  const sessionKey = (args.session_key as string) ?? defaultSessionKey();
+  const autoGlobal = (args.auto_global as boolean) ?? false;
+  const globalKey = globalSessionKey();
+  let sessionKey = (args.session_key as string) ?? defaultSessionKey();
+
+  // Auto-classify: if auto_global is set, session_key wasn't explicitly passed,
+  // and global is configured, decide whether content is generic (global) or
+  // project-specific (project).
+  let autoClassified = false;
+  if (autoGlobal && !args.session_key && globalKey && globalKey !== sessionKey) {
+    // Build content first to classify (mirror logic below)
+    let classifyContent: string;
+    const rawMsgs = args.messages as CaptureMessage[] | undefined;
+    if (rawMsgs && rawMsgs.length > 0) {
+      classifyContent = rawMsgs.map((m) => `${m.role}: ${m.content}`).join("\n");
+    } else {
+      classifyContent = (args.content as string) ?? "";
+    }
+    if (classifyGlobal(classifyContent, type)) {
+      sessionKey = globalKey;
+      autoClassified = true;
+    }
+  }
+
   const metadata = args.metadata as Record<string, unknown> | undefined;
   const { teamId, userId, taskId } = extractTenant(args);
   const agentId = (args.agent_id as string) ?? detectAgentId();
@@ -1807,6 +1889,8 @@ async function handleCapture(
             content: redactedContent,
             type,
             tags,
+            session_key: sessionKey,
+            auto_classified: autoClassified || undefined,
             created_at: new Date(entry.createdAt).toISOString(),
             verified: trustState === "verified",
             conflicts: conflictInfo ? conflictInfo.trim() : undefined,
@@ -1821,11 +1905,12 @@ async function handleCapture(
   const msgNote = messages ? ` (${messages.length} messages)` : "";
   const trustNote = trustState === "verified" ? " [verified]" : "";
   const supersedesNote = supersedes ? ` (supersedes ${supersedes})` : "";
+  const globalNote = autoClassified ? " [auto→global]" : (sessionKey === globalKey ? " [global]" : "");
   return {
     content: [
       {
         type: "text",
-        text: `Captured: ${id}${redactionNote}${msgNote}${trustNote}${supersedesNote}${conflictInfo}`,
+        text: `Captured: ${id}${redactionNote}${msgNote}${trustNote}${supersedesNote}${globalNote}${conflictInfo}`,
       },
     ],
   };

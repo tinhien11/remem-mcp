@@ -118,11 +118,16 @@ Set `REMEM_GLOBAL_SESSION_KEY=global` in MCP config to enable cross-project memo
 
 **When to store global memory:**
 - Pass `session_key="global"` to `capture` for: coding conventions, tool preferences, recurring patterns, lessons that apply to any project.
+- Or pass `auto_global=true` — server auto-classifies: generic rules/learnings → global, content with file paths/line numbers → project.
 - Don't store global: project-specific bugs, file paths, one-off decisions.
 
 **Example:**
 ```
-capture(content="Always run tests before committing", type="learning", session_key="global")
+capture(content="Always run tests before committing", type="learning", auto_global=true)
+# → auto-classified as global (no file paths, has "always" signal)
+
+capture(content="Fixed bug in src/server.ts line 1418", type="task", auto_global=true)
+# → stays project (has file path)
 ```
 
 ## CLI commands
