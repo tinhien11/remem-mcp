@@ -1254,9 +1254,10 @@ export class SQLiteBackend implements StorageBackend {
       params.push(filter.sessionKey);
     }
     if (filter.tags && filter.tags.length > 0) {
-      const tagConditions = filter.tags.map(() => "tags LIKE ?").join(" OR ");
+      const escapeLike = (s: string) => s.replace(/[%_\\]/g, (c) => "\\" + c);
+      const tagConditions = filter.tags.map(() => "tags LIKE ? ESCAPE '\\'").join(" OR ");
       sql += ` AND (${tagConditions})`;
-      params.push(...filter.tags.map((t) => `%"${t}"%`));
+      params.push(...filter.tags.map((t) => `%"${escapeLike(t)}"%`));
     }
 
     const ids = this.db.prepare(sql).all(...params) as { id: string }[];
