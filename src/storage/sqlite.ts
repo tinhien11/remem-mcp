@@ -789,20 +789,15 @@ export class SQLiteBackend implements StorageBackend {
 
   async findRejectedByContentHash(
     contentHash: string,
-    sessionKey?: string,
-    agentId?: string,
+    _sessionKey?: string,
+    _agentId?: string,
   ): Promise<CaptureEntry[]> {
-    let sql = "SELECT * FROM captures WHERE content_hash = ? AND trust_state = 'rejected'";
-    const params: unknown[] = [contentHash];
-    if (sessionKey) {
-      sql += " AND session_key = ?";
-      params.push(sessionKey);
-    }
-    if (agentId) {
-      sql += " AND agent_id = ?";
-      params.push(agentId);
-    }
-    const rows = this.db.prepare(sql).all(...params) as DbRow[];
+    // Global tombstone: a rejected value is blocked across all projects and
+    // agents, not just the one that rejected it. The content_hash is computed
+    // from redacted content, so the same secret or wrong value produces the
+    // same hash regardless of which session or agent captured it.
+    const sql = "SELECT * FROM captures WHERE content_hash = ? AND trust_state = 'rejected' LIMIT 1";
+    const rows = this.db.prepare(sql).all(contentHash) as DbRow[];
     return rows.map(rowToEntry);
   }
 

@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at  INTEGER NOT NULL
 );
 
--- L1: Atomic facts (populated by atom-extract pipeline, or CLI extract command)
+-- L1: Atomic facts (phase 2 — populated by atom-extract pipeline or CLI extract command.
+-- Currently written by the extract CLI subcommand; NoopPipeline does not populate this.)
 CREATE TABLE IF NOT EXISTS atoms (
   id          TEXT PRIMARY KEY,
   capture_id  TEXT NOT NULL REFERENCES captures(id) ON DELETE CASCADE,
@@ -65,7 +66,7 @@ CREATE TABLE IF NOT EXISTS atoms (
   user_id     TEXT
 );
 
--- L2: Scenario blocks (populated by scenario pipeline)
+-- L2: Scenario blocks (phase 2 — populated by scenario pipeline, not yet implemented)
 CREATE TABLE IF NOT EXISTS scenarios (
   id           TEXT PRIMARY KEY,
   atom_ids     TEXT NOT NULL,

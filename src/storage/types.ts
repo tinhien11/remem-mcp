@@ -210,7 +210,7 @@ export interface StorageBackend {
   ): Promise<CaptureEntry[]>;
 
   /** Find rejected tombstones by content hash. Used to block re-extraction of rejected values.
-   *  When agentId is provided, the tombstone is scoped to that agent. */
+   *  Tombstone check is global — a rejected value is blocked across all projects and agents. */
   findRejectedByContentHash(
     contentHash: string,
     sessionKey?: string,

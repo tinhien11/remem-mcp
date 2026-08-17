@@ -538,4 +538,160 @@ describeOrSkip("Integration: Atlas fixes", () => {
       expect(result.text).toContain("DuckDB");
     });
   });
+
+  // ─── Fix #7: global tombstone scope ─────────────────────────────
+  describe("Fix #7: global tombstone scope", () => {
+    it("rejected content is blocked across all projects", async () => {
+      // Capture in project A
+      const capResult = await callTool(server, "capture", {
+        type: "decision",
+        content: "Bad decision: use XML for everything.",
+        session_key: "project-a",
+      });
+      const id = capResult.text.match(/Captured:\s+(\S+)/)?.[1];
+
+      // Reject it in project A
+      await callTool(server, "forget", {
+        id,
+        confirm: true,
+        reject: true,
+        reason: "XML is wrong, use JSON",
+      });
+
+      // Try to capture same content in project B — should be blocked
+      const blockResult = await callTool(server, "capture", {
+        type: "decision",
+        content: "Bad decision: use XML for everything.",
+        session_key: "project-b",
+      });
+
+      expect(blockResult.isError).toBe(true);
+      expect(blockResult.text).toContain("Blocked");
+      expect(blockResult.text).toContain("XML is wrong");
+    });
+  });
+
+  // ─── Fix #8: override_rejection requires reason ────────────────
+  describe("Fix #8: override_rejection requires reason", () => {
+    it("override_rejection without reason fails", async () => {
+      // First capture and reject
+      const capResult = await callTool(server, "capture", {
+        type: "decision",
+        content: "Override test: use SOAP protocol.",
+      });
+      const id = capResult.text.match(/Captured:\s+(\S+)/)?.[1];
+
+      await callTool(server, "forget", {
+        id,
+        confirm: true,
+        reject: true,
+        reason: "SOAP is deprecated",
+      });
+
+      // Try override without reason
+      const result = await callTool(server, "capture", {
+        type: "decision",
+        content: "Override test: use SOAP protocol.",
+        override_rejection: true,
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("override_reason is missing");
+    });
+
+    it("override_rejection with reason succeeds", async () => {
+      const capResult = await callTool(server, "capture", {
+        type: "decision",
+        content: "Override success: use gRPC protocol.",
+      });
+      const id = capResult.text.match(/Captured:\s+(\S+)/)?.[1];
+
+      await callTool(server, "forget", {
+        id,
+        confirm: true,
+        reject: true,
+        reason: "gRPC not supported here",
+      });
+
+      const result = await callTool(server, "capture", {
+        type: "decision",
+        content: "Override success: use gRPC protocol.",
+        override_rejection: true,
+        override_reason: "Now using grpc-node which supports it",
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.text).toContain("Captured:");
+    });
+  });
+
+  // ─── Fix #9: JSON response includes _meta with channel status ──
+  describe("Fix #9: JSON _meta channel status", () => {
+    it("recall JSON includes _meta with channels_run", async () => {
+      await callTool(server, "capture", {
+        type: "decision",
+        content: "JSON meta test: use WebSocket for real-time.",
+      });
+
+      const result = await callTool(server, "recall", {
+        query: "WebSocket real-time",
+        mode: "hybrid",
+        format: "json",
+      });
+
+      const parsed = JSON.parse(result.text);
+      expect(parsed._meta).toBeDefined();
+      expect(parsed._meta.channels_run).toContain("keyword");
+      expect(parsed._meta.channels_run).toContain("vector");
+      expect(parsed._meta.vector_degraded).toBeUndefined();
+    });
+
+    it("recall JSON shows vector_degraded when embedder fails", async () => {
+      const failingServer = createServer({
+        storage,
+        embedder: new FailingEmbedder(),
+        pipeline: new NoopPipeline(),
+        pipelineCtx: {},
+        audit,
+        redactSecrets: true,
+        maxTokensRecall: 4000,
+        maxTokensSearch: 8000,
+        maxContentLength: 50000,
+      });
+
+      await callTool(server, "capture", {
+        type: "decision",
+        content: "Degraded JSON test: use BullMQ for job queues.",
+      });
+
+      const result = await callTool(failingServer, "recall", {
+        query: "BullMQ job queues",
+        mode: "hybrid",
+        format: "json",
+      });
+
+      const parsed = JSON.parse(result.text);
+      expect(parsed._meta).toBeDefined();
+      expect(parsed._meta.vector_degraded).toBe(true);
+      expect(parsed._meta.channels_run).toEqual(["keyword"]);
+    });
+
+    it("search JSON includes _meta with channels_run", async () => {
+      await callTool(server, "capture", {
+        type: "learning",
+        content: "Search JSON meta: PostgreSQL uses MVCC.",
+      });
+
+      const result = await callTool(server, "search", {
+        query: "PostgreSQL MVCC",
+        mode: "hybrid",
+        format: "json",
+      });
+
+      const parsed = JSON.parse(result.text);
+      expect(parsed._meta).toBeDefined();
+      expect(parsed._meta.channels_run).toContain("keyword");
+      expect(parsed._meta.channels_run).toContain("vector");
+    });
+  });
 });

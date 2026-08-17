@@ -58,11 +58,17 @@ function globalSessionKey(): string | null {
   return process.env.REMEM_GLOBAL_SESSION_KEY ?? null;
 }
 
-/** Detect the agent ID from environment variables. */
+/** Detect the agent ID from environment variables.
+ *  Checks for known coding agent signatures in the process environment.
+ *  Returns "unknown" when no agent is identifiable — the value is still
+ *  stored on every capture and filterable on every query, so "unknown"
+ *  captures are searchable but distinguishable from named agents. */
 function detectAgentId(): string {
   if (process.env.DEVIN_SESSION_ID) return "devin";
   if (process.env.CLAUDE_CODE_ENTRYPOINT) return "claude";
   if (process.env.CURSOR_DEBUG) return "cursor";
+  if (process.env.CODEX_HOME) return "codex";
+  if (process.env.WINDSURF_USER_KEY) return "windsurf";
   return "unknown";
 }
 
@@ -264,6 +270,11 @@ const TOOLS: Tool[] = [
           default: false,
           description:
             "Set this to true to force capture even if the content was previously rejected. Use this only when the rejection reason no longer applies.",
+        },
+        override_reason: {
+          type: "string",
+          description:
+            "Required when override_rejection is true. Explain why the rejection no longer applies. Logged to audit.",
         },
         auto_global: {
           type: "boolean",
@@ -1510,7 +1521,11 @@ async function handleRecall(
       created_at: new Date(r.entry.createdAt).toISOString(),
       trust_state: r.entry.trustState ?? "candidate",
     }));
-    const jsonText = JSON.stringify(jsonResults);
+    const jsonText = JSON.stringify(
+      vectorDegraded
+        ? { results: jsonResults, _meta: { vector_degraded: true, channels_run: ["keyword"] } }
+        : { results: jsonResults, _meta: { channels_run: mode === "vector" ? ["vector"] : ["keyword", "vector"] } },
+    );
     opts.audit.log({
       tool: "recall",
       argsHash: AuditLogger.hashArgs({ query, limit, offset, mode, teamId, userId, taskId }),
@@ -1601,6 +1616,7 @@ async function handleCapture(
   const verified = (args.verified as boolean) ?? false;
   const supersedes = args.supersedes as string | undefined;
   const overrideRejection = (args.override_rejection as boolean) ?? false;
+  const overrideReason = args.override_reason as string | undefined;
   // Programmatic callers (e.g. benchmark adapters) that explicitly scope captures
   // with agent_id expect a JSON-parseable response so they can extract the stored ID
   // for later cleanup. Human callers don't pass agent_id and get the readable
@@ -1665,12 +1681,31 @@ async function handleCapture(
         content: [
           {
             type: "text",
-            text: `Blocked: This content was previously rejected (${rejected[0].id}). Reason: ${reason}. Set override_rejection to true to force capture.`,
+            text: `Blocked: This content was previously rejected (${rejected[0].id}). Reason: ${reason}. Set override_rejection: true and override_reason: "<why>" to force capture.`,
           },
         ],
         isError: true,
       };
     }
+  } else if (!overrideReason) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: "Error: override_rejection is true but override_reason is missing. Provide a reason explaining why the rejection no longer applies.",
+        },
+      ],
+      isError: true,
+    };
+  } else {
+    // Log the override to audit so there's a traceable record
+    opts.audit.log({
+      tool: "capture",
+      argsHash: AuditLogger.hashArgs({ type, tags, sessionKey, overrideReason, teamId, userId, taskId }),
+      resultLen: 0,
+      quotaHit: false,
+      redacted: wasRedacted,
+    });
   }
 
   // Dedup: check if content with the same hash already exists in this session.
@@ -1986,7 +2021,11 @@ async function handleSearch(
       created_at: new Date(r.entry.createdAt).toISOString(),
       trust_state: r.entry.trustState ?? "candidate",
     }));
-    const jsonText = JSON.stringify(jsonResults);
+    const jsonText = JSON.stringify(
+      vectorDegraded
+        ? { results: jsonResults, _meta: { vector_degraded: true, channels_run: ["keyword"] } }
+        : { results: jsonResults, _meta: { channels_run: mode === "vector" ? ["vector"] : ["keyword", "vector"] } },
+    );
     opts.audit.log({
       tool: "search",
       argsHash: AuditLogger.hashArgs({ query, mode, filters }),
