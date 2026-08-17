@@ -466,7 +466,7 @@ export function hookRecall(dbPath: string): void {
         WHERE type IN ('decision', 'learning', 'task') AND deleted_at IS NULL AND trust_state != 'rejected'
       `;
 
-      const rows: {
+      const globalRows: {
         id: string;
         type: string;
         content: string;
@@ -474,40 +474,44 @@ export function hookRecall(dbPath: string): void {
         created_at: number;
       }[] = [];
 
-      // If REMEM_GLOBAL_SESSION_KEY is set, include global memory first
+      const projectRows: typeof globalRows = [];
+
+      // If REMEM_GLOBAL_SESSION_KEY is set, include ALL global memory.
+      // Global is supposed to be small (rules, conventions, lessons) — inject
+      // everything so the agent knows what cross-project knowledge exists.
       const globalKey = process.env.REMEM_GLOBAL_SESSION_KEY;
       if (globalKey) {
         const globalErrors = db
-          .prepare(`${errorSql} AND session_key = ? ORDER BY created_at DESC LIMIT 3`)
-          .all(globalKey) as typeof rows;
-        rows.push(...globalErrors);
+          .prepare(`${errorSql} AND session_key = ? ORDER BY created_at DESC LIMIT 5`)
+          .all(globalKey) as typeof globalRows;
+        globalRows.push(...globalErrors);
         const globalOthers = db
-          .prepare(`${otherSql} AND session_key = ? ORDER BY created_at DESC LIMIT 3`)
-          .all(globalKey) as typeof rows;
-        rows.push(...globalOthers);
+          .prepare(`${otherSql} AND session_key = ? ORDER BY created_at DESC LIMIT 15`)
+          .all(globalKey) as typeof globalRows;
+        globalRows.push(...globalOthers);
       }
 
       if (sessionKey) {
         const sessionErrors = db
           .prepare(`${errorSql} AND session_key = ? ORDER BY created_at DESC LIMIT 5`)
-          .all(sessionKey) as typeof rows;
-        const seen = new Set(rows.map((r) => r.id));
-        rows.push(...sessionErrors.filter((r) => !seen.has(r.id)));
+          .all(sessionKey) as typeof projectRows;
+        const seen = new Set(globalRows.map((r) => r.id));
+        projectRows.push(...sessionErrors.filter((r) => !seen.has(r.id)));
         const sessionOthers = db
           .prepare(`${otherSql} AND session_key = ? ORDER BY created_at DESC LIMIT 5`)
-          .all(sessionKey) as typeof rows;
-        rows.push(...sessionOthers.filter((r) => !seen.has(r.id)));
+          .all(sessionKey) as typeof projectRows;
+        projectRows.push(...sessionOthers.filter((r) => !seen.has(r.id)));
         // Also query auto-captured transcripts keyed by session_id.slice(0,16)
         // (hookStop/hookPostToolUse error path) so they appear at session start.
         if (autoCaptureKey && autoCaptureKey !== sessionKey) {
           const autoErrors = db
             .prepare(`${errorSql} AND session_key = ? ORDER BY created_at DESC LIMIT 5`)
-            .all(autoCaptureKey) as typeof rows;
-          rows.push(...autoErrors.filter((r) => !seen.has(r.id)));
+            .all(autoCaptureKey) as typeof projectRows;
+          projectRows.push(...autoErrors.filter((r) => !seen.has(r.id)));
           const autoOthers = db
             .prepare(`${otherSql} AND session_key = ? ORDER BY created_at DESC LIMIT 5`)
-            .all(autoCaptureKey) as typeof rows;
-          rows.push(...autoOthers.filter((r) => !seen.has(r.id)));
+            .all(autoCaptureKey) as typeof projectRows;
+          projectRows.push(...autoOthers.filter((r) => !seen.has(r.id)));
         }
       }
 
@@ -516,22 +520,40 @@ export function hookRecall(dbPath: string): void {
 
       db.close();
 
-      if (rows.length === 0) {
+      if (globalRows.length === 0 && projectRows.length === 0) {
         // No memory — output empty context
         logToFile("SessionStart: no recent memory found");
         process.stdout.write(JSON.stringify({}));
         return;
       }
 
-      // Build context text
-      const lines: string[] = ["[remem-mcp] Recent project memory:"];
-      for (const row of rows) {
-        const date = new Date(row.created_at).toISOString().split("T")[0];
-        const tags = safeParseTags(row.tags);
-        const tagStr = tags.length > 0 ? ` [${tags.join(", ")}]` : "";
-        // Truncate content to 200 chars for context injection
-        const content = row.content.length > 200 ? `${row.content.slice(0, 200)}...` : row.content;
-        lines.push(`- (${row.type}${tagStr}) ${date}: ${content}`);
+      // Build context text — global and project in separate sections so the
+      // agent can distinguish cross-project rules from project-specific work.
+      const lines: string[] = [];
+      const allRows = [...globalRows, ...projectRows];
+
+      if (globalRows.length > 0) {
+        lines.push("[remem-mcp] Global memory (cross-project rules, conventions, lessons):");
+        for (const row of globalRows) {
+          const date = new Date(row.created_at).toISOString().split("T")[0];
+          const tags = safeParseTags(row.tags);
+          const tagStr = tags.length > 0 ? ` [${tags.join(", ")}]` : "";
+          const content = row.content.length > 200 ? `${row.content.slice(0, 200)}...` : row.content;
+          lines.push(`- (${row.type}${tagStr}) ${date}: ${content}`);
+        }
+        lines.push("");
+      }
+
+      if (projectRows.length > 0) {
+        lines.push("[remem-mcp] Recent project memory:");
+        for (const row of projectRows) {
+          const date = new Date(row.created_at).toISOString().split("T")[0];
+          const tags = safeParseTags(row.tags);
+          const tagStr = tags.length > 0 ? ` [${tags.join(", ")}]` : "";
+          const content = row.content.length > 200 ? `${row.content.slice(0, 200)}...` : row.content;
+          lines.push(`- (${row.type}${tagStr}) ${date}: ${content}`);
+        }
+        lines.push("");
       }
 
       // Inject L3 persona (user preferences, ~50 tokens)
@@ -558,12 +580,13 @@ export function hookRecall(dbPath: string): void {
 
       // Append the summary to the log file so the user can inspect it
       // without the output interfering with the terminal prompt.
-      logToFile(`SessionStart: loaded ${rows.length} capture(s)\n${context}`);
+      logToFile(`SessionStart: loaded ${allRows.length} capture(s) (${globalRows.length} global, ${projectRows.length} project)\n${context}`);
 
       // Visible feedback so user sees memory was loaded
-      const errorCount = rows.filter((r: any) => r.type === "error").length;
-      const otherCount = rows.length - errorCount;
+      const errorCount = allRows.filter((r: any) => r.type === "error").length;
+      const otherCount = allRows.length - errorCount;
       const parts: string[] = [];
+      if (globalRows.length > 0) parts.push(`${globalRows.length} global`);
       if (errorCount > 0) parts.push(`${errorCount} past error(s)`);
       if (otherCount > 0) parts.push(`${otherCount} memorie(s)`);
       feedback("💡", `remem-mcp: loaded ${parts.join(" + ")} from previous sessions`);
