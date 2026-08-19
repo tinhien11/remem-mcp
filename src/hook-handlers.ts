@@ -616,16 +616,70 @@ function shouldRecallForPrompt(prompt: string): boolean {
 }
 
 /**
+ * Detect if the user is providing a fact/decision to remember (not asking a question).
+ * Returns the extracted fact + capture type, or null if no update signal.
+ *
+ * Design goals:
+ * - Only capture clear facts ("port is 9090"), not vague statements ("update stuff")
+ * - Classify as "decision" (chose X) or "learning" (fact/convention)
+ * - Skip questions (those go to recall, not capture)
+ * - Skip if too short or no clear fact after the signal phrase
+ */
+function extractUpdateFact(
+  prompt: string,
+): { fact: string; type: "decision" | "learning" } | null {
+  const p = prompt.trim();
+  if (p.length < 15) return null;
+
+  // Update signal patterns — user is TELLING us something to remember.
+  // Each pattern strips the signal prefix to extract the actual fact.
+  const updatePatterns: Array<{ re: RegExp; type: "decision" | "learning" }> = [
+    // "remember that ..." / "nhớ là ..." / "đừng quên ..."
+    { re: /^(?:remember that|remember|don't forget|dont forget|note that|for future reference)\s*:?\s*(.+)/i, type: "learning" },
+    { re: /^(?:nhớ là|nhớ rằng|đừng quên|ghi nhớ)\s*:?\s*(.+)/i, type: "learning" },
+    // "we use/chose/decided ..." / "mình dùng/chọn/quyết định ..."
+    { re: /^(?:we use|we chose|we decided|we prefer|we always|our convention|our standard)\s*:?\s*(.+)/i, type: "decision" },
+    { re: /^(?:mình dùng|mình chọn|mình quyết định|chúng ta dùng|chúng ta chọn)\s*:?\s*(.+)/i, type: "decision" },
+    // "update X to Y" / "change X to Y" / "sửa X thành Y"
+    { re: /^(?:update|change|set|configure)\s+.+\s+(?:to|as|=\s*)\s*(.+)/i, type: "decision" },
+    { re: /^(?:sửa|đổi|cập nhật)\s+.+\s+(?:thành|sang|=\s*)\s*(.+)/i, type: "decision" },
+    // "actually ..." / "no, it's ..." / "không, là ..." (correction)
+    { re: /^(?:actually|no,?\s*(?:it's|it is|the|this)?\s*:?\s*)(.+)/i, type: "learning" },
+    { re: /^(?:không,?\s*(?:là|nó là|thực ra)?\s*:?\s*)(.+)/i, type: "learning" },
+    // "the port/config/X is Y" / "port là Y" (direct fact statement)
+    { re: /^(?:the\s+)?(\w+\s+(?:is|are|was|should be|must be)\s+.+)/i, type: "learning" },
+    { re: /^(\w+\s+(?:là|phải là|nên là)\s+.+)/i, type: "learning" },
+  ];
+
+  for (const { re, type } of updatePatterns) {
+    const match = re.exec(p);
+    if (match) {
+      const fact = match[1]?.trim();
+      // Reject if fact is too short (likely no real content) or is a question
+      if (!fact || fact.length < 10) return null;
+      if (fact.endsWith("?") || fact.endsWith("??")) return null;
+      // Reject if fact is just a single word or vague
+      if (fact.split(/\s+/).length < 2) return null;
+      return { fact, type };
+    }
+  }
+
+  return null;
+}
+
+/**
  * Hook handler for UserPromptSubmit event.
  *
- * Runs a heuristic check on the user's prompt. If the prompt looks like it
- * could benefit from past memory (references files, symbols, past work, bugs,
- * "why" questions), runs a BM25-only recall against the project's captures
- * and injects the top 3-5 results as additional context.
+ * Two modes, checked in order:
+ * 1. **Capture mode** — if the prompt is a fact/decision to remember ("remember
+ *    that...", "we use...", "actually..."), extract the fact and capture it.
+ *    Dedup via content_hash — skips if an identical capture already exists.
+ * 2. **Recall mode** — if the prompt references files, symbols, past work, bugs,
+ *    or "why/how" questions, runs BM25-only recall and injects top 5 results.
  *
- * Skips short acks and prompts with no memory signal (~60-80% skip rate).
- * Vector search is intentionally skipped to keep latency low (<50ms); the
- * agent can still call the full `recall` MCP tool for deeper retrieval.
+ * A prompt can trigger both (e.g. "actually port is 9090, fix the config" →
+ * capture the fact + recall related errors). Skips short acks (~60-80% skip).
+ * Vector search is intentionally skipped to keep latency <50ms.
  */
 export function hookUserPromptSubmit(dbPath: string): void {
   const chunks: Buffer[] = [];
@@ -649,119 +703,186 @@ export function hookUserPromptSubmit(dbPath: string): void {
       const input = JSON.parse(raw);
       // Claude Code sends { prompt: "..." }; Devin sends { prompt: "..." } too.
       const prompt: string = input.prompt ?? input.user_prompt ?? input.message ?? "";
-      if (!prompt || !shouldRecallForPrompt(prompt)) {
-        // Heuristic said skip — no DB hit, no noise.
+      if (!prompt) {
         process.stdout.write(JSON.stringify({}));
         return;
       }
 
       const cwd: string = input.cwd ?? process.cwd();
       const sessionKey = hashPath(cwd);
+      const wantRecall = shouldRecallForPrompt(prompt);
+      const updateFact = extractUpdateFact(prompt);
 
-      // Open DB read-only. Try immutable first (no WAL lock contention).
+      // Skip entirely if neither recall nor capture is needed.
+      if (!wantRecall && !updateFact) {
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+
+      // Open DB read-write (needed for capture). Recall is read-only but
+      // sharing one connection avoids opening twice.
       let db: Database.Database;
       try {
-        db = new Database(dbPath, { readonly: true, immutable: true } as Database.Options);
+        db = new Database(dbPath);
       } catch {
-        db = new Database(dbPath, { readonly: true });
-      }
-
-      // BM25-only search via FTS5. Skip vector embedding to keep latency <50ms.
-      // The agent can still call the full `recall` MCP tool for hybrid search.
-      // Uses `captures_fts MATCH ?` pattern (ftsQuery as first bind param).
-      const sql = `
-        SELECT fts.id as id, bm25(captures_fts) as score,
-               c.type as type, c.content as content, c.tags as tags,
-               c.created_at as created_at
-        FROM captures_fts fts
-        JOIN captures c ON c.id = fts.id
-        WHERE captures_fts MATCH ?
-          AND c.deleted_at IS NULL
-          AND c.trust_state <> 'rejected'
-          AND c.superseded_by IS NULL
-          AND c.session_key = ?
-          AND c.type IN ('error', 'decision', 'learning', 'task')
-        ORDER BY score
-        LIMIT 5
-      `;
-
-      // Build FTS5 OR query from prompt keywords (escape special chars)
-      const keywords = prompt
-        .toLowerCase()
-        .split(/[^a-z0-9_]+/i)
-        .filter((w) => w.length >= 3)
-        .slice(0, 8)
-        .map((w) => w.replace(/["'*:()]/g, ""));
-      if (keywords.length === 0) {
-        db.close();
-        process.stdout.write(JSON.stringify({}));
-        return;
-      }
-      const ftsQuery = keywords.map((w) => `"${w}"`).join(" OR ");
-
-      let rows: {
-        id: string;
-        type: string;
-        content: string;
-        tags: string | null;
-        created_at: number;
-      }[] = [];
-      try {
-        rows = db.prepare(sql).all(ftsQuery, sessionKey) as typeof rows;
-      } catch {
-        // FTS query syntax error or no FTS table — silently skip.
-        db.close();
-        process.stdout.write(JSON.stringify({}));
-        return;
-      }
-
-      // If REMEM_GLOBAL_SESSION_KEY is set, also query global memory (max 2 slots).
-      const globalKey = process.env.REMEM_GLOBAL_SESSION_KEY;
-      if (globalKey && globalKey !== sessionKey) {
+        // If read-write fails (e.g. lock), fall back to read-only (recall only).
         try {
-          const globalRows = db
-            .prepare(sql)
-            .all(ftsQuery, globalKey) as typeof rows;
-          const seen = new Set(rows.map((r) => r.id));
-          rows.push(...globalRows.filter((r) => !seen.has(r.id)).slice(0, 2));
+          db = new Database(dbPath, { readonly: true });
         } catch {
-          // Non-fatal
+          process.stdout.write(JSON.stringify({}));
+          return;
+        }
+      }
+
+      // ─── Capture mode: save user-provided fact ───────────────────────
+      let captured = false;
+      if (updateFact) {
+        try {
+          const content =
+            updateFact.type === "decision"
+              ? `Decision: ${updateFact.fact}`
+              : updateFact.fact;
+          const contentHash = createHash("sha256").update(content).digest("hex").slice(0, 16);
+
+          // Dedup: skip if identical capture already exists
+          const existing = db
+            .prepare("SELECT id FROM captures WHERE content_hash = ? AND deleted_at IS NULL")
+            .get(contentHash) as { id: string } | undefined;
+          if (existing) {
+            logToFile(`UserPromptSubmit: duplicate fact (hash match), skipping capture`);
+          } else {
+            const id = generateId();
+            const now = Date.now();
+            db.prepare(
+              "INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ).run(
+              id,
+              sessionKey,
+              "user-prompt",
+              updateFact.type,
+              content,
+              contentHash,
+              JSON.stringify(["auto-capture", "user-prompt"]),
+              now,
+              JSON.stringify({
+                source: "UserPromptSubmit",
+                captured_from: prompt.slice(0, 200),
+              }),
+            );
+            captured = true;
+            logToFile(
+              `UserPromptSubmit: captured ${updateFact.type}: ${updateFact.fact.slice(0, 80)}`,
+            );
+            feedback("📝", `remem-mcp: saved ${updateFact.type} from your prompt`);
+          }
+        } catch (capErr) {
+          // Capture failure is non-fatal — continue to recall
+          logToFile(`UserPromptSubmit: capture error - ${capErr}`);
+        }
+      }
+
+      // ─── Recall mode: BM25 search ────────────────────────────────────
+      let recallContext = "";
+      if (wantRecall) {
+        // BM25-only search via FTS5. Skip vector embedding to keep latency <50ms.
+        // Uses `captures_fts MATCH ?` pattern (ftsQuery as first bind param).
+        const sql = `
+          SELECT fts.id as id, bm25(captures_fts) as score,
+                 c.type as type, c.content as content, c.tags as tags,
+                 c.created_at as created_at
+          FROM captures_fts fts
+          JOIN captures c ON c.id = fts.id
+          WHERE captures_fts MATCH ?
+            AND c.deleted_at IS NULL
+            AND c.trust_state <> 'rejected'
+            AND c.superseded_by IS NULL
+            AND c.session_key = ?
+            AND c.type IN ('error', 'decision', 'learning', 'task')
+          ORDER BY score
+          LIMIT 5
+        `;
+
+        // Build FTS5 OR query from prompt keywords (escape special chars)
+        const keywords = prompt
+          .toLowerCase()
+          .split(/[^a-z0-9_]+/i)
+          .filter((w) => w.length >= 3)
+          .slice(0, 8)
+          .map((w) => w.replace(/["'*:()]/g, ""));
+        if (keywords.length > 0) {
+          const ftsQuery = keywords.map((w) => `"${w}"`).join(" OR ");
+
+          let rows: {
+            id: string;
+            type: string;
+            content: string;
+            tags: string | null;
+            created_at: number;
+          }[] = [];
+          try {
+            rows = db.prepare(sql).all(ftsQuery, sessionKey) as typeof rows;
+          } catch {
+            // FTS query syntax error or no FTS table — silently skip.
+          }
+
+          // If REMEM_GLOBAL_SESSION_KEY is set, also query global memory (max 2 slots).
+          const globalKey = process.env.REMEM_GLOBAL_SESSION_KEY;
+          if (globalKey && globalKey !== sessionKey) {
+            try {
+              const globalRows = db
+                .prepare(sql)
+                .all(ftsQuery, globalKey) as typeof rows;
+              const seen = new Set(rows.map((r) => r.id));
+              rows.push(...globalRows.filter((r) => !seen.has(r.id)).slice(0, 2));
+            } catch {
+              // Non-fatal
+            }
+          }
+
+          if (rows.length > 0) {
+            const lines: string[] = [`[remem-mcp] Memory relevant to your prompt:`];
+            for (const row of rows.slice(0, 5)) {
+              const date = new Date(row.created_at).toISOString().split("T")[0];
+              const tags = safeParseTags(row.tags);
+              const tagStr = tags.length > 0 ? ` [${tags.join(", ")}]` : "";
+              const content =
+                row.content.length > 200 ? `${row.content.slice(0, 200)}...` : row.content;
+              lines.push(`- (${row.type}${tagStr}) ${date}: ${content}`);
+            }
+            lines.push("");
+            lines.push("Use this to inform your response. Call recall() for deeper context.");
+            recallContext = lines.join("\n");
+            logToFile(
+              `UserPromptSubmit: injected ${rows.length} memorie(s) for prompt: ${prompt.slice(0, 80)}`,
+            );
+            feedback("💡", `remem-mcp: injected ${rows.length} memorie(s) matching your prompt`);
+          }
         }
       }
 
       db.close();
 
-      if (rows.length === 0) {
+      // Build output — include recall context if any
+      if (recallContext || captured) {
+        const parts: string[] = [];
+        if (captured) {
+          parts.push(
+            `[remem-mcp] Saved your ${updateFact!.type} to memory: "${updateFact!.fact.slice(0, 100)}"`,
+          );
+        }
+        if (recallContext) {
+          parts.push(recallContext);
+        }
+        const output = {
+          hookSpecificOutput: {
+            hookEventName: "UserPromptSubmit",
+            additionalContext: parts.join("\n\n"),
+          },
+        };
+        process.stdout.write(JSON.stringify(output));
+      } else {
         process.stdout.write(JSON.stringify({}));
-        return;
       }
-
-      // Build context text
-      const lines: string[] = [`[remem-mcp] Memory relevant to your prompt:`];
-      for (const row of rows.slice(0, 5)) {
-        const date = new Date(row.created_at).toISOString().split("T")[0];
-        const tags = safeParseTags(row.tags);
-        const tagStr = tags.length > 0 ? ` [${tags.join(", ")}]` : "";
-        const content =
-          row.content.length > 200 ? `${row.content.slice(0, 200)}...` : row.content;
-        lines.push(`- (${row.type}${tagStr}) ${date}: ${content}`);
-      }
-      lines.push("");
-      lines.push("Use this to inform your response. Call recall() for deeper context.");
-
-      const context = lines.join("\n");
-      logToFile(`UserPromptSubmit: injected ${rows.length} memorie(s) for prompt: ${prompt.slice(0, 80)}`);
-
-      // Visible feedback so user sees memory was injected
-      feedback("💡", `remem-mcp: injected ${rows.length} memorie(s) matching your prompt`);
-
-      const output = {
-        hookSpecificOutput: {
-          hookEventName: "UserPromptSubmit",
-          additionalContext: context,
-        },
-      };
-      process.stdout.write(JSON.stringify(output));
     } catch (err) {
       process.stderr.write(`[remem-mcp hook-user-prompt] Error: ${err}\n`);
       logToFile(`UserPromptSubmit: error - ${err}`);
