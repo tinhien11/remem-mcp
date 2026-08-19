@@ -67,6 +67,7 @@ import {
   hookRecall,
   hookSessionEnd,
   hookStop,
+  hookUserPromptSubmit,
   waitAndCapture,
 } from "./hook-handlers.js";
 import { installHooks, uninstallHooks } from "./hooks.js";
@@ -949,6 +950,10 @@ async function main(): Promise<void> {
   }
   if (arg === "hook-recall") {
     hookRecall(defaultDbPath());
+    return;
+  }
+  if (arg === "hook-user-prompt") {
+    hookUserPromptSubmit(defaultDbPath());
     return;
   }
   if (arg === "hook-stop") {

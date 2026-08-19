@@ -573,6 +573,204 @@ export function hookRecall(dbPath: string): void {
 }
 
 /**
+ * Heuristic check: should we run a recall for this user prompt?
+ *
+ * Skips short acknowledgements, greetings, and prompts with no signal that
+ * memory could help. Passes prompts that reference files, symbols, past work,
+ * errors, refactors, or "why/how" questions.
+ *
+ * Goal: ~60-80% skip rate so the DB isn't hit on every prompt.
+ */
+function shouldRecallForPrompt(prompt: string): boolean {
+  const p = prompt.toLowerCase().trim();
+  if (p.length < 20) return false;
+
+  // Skip pure acknowledgements / continuations
+  const ackPatterns =
+    /^(ok|okay|k|yes|no|yep|nope|thanks|thank you|cool|nice|great|done|got it|understood|continue|go|next|tiếp|tiếp đi|xong|ok rồi|được rồi|đúng|sai|uh|uhm|ừm|👍|✅|❌)\b/i;
+  if (ackPatterns.test(p)) return false;
+
+  // Signal patterns that suggest memory could help
+  const signals: RegExp[] = [
+    // Memory references
+    /\b(remember|previous|past|before|last time|recall|memory|earlier|recently|already)\b/i,
+    /\b(lần trước|đã|trước đây|nhớ|vừa rồi|trước đó|mới đây)\b/i,
+    // Causal / explanatory
+    /\b(why|how come|what caused|tại sao|sao lại|vì sao)\b/i,
+    // Bug / fix work
+    /\b(fix|bug|error|issue|broken|fail|crash|lỗi|sửa|fix bug|debug)\b/i,
+    // Refactor / change work
+    /\b(refactor|change|update|modify|change|move|rename|thay đổi|cập nhật|sửa lại)\b/i,
+    // File paths
+    /\b[\w-]+\.(ts|js|tsx|jsx|go|py|rs|java|rb|php|c|cpp|h|cs|swift|kt)\b/i,
+    /(?:src|lib|pkg|cmd|internal|app|tests?|docs?)\//i,
+    // Symbol-like identifiers (camelCase or snake_case, length >= 4)
+    /\b[a-z][a-zA-Z]{2,}[A-Z][a-zA-Z]+\b/,
+    /\b[a-z][a-z_]{3,}_[a-z_]+\b/,
+    // "How do I" / "how to" questions
+    /\bhow (do|to|can|should)\b/i,
+    /\blàm (sao|thế nào|như thế nào)\b/i,
+  ];
+
+  return signals.some((re) => re.test(prompt));
+}
+
+/**
+ * Hook handler for UserPromptSubmit event.
+ *
+ * Runs a heuristic check on the user's prompt. If the prompt looks like it
+ * could benefit from past memory (references files, symbols, past work, bugs,
+ * "why" questions), runs a BM25-only recall against the project's captures
+ * and injects the top 3-5 results as additional context.
+ *
+ * Skips short acks and prompts with no memory signal (~60-80% skip rate).
+ * Vector search is intentionally skipped to keep latency low (<50ms); the
+ * agent can still call the full `recall` MCP tool for deeper retrieval.
+ */
+export function hookUserPromptSubmit(dbPath: string): void {
+  const chunks: Buffer[] = [];
+  process.stdin.setEncoding("utf-8");
+  process.stdin.on("error", () => process.stdout.write(JSON.stringify({})));
+  const stdinTimeout = setTimeout(() => process.stdout.write(JSON.stringify({})), 5000);
+  stdinTimeout.unref();
+  process.stdin.on("data", (chunk) => {
+    chunks.push(Buffer.from(chunk));
+  });
+
+  process.stdin.on("end", () => {
+    clearTimeout(stdinTimeout);
+    try {
+      const raw = Buffer.concat(chunks).toString("utf-8");
+      if (!raw.trim()) {
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+
+      const input = JSON.parse(raw);
+      // Claude Code sends { prompt: "..." }; Devin sends { prompt: "..." } too.
+      const prompt: string = input.prompt ?? input.user_prompt ?? input.message ?? "";
+      if (!prompt || !shouldRecallForPrompt(prompt)) {
+        // Heuristic said skip — no DB hit, no noise.
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+
+      const cwd: string = input.cwd ?? process.cwd();
+      const sessionKey = hashPath(cwd);
+
+      // Open DB read-only. Try immutable first (no WAL lock contention).
+      let db: Database.Database;
+      try {
+        db = new Database(dbPath, { readonly: true, immutable: true } as Database.Options);
+      } catch {
+        db = new Database(dbPath, { readonly: true });
+      }
+
+      // BM25-only search via FTS5. Skip vector embedding to keep latency <50ms.
+      // The agent can still call the full `recall` MCP tool for hybrid search.
+      // Uses `captures_fts MATCH ?` pattern (ftsQuery as first bind param).
+      const sql = `
+        SELECT fts.id as id, bm25(captures_fts) as score,
+               c.type as type, c.content as content, c.tags as tags,
+               c.created_at as created_at
+        FROM captures_fts fts
+        JOIN captures c ON c.id = fts.id
+        WHERE captures_fts MATCH ?
+          AND c.deleted_at IS NULL
+          AND c.trust_state <> 'rejected'
+          AND c.superseded_by IS NULL
+          AND c.session_key = ?
+          AND c.type IN ('error', 'decision', 'learning', 'task')
+        ORDER BY score
+        LIMIT 5
+      `;
+
+      // Build FTS5 OR query from prompt keywords (escape special chars)
+      const keywords = prompt
+        .toLowerCase()
+        .split(/[^a-z0-9_]+/i)
+        .filter((w) => w.length >= 3)
+        .slice(0, 8)
+        .map((w) => w.replace(/["'*:()]/g, ""));
+      if (keywords.length === 0) {
+        db.close();
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+      const ftsQuery = keywords.map((w) => `"${w}"`).join(" OR ");
+
+      let rows: {
+        id: string;
+        type: string;
+        content: string;
+        tags: string | null;
+        created_at: number;
+      }[] = [];
+      try {
+        rows = db.prepare(sql).all(ftsQuery, sessionKey) as typeof rows;
+      } catch {
+        // FTS query syntax error or no FTS table — silently skip.
+        db.close();
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+
+      // If REMEM_GLOBAL_SESSION_KEY is set, also query global memory (max 2 slots).
+      const globalKey = process.env.REMEM_GLOBAL_SESSION_KEY;
+      if (globalKey && globalKey !== sessionKey) {
+        try {
+          const globalRows = db
+            .prepare(sql)
+            .all(ftsQuery, globalKey) as typeof rows;
+          const seen = new Set(rows.map((r) => r.id));
+          rows.push(...globalRows.filter((r) => !seen.has(r.id)).slice(0, 2));
+        } catch {
+          // Non-fatal
+        }
+      }
+
+      db.close();
+
+      if (rows.length === 0) {
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+
+      // Build context text
+      const lines: string[] = [`[remem-mcp] Memory relevant to your prompt:`];
+      for (const row of rows.slice(0, 5)) {
+        const date = new Date(row.created_at).toISOString().split("T")[0];
+        const tags = safeParseTags(row.tags);
+        const tagStr = tags.length > 0 ? ` [${tags.join(", ")}]` : "";
+        const content =
+          row.content.length > 200 ? `${row.content.slice(0, 200)}...` : row.content;
+        lines.push(`- (${row.type}${tagStr}) ${date}: ${content}`);
+      }
+      lines.push("");
+      lines.push("Use this to inform your response. Call recall() for deeper context.");
+
+      const context = lines.join("\n");
+      logToFile(`UserPromptSubmit: injected ${rows.length} memorie(s) for prompt: ${prompt.slice(0, 80)}`);
+
+      // Visible feedback so user sees memory was injected
+      feedback("💡", `remem-mcp: injected ${rows.length} memorie(s) matching your prompt`);
+
+      const output = {
+        hookSpecificOutput: {
+          hookEventName: "UserPromptSubmit",
+          additionalContext: context,
+        },
+      };
+      process.stdout.write(JSON.stringify(output));
+    } catch (err) {
+      process.stderr.write(`[remem-mcp hook-user-prompt] Error: ${err}\n`);
+      logToFile(`UserPromptSubmit: error - ${err}`);
+      process.stdout.write(JSON.stringify({}));
+    }
+  });
+}
+
+/**
  * Hook handler for Stop event.
  * Reminds the agent to call handoff before stopping — but only on the first fire.
  * On subsequent fires (stop_hook_active=true), lets the agent stop silently.
@@ -3198,6 +3396,16 @@ async function captureSessionTranscript(
   const contentHash = createHash("sha256").update(content).digest("hex");
 
   const db = new Database(dbPath);
+  // Load sqlite-vec extension before any captures_vec operations (DELETE, INSERT).
+  // Without this, preparing statements against captures_vec fails with
+  // "SqliteError: no such module: vec0" because the vec0 virtual table module
+  // isn't registered yet.
+  try {
+    const sqliteVec = await import("sqlite-vec");
+    sqliteVec.load(db);
+  } catch {
+    // sqlite-vec not available — captures_vec operations will be skipped below.
+  }
   // Use hash(cwd) to match MCP server's session key, so auto-captured
   // transcripts are visible to recall(). Use the caller's cwd if provided,
   // otherwise fall back to process.cwd().
@@ -3225,11 +3433,17 @@ async function captureSessionTranscript(
     .all(sessionKey, sid) as { id: string }[];
   if (stale.length > 0) {
     const delStmt = db.prepare("DELETE FROM captures WHERE id = ?");
-    const delVec = db.prepare("DELETE FROM captures_vec WHERE id = ?");
+    // captures_vec uses vec0 module — guard in case sqlite-vec didn't load.
+    let delVec: ReturnType<Database.Database["prepare"]> | null = null;
+    try {
+      delVec = db.prepare("DELETE FROM captures_vec WHERE id = ?");
+    } catch {
+      // vec0 module not loaded — skip vector cleanup
+    }
     const delAtoms = db.prepare("DELETE FROM atoms WHERE capture_id = ?");
     for (const row of stale) {
       delStmt.run(row.id);
-      delVec.run(row.id);
+      delVec?.run(row.id);
       delAtoms.run(row.id);
     }
     logToFile(`Stop: removed ${stale.length} previous capture(s) for session ${sid}`);
@@ -3254,10 +3468,9 @@ async function captureSessionTranscript(
     }),
   );
 
-  // Generate embedding for vector search (best-effort, non-blocking)
+  // Generate embedding for vector search (best-effort, non-blocking).
+  // sqlite-vec was already loaded above (before captures_vec operations).
   try {
-    const sqliteVec = await import("sqlite-vec");
-    sqliteVec.load(db);
     const { LocalEmbedder } =
       require("./embedding/local.js") as typeof import("./embedding/local.js");
     const embedder = new LocalEmbedder();

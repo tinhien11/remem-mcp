@@ -15,7 +15,12 @@ You have a long-term memory server via MCP. Use the tools automatically — do n
 
 ## Rule 1: Recall before answering
 
-Call `recall` at session start or when the user references past work. Do this BEFORE you answer or code.
+Memory is now auto-injected on `UserPromptSubmit` — if the user's prompt matches past work (file paths, symbols, "fix/why/refactor"), relevant memories are already in your context. Check for `[remem-mcp] Memory relevant to your prompt:` at the top of the turn.
+
+Only call `recall` manually when:
+- The injected memory is insufficient or off-target
+- You need deeper retrieval (more results, filters, hybrid mode)
+- The user explicitly asks to recall something specific
 
 ```
 recall({ "query": "<user's question or task>", "mode": "hybrid" })
@@ -97,8 +102,12 @@ search({ "query": "auth", "filters": { "type": "decision", "tags": ["arch"] } })
 
 If `npx remem-mcp install-hooks` was run:
 - **SessionStart** — recent captures injected automatically
+- **UserPromptSubmit** — heuristic recall: memory matching the user's prompt is injected automatically (skips short acks, ~60-80% skip rate). You do NOT need to call `recall` for prompts that match — the context is already in your context window. Only call `recall` for deeper retrieval or when the injected memory is insufficient.
 - **PreToolUse** — past errors injected before lint/build/test
 - **PostToolUse** — failed commands auto-captured with root cause
+- **PreCompact** — saves a checkpoint before context compaction (Claude Code only)
+- **PostCompaction** — re-injects memory after context compaction (all agents)
+- **Stop** — auto-captures session transcript + reminds to handoff
 - **SessionEnd** — session summary auto-captured
 
 You can still call tools manually anytime.

@@ -5,8 +5,9 @@
 You have a long-term memory server (`remem-mcp` MCP). Always prefer it over grep/glob for code navigation and project context.
 
 ### Before answering or coding
-1. Call `recall` with the user's question as query
-2. Use results to inform your answer — don't repeat what recall already gave you
+1. Check for `[remem-mcp] Memory relevant to your prompt:` at the top of the turn — UserPromptSubmit hook auto-injects matching memory
+2. If injected memory is insufficient, call `recall` with the user's question as query
+3. Use results to inform your answer — don't repeat what recall already gave you
 
 ### Before searching code
 1. Call `search` or `recall` first — it searches Memory + CodeGraph + Wiki in one call
@@ -23,4 +24,5 @@ You have a long-term memory server (`remem-mcp` MCP). Always prefer it over grep
 
 ### Session lifecycle
 - SessionStart hook auto-injects recent memory — read it before responding
+- UserPromptSubmit hook auto-injects memory matching your prompt — check for it at the top of each turn
 - Stop hook auto-captures the session — but still call `capture` for key decisions during the session

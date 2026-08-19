@@ -88,6 +88,17 @@ const HOOKS_CONFIG = {
   // Devin supports: PreToolUse, PostToolUse, UserPromptSubmit, Stop,
   // PostCompaction, SessionStart, SessionEnd, PermissionRequest.
   // Error capture is handled via PostToolUse with exit code 2.
+  UserPromptSubmit: [
+    {
+      hooks: [
+        {
+          type: "command",
+          command: hookCommand("hook-user-prompt"),
+          timeout: 5,
+        },
+      ],
+    },
+  ],
   Stop: [
     {
       hooks: [
@@ -264,6 +275,15 @@ command = "${hookCommand("hook-post-compaction")}"
 timeout = 10
 # <<< remem-mcp PostCompaction <<<
 
+# >>> remem-mcp UserPromptSubmit >>>
+[[hooks.UserPromptSubmit]]
+
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "${hookCommand("hook-user-prompt")}"
+timeout = 5
+# <<< remem-mcp UserPromptSubmit <<<
+
 # >>> remem-mcp Stop >>>
 [[hooks.Stop]]
 
@@ -310,6 +330,7 @@ export async function installHooks(): Promise<void> {
   console.log(`\nHooks wired to ${installed} agent(s).`);
   console.log("\nHooks installed:");
   console.log("  SessionStart → auto-recall recent memory into agent context");
+  console.log("  UserPromptSubmit → heuristic recall: inject memory matching user prompt");
   console.log("  PreToolUse   → inject past errors before lint/build/test commands");
   console.log("  PostToolUse  → auto-capture failed commands as error memories");
   console.log("  PreCompact     → save checkpoint before compaction (Claude Code only)");
@@ -333,6 +354,7 @@ export async function uninstallHooks(): Promise<void> {
     "PostToolUse",
     "PreCompact",
     "PostCompaction",
+    "UserPromptSubmit",
   ];
 
   // Remove from Devin CLI
