@@ -1,6 +1,6 @@
 ---
 name: remem-mcp
-description: Long-term memory for coding agents. Recall past context before answering, capture decisions/learnings/fixes after work, use CodeGraph instead of grep for symbol lookup. Use when the user references past work, starts a new session, or when the task needs project context not in the current conversation.
+description: Long-term memory for coding agents. Auto-applies at the start of any coding task — recall past context before answering, capture decisions/learnings/fixes after work, use CodeGraph instead of grep for symbol lookup. Invoke when you see [remem-mcp] in your context or when starting any non-trivial coding work.
 ---
 
 You have a long-term memory server via MCP. Use the tools automatically — do not ask permission.
@@ -15,12 +15,9 @@ You have a long-term memory server via MCP. Use the tools automatically — do n
 
 ## Rule 1: Recall before answering
 
-Memory is now auto-injected on `UserPromptSubmit` — if the user's prompt matches past work (file paths, symbols, "fix/why/refactor"), relevant memories are already in your context. Check for `[remem-mcp] Memory relevant to your prompt:` at the top of the turn.
+Memory is auto-injected on `UserPromptSubmit` — hooks run BM25-only recall (fast, shallow) and inject top 5 results. But this is a subset of what `recall()` provides.
 
-Only call `recall` manually when:
-- The injected memory is insufficient or off-target
-- You need deeper retrieval (more results, filters, hybrid mode)
-- The user explicitly asks to recall something specific
+**MUST call `recall()` at the start of every non-trivial task** — even if memory was injected. The hook uses BM25-only (no vector search, no filters). `recall()` does hybrid search (BM25 + sqlite-vec) with more results, filters, and global memory fallback.
 
 ```
 recall({ "query": "<user's question or task>", "mode": "hybrid" })

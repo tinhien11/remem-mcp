@@ -573,46 +573,16 @@ export function hookRecall(dbPath: string): void {
 }
 
 /**
- * Heuristic check: should we run a recall for this user prompt?
- *
- * Skips short acknowledgements, greetings, and prompts with no signal that
- * memory could help. Passes prompts that reference files, symbols, past work,
- * errors, refactors, or "why/how" questions.
- *
- * Goal: ~60-80% skip rate so the DB isn't hit on every prompt.
+ * Heuristic check: is this prompt a short acknowledgement / greeting?
+ * Used to skip BOTH recall and capture for pure acks.
  */
-function shouldRecallForPrompt(prompt: string): boolean {
+function isAckPrompt(prompt: string): boolean {
   const p = prompt.toLowerCase().trim();
-  if (p.length < 20) return false;
+  if (p.length < 5) return true;
 
-  // Skip pure acknowledgements / continuations
   const ackPatterns =
     /^(ok|okay|k|yes|no|yep|nope|thanks|thank you|cool|nice|great|done|got it|understood|continue|go|next|tiếp|tiếp đi|xong|ok rồi|được rồi|đúng|sai|uh|uhm|ừm|👍|✅|❌)\b/i;
-  if (ackPatterns.test(p)) return false;
-
-  // Signal patterns that suggest memory could help
-  const signals: RegExp[] = [
-    // Memory references
-    /\b(remember|previous|past|before|last time|recall|memory|earlier|recently|already)\b/i,
-    /\b(lần trước|đã|trước đây|nhớ|vừa rồi|trước đó|mới đây)\b/i,
-    // Causal / explanatory
-    /\b(why|how come|what caused|tại sao|sao lại|vì sao)\b/i,
-    // Bug / fix work
-    /\b(fix|bug|error|issue|broken|fail|crash|lỗi|sửa|fix bug|debug)\b/i,
-    // Refactor / change work
-    /\b(refactor|change|update|modify|change|move|rename|thay đổi|cập nhật|sửa lại)\b/i,
-    // File paths
-    /\b[\w-]+\.(ts|js|tsx|jsx|go|py|rs|java|rb|php|c|cpp|h|cs|swift|kt)\b/i,
-    /(?:src|lib|pkg|cmd|internal|app|tests?|docs?)\//i,
-    // Symbol-like identifiers (camelCase or snake_case, length >= 4)
-    /\b[a-z][a-zA-Z]{2,}[A-Z][a-zA-Z]+\b/,
-    /\b[a-z][a-z_]{3,}_[a-z_]+\b/,
-    // "How do I" / "how to" questions
-    /\bhow (do|to|can|should)\b/i,
-    /\blàm (sao|thế nào|như thế nào)\b/i,
-  ];
-
-  return signals.some((re) => re.test(prompt));
+  return ackPatterns.test(p);
 }
 
 /**
@@ -670,16 +640,18 @@ function extractUpdateFact(
 /**
  * Hook handler for UserPromptSubmit event.
  *
- * Two modes, checked in order:
- * 1. **Capture mode** — if the prompt is a fact/decision to remember ("remember
+ * Three modes, checked in order:
+ * 1. **Ack skip** — short acknowledgements ("ok", "thanks", "tiếp") → inject
+ *    lightweight nudge reminding agent that recall() is available.
+ * 2. **Capture mode** — if the prompt is a fact/decision to remember ("remember
  *    that...", "we use...", "actually..."), extract the fact and capture it.
  *    Dedup via content_hash — skips if an identical capture already exists.
- * 2. **Recall mode** — if the prompt references files, symbols, past work, bugs,
- *    or "why/how" questions, runs BM25-only recall and injects top 5 results.
+ * 3. **Recall mode** — always runs for non-ack prompts. BM25-only search,
+ *    injects top 5 results. This is shallow/fast — agent should still call
+ *    `recall()` for hybrid search (BM25 + vector) with more results.
  *
- * A prompt can trigger both (e.g. "actually port is 9090, fix the config" →
- * capture the fact + recall related errors). Skips short acks (~60-80% skip).
- * Vector search is intentionally skipped to keep latency <50ms.
+ * A prompt can trigger both capture and recall (e.g. "actually port is 9090,
+ * fix the config" → save fact + recall related errors).
  */
 export function hookUserPromptSubmit(dbPath: string): void {
   const chunks: Buffer[] = [];
@@ -710,12 +682,19 @@ export function hookUserPromptSubmit(dbPath: string): void {
 
       const cwd: string = input.cwd ?? process.cwd();
       const sessionKey = hashPath(cwd);
-      const wantRecall = shouldRecallForPrompt(prompt);
-      const updateFact = extractUpdateFact(prompt);
+      const isAck = isAckPrompt(prompt);
+      const updateFact = isAck ? null : extractUpdateFact(prompt);
 
-      // Skip entirely if neither recall nor capture is needed.
-      if (!wantRecall && !updateFact) {
-        process.stdout.write(JSON.stringify({}));
+      // ─── Ack mode: lightweight nudge, no DB hit ──────────────────────
+      if (isAck) {
+        const output = {
+          hookSpecificOutput: {
+            hookEventName: "UserPromptSubmit",
+            additionalContext:
+              "[remem-mcp] recall() is available — call it if you need past project context.",
+          },
+        };
+        process.stdout.write(JSON.stringify(output));
         return;
       }
 
@@ -781,9 +760,9 @@ export function hookUserPromptSubmit(dbPath: string): void {
         }
       }
 
-      // ─── Recall mode: BM25 search ────────────────────────────────────
+      // ─── Recall mode: BM25 search (always for non-ack prompts) ────────
       let recallContext = "";
-      if (wantRecall) {
+      {
         // BM25-only search via FTS5. Skip vector embedding to keep latency <50ms.
         // Uses `captures_fts MATCH ?` pattern (ftsQuery as first bind param).
         const sql = `
@@ -840,7 +819,7 @@ export function hookUserPromptSubmit(dbPath: string): void {
           }
 
           if (rows.length > 0) {
-            const lines: string[] = [`[remem-mcp] Memory relevant to your prompt:`];
+            const lines: string[] = [`[remem-mcp] Memory relevant to your prompt (BM25, shallow):`];
             for (const row of rows.slice(0, 5)) {
               const date = new Date(row.created_at).toISOString().split("T")[0];
               const tags = safeParseTags(row.tags);
@@ -850,7 +829,9 @@ export function hookUserPromptSubmit(dbPath: string): void {
               lines.push(`- (${row.type}${tagStr}) ${date}: ${content}`);
             }
             lines.push("");
-            lines.push("Use this to inform your response. Call recall() for deeper context.");
+            lines.push(
+              "This is BM25-only (fast, shallow). MUST call recall() for hybrid search (BM25 + vector) with more results and filters.",
+            );
             recallContext = lines.join("\n");
             logToFile(
               `UserPromptSubmit: injected ${rows.length} memorie(s) for prompt: ${prompt.slice(0, 80)}`,
@@ -881,7 +862,15 @@ export function hookUserPromptSubmit(dbPath: string): void {
         };
         process.stdout.write(JSON.stringify(output));
       } else {
-        process.stdout.write(JSON.stringify({}));
+        // No recall results and no capture — still nudge agent to call recall()
+        const output = {
+          hookSpecificOutput: {
+            hookEventName: "UserPromptSubmit",
+            additionalContext:
+              "[remem-mcp] No BM25 matches found. Call recall() for hybrid search (BM25 + vector) if you need project context.",
+          },
+        };
+        process.stdout.write(JSON.stringify(output));
       }
     } catch (err) {
       process.stderr.write(`[remem-mcp hook-user-prompt] Error: ${err}\n`);

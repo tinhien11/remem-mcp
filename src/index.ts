@@ -489,6 +489,31 @@ async function main(): Promise<void> {
     await installSkill();
     return;
   }
+  if (arg === "init") {
+    console.log(`remem-mcp init
+
+This command tells your agent to activate long-term memory for this session.
+
+→ In your agent chat, type:
+
+  invoke skill remem-mcp
+
+The skill will teach the agent to:
+  1. Call recall() with your current task as query
+  2. Index code with codegraph_search (first use auto-indexes src/)
+  3. Capture decisions/learnings after completing work
+  4. Use search instead of grep for symbol lookup
+
+Hooks are already active (installed during setup):
+  - SessionStart: recent memory auto-injected
+  - UserPromptSubmit: memory matching your prompt auto-injected
+  - PostToolUse: failed commands auto-captured
+  - Stop: session transcript auto-captured
+
+You only need to invoke the skill once per session.
+After that, the agent follows the rules automatically.`);
+    return;
+  }
   if (arg === "install-hooks") {
     await installHooks();
     return;
@@ -1265,6 +1290,7 @@ ${"─".repeat(60)}
 Setup & maintenance:
   remem-mcp                Start the MCP server (stdio)
   remem-mcp setup          Install MCP + hooks + skill (one command)
+  remem-mcp init           Show how to activate memory in your agent session
   remem-mcp install-skill  Install the agent skill for Devin CLI
   remem-mcp install-hooks  Install lifecycle hooks (SessionStart, Stop, SessionEnd)
   remem-mcp uninstall-hooks  Remove lifecycle hooks
