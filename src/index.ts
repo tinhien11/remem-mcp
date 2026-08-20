@@ -11,6 +11,7 @@ import * as sqliteVec from "sqlite-vec";
 import { exportArtifact, importArtifact } from "./artifact.js";
 import { backup } from "./backup.js";
 import { atomsCommand } from "./cli/atoms.js";
+import { consolidateCommand } from "./cli/consolidate.js";
 import { demo, demoCodegraph } from "./cli/demo.js";
 import { extractCommand } from "./cli/extract.js";
 import { knowledgeCommand } from "./cli/knowledge.js";
@@ -124,9 +125,14 @@ function openDbWithSchema(dbPath: string): Database.Database {
 function parseFlags(argv: string[]): Record<string, string> {
   const flags: Record<string, string> = {};
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i]?.startsWith("--") && argv[i + 1]) {
-      flags[argv[i].slice(2)] = argv[i + 1];
-      i++;
+    if (argv[i]?.startsWith("--")) {
+      const key = argv[i].slice(2);
+      if (argv[i + 1] && !argv[i + 1].startsWith("--")) {
+        flags[key] = argv[i + 1];
+        i++;
+      } else {
+        flags[key] = "true";
+      }
     }
   }
   return flags;
@@ -1232,6 +1238,11 @@ After that, the agent follows the rules automatically.`);
     await extractCommand(defaultDbPath(), flags);
     return;
   }
+  if (arg === "consolidate") {
+    const flags = parseFlags(process.argv.slice(3));
+    await consolidateCommand(defaultDbPath(), flags);
+    return;
+  }
   if (arg === "knowledge") {
     const flags = parseFlags(process.argv.slice(3));
     await knowledgeCommand(defaultDbPath(), flags);
@@ -1357,11 +1368,13 @@ Data:
   remem-mcp sync-export    Export memory to .remem-mcp/ in project root
   remem-mcp sync-import    Import memory from .remem-mcp/ (auto on startup)
 
-L1-L3 pipeline (require REMEM_LLM_API_KEY for extract):
-  remem-mcp extract        Run L1 atom extraction on existing captures
-  remem-mcp atoms          List or search L1 atoms
+L1-L3 pipeline:
+  remem-mcp extract        Run L1 atom extraction (rule-based, no LLM needed)
+  remem-mcp extract --llm  Run L1 atom extraction with LLM (needs REMEM_LLM_API_KEY)
+  remem-mcp atoms          List or search L1 atoms (--query <text> for search)
+  remem-mcp consolidate    Create L2 scenario from atoms (--atom-ids, --summary, --auto)
   remem-mcp scenarios      List L2 scenarios
-  remem-mcp persona        Read or write L3 persona
+  remem-mcp persona        Read or write L3 persona (--set "trait: value")
 
 Knowledge & skills:
   remem-mcp knowledge      List knowledge assets for a team
@@ -1427,13 +1440,11 @@ To install the skill (Devin CLI only):
     });
     pipeline = new AtomPipeline();
     (pipeline as unknown as { _llmClient: unknown })._llmClient = llmClient;
-  } else if (config.pipeline === "noop") {
-    // Use rule-based atom extraction for conversations even without LLM.
-    // This extracts current-state facts from migration patterns so old values
-    // (e.g., "SQLite" in "Migrated from SQLite to Turso") don't leak into search.
-    pipeline = new RuleBasedAtomPipeline();
   } else {
-    pipeline = new NoopPipeline();
+    // Default: rule-based atom extraction (no LLM needed).
+    // Extracts facts from decision/learning/error/conversation captures
+    // using regex patterns. Zero-cost, runs automatically after capture.
+    pipeline = new RuleBasedAtomPipeline();
   }
 
   // Initialize the audit logger

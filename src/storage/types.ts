@@ -200,6 +200,12 @@ export interface StorageBackend {
   /** Find captures by tag (bypasses FTS5, direct SQL on tags column). */
   listByTags(tags: string[], limit?: number, sessionKey?: string): Promise<CaptureEntry[]>;
 
+  /** List recent captures (bypasses FTS5, direct SQL). Used by extract CLI. */
+  listAll(limit?: number, offset?: number): Promise<CaptureEntry[]>;
+
+  /** Delete all atoms for a capture (used when agent provides replacement atoms). */
+  deleteAtomsByCaptureId(captureId: string): void;
+
   /** Find captures with content hash matching the given content. Used for dedup.
    *  When agentId is provided, dedup is scoped to that agent — the same content
    *  captured by a different agent is not treated as a duplicate. */

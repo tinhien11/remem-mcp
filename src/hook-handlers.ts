@@ -534,6 +534,20 @@ export function hookRecall(dbPath: string): void {
         lines.push(`- (${row.type}${tagStr}) ${date}: ${content}`);
       }
 
+      // Inject L3 persona (user preferences, ~50 tokens)
+      try {
+        const personaRow = db
+          .prepare("SELECT content FROM persona WHERE team_id = ? AND user_id = ? ORDER BY updated_at DESC LIMIT 1")
+          .get("default", "default") as { content: string } | undefined;
+        if (personaRow && personaRow.content) {
+          lines.push("");
+          lines.push(`## Persona (L3)`);
+          lines.push(personaRow.content);
+        }
+      } catch {
+        // persona table not available — skip
+      }
+
       lines.push("");
       lines.push("Use these memories to inform your work. Call recall() for more details.");
       lines.push(

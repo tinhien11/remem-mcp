@@ -75,22 +75,28 @@ interface ParsedFact {
 }
 
 /**
- * Rule-based atom extraction pipeline for conversations (no LLM required).
+ * Rule-based atom extraction pipeline (no LLM required).
  *
- * Detects migration/upgrade patterns and extracts current-state facts,
- * stripping the old value so it doesn't leak into search results.
- * Example: "Migrated database from SQLite to Turso" → "Migrated database to Turso"
+ * Extracts atomic facts from captures using regex patterns:
+ * - Decisions: strip "Decision:" prefix, extract core choice
+ * - Learnings: strip context, keep core fact
+ * - Errors: extract command + exit code
+ * - Conversations: detect migration patterns ("from X to Y" → "to Y")
+ *
+ * This is a fallback when no LLM API key is available. Less accurate than
+ * LLM extraction but zero-cost and runs automatically.
  */
 export class RuleBasedAtomPipeline implements PipelineStage {
   readonly name = "rule-atom";
   readonly requiresLLM = false;
 
   async process(input: CaptureInput, ctx: PipelineContext): Promise<PipelineOutput> {
-    if (input.type !== "conversation") {
+    // Only extract from types that yield useful atoms
+    if (!["decision", "learning", "error", "conversation"].includes(input.type)) {
       return {};
     }
 
-    const facts = extractMigrationFacts(input.content);
+    const facts = extractRuleBasedFacts(input.content, input.type);
     if (facts.length === 0) {
       return {};
     }
@@ -118,21 +124,60 @@ export class RuleBasedAtomPipeline implements PipelineStage {
   }
 }
 
-/** Extract current-state facts from migration/upgrade sentences using regex. */
-function extractMigrationFacts(content: string): ParsedFact[] {
+/** Extract facts from content using rule-based patterns. */
+function extractRuleBasedFacts(content: string, type: string): ParsedFact[] {
   const facts: ParsedFact[] = [];
+  const text = content.trim();
 
-  // Pattern: "from <old_value> to <new_value>" — remove the old value.
-  // Matches: "Migrated database from SQLite to Turso", "Migrated from Heroku to AWS ECS"
-  const fromToPattern = /\bfrom\s+[A-Za-z0-9][A-Za-z0-9._]*(?:\s+[A-Za-z0-9._]+)*\s+to\b/gi;
-  if (fromToPattern.test(content)) {
-    const cleaned = content.replace(fromToPattern, "to").replace(/\s+/g, " ").trim();
-    if (cleaned !== content && cleaned.length > 10) {
-      facts.push({ text: cleaned, confidence: 0.85 });
+  if (type === "decision") {
+    // "Decision: <fact>" → strip prefix
+    const decisionMatch = text.match(/^Decision:\s*(.+)/i);
+    if (decisionMatch) {
+      const fact = decisionMatch[1].trim();
+      if (fact.length > 10) facts.push({ text: fact, confidence: 0.9 });
+    }
+    // "Chose X over Y" → "Use X"
+    const choseMatch = text.match(/chose\s+(.+?)\s+over\s+/i);
+    if (choseMatch) {
+      const fact = `Use ${choseMatch[1].trim()}`;
+      if (fact.length > 10) facts.push({ text: fact, confidence: 0.85 });
+    }
+    // "Use X for Y" → keep as-is
+    const useMatch = text.match(/use\s+\S+\s+for\s+\S+/i);
+    if (useMatch && facts.length < 3) {
+      const fact = text.slice(useMatch.index, useMatch.index + useMatch[0].length);
+      if (fact.length > 10) facts.push({ text: fact, confidence: 0.8 });
+    }
+  } else if (type === "learning") {
+    // Learning: keep first sentence if it's a self-contained fact
+    const firstSentence = text.split(/[.!?]/)[0].trim();
+    if (firstSentence.length > 15 && firstSentence.length < 200) {
+      facts.push({ text: firstSentence, confidence: 0.8 });
+    }
+  } else if (type === "error") {
+    // "Command failed: <cmd>" → "Error: <cmd> fails"
+    const cmdMatch = text.match(/Command failed:\s*(.+)/i);
+    if (cmdMatch) {
+      const cmd = cmdMatch[1].trim().slice(0, 100);
+      facts.push({ text: `Error: ${cmd} fails`, confidence: 0.85 });
+    }
+    // "Exit code N" → extract
+    const exitMatch = text.match(/Exit code\s+(\d+)/i);
+    if (exitMatch && facts.length < 3) {
+      facts.push({ text: `Exit code ${exitMatch[1]}`, confidence: 0.7 });
+    }
+  } else if (type === "conversation") {
+    // Migration pattern: "from X to Y" → "to Y"
+    const fromToPattern = /\bfrom\s+[A-Za-z0-9][A-Za-z0-9._]*(?:\s+[A-Za-z0-9._]+)*\s+to\b/gi;
+    if (fromToPattern.test(text)) {
+      const cleaned = text.replace(fromToPattern, "to").replace(/\s+/g, " ").trim();
+      if (cleaned !== text && cleaned.length > 10) {
+        facts.push({ text: cleaned, confidence: 0.85 });
+      }
     }
   }
 
-  return facts;
+  return facts.slice(0, 3);
 }
 
 /** Parse the LLM response into a list of facts. */

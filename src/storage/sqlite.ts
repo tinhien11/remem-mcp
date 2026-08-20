@@ -850,6 +850,19 @@ export class SQLiteBackend implements StorageBackend {
     return rows.map(rowToEntry);
   }
 
+  async listAll(limit = 50, offset = 0): Promise<CaptureEntry[]> {
+    const rows = this.db
+      .prepare(
+        "SELECT * FROM captures WHERE deleted_at IS NULL AND trust_state != 'rejected' AND superseded_by IS NULL ORDER BY created_at DESC LIMIT ? OFFSET ?",
+      )
+      .all(limit, offset) as DbRow[];
+    return rows.map(rowToEntry);
+  }
+
+  deleteAtomsByCaptureId(captureId: string): void {
+    this.db.prepare("DELETE FROM atoms WHERE capture_id = ?").run(captureId);
+  }
+
   async search(
     query: string,
     queryEmbedding: number[] | null,
@@ -1492,6 +1505,12 @@ export class SQLiteBackend implements StorageBackend {
   // ─── L1 atoms ───────────────────────────────────────────────
 
   async putAtom(atom: AtomEntry): Promise<void> {
+    // Dedup: skip if same fact already exists (case-insensitive, trimmed)
+    const existing = this.db
+      .prepare("SELECT id FROM atoms WHERE LOWER(TRIM(fact)) = LOWER(TRIM(?)) LIMIT 1")
+      .get(atom.fact) as { id: string } | undefined;
+    if (existing) return; // atom with same fact already exists
+
     this.db
       .prepare(
         "INSERT INTO atoms (id, capture_id, fact, confidence, created_at, team_id, agent_id, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",

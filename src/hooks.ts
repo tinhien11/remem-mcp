@@ -194,15 +194,28 @@ function installClaudeCodeHooks(): boolean {
     return false;
   }
 
-  // Claude Code supports PreCompact — add it on top of the base config
+  // Claude Code supports PreCompact (before) and PostCompact (after) — not PostCompaction.
+  // Remap PostCompaction → PostCompact for Claude Code, and add PreCompact on top.
+  const { PostCompaction: _omit, ...baseWithoutPostCompaction } = HOOKS_CONFIG;
   const claudeHooksConfig = {
-    ...HOOKS_CONFIG,
+    ...baseWithoutPostCompaction,
     PreCompact: [
       {
         hooks: [
           {
             type: "command",
             command: hookCommand("hook-pre-compact"),
+            timeout: 10,
+          },
+        ],
+      },
+    ],
+    PostCompact: [
+      {
+        hooks: [
+          {
+            type: "command",
+            command: hookCommand("hook-post-compaction"),
             timeout: 10,
           },
         ],
@@ -333,8 +346,9 @@ export async function installHooks(): Promise<void> {
   console.log("  UserPromptSubmit → heuristic recall: inject memory matching user prompt");
   console.log("  PreToolUse   → inject past errors before lint/build/test commands");
   console.log("  PostToolUse  → auto-capture failed commands as error memories");
-  console.log("  PreCompact     → save checkpoint before compaction (Claude Code only)");
-  console.log("  PostCompaction → re-inject memory after compaction (all agents)");
+  console.log("  PreCompact   → save checkpoint before compaction (Claude Code only)");
+  console.log("  PostCompact  → re-inject memory after compaction (Claude Code)");
+  console.log("  PostCompaction → re-inject memory after compaction (Devin CLI, Codex CLI)");
   console.log("  Stop         → auto-capture session transcript + remind to save");
   console.log("  SessionEnd   → silently capture session summary to memory DB");
   console.log("\nRestart your agent for hooks to take effect.");
@@ -353,6 +367,7 @@ export async function uninstallHooks(): Promise<void> {
     "PreToolUse",
     "PostToolUse",
     "PreCompact",
+    "PostCompact",
     "PostCompaction",
     "UserPromptSubmit",
   ];

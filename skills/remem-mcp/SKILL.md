@@ -7,140 +7,81 @@ You have a long-term memory server via MCP. Use the tools automatically — do n
 
 ## Tools
 
-**Core:** `recall` `capture` `search` `forget` `resolve` `handoff` `adr` `update` `consolidate`
-
-**CodeGraph:** `codegraph_search` (auto-indexes on first use) `codegraph_callers` `codegraph_callees` `codegraph_impact` `codegraph_list`
-
+**Core:** `recall` `capture` `search` `forget` `resolve` `handoff` `adr` `update` `consolidate` `scenario_create` `persona_update`
+**CodeGraph:** `codegraph_search` (auto-indexes on first use) `codegraph_callers` `codegraph_callees` `codegraph_impact`
 **Wiki:** `wiki_ingest` `wiki_search` `wiki_get` `wiki_outdated`
 
 ## Rule 1: Recall before answering
 
-Memory is auto-injected on `UserPromptSubmit` — hooks run BM25-only recall (fast, shallow) and inject top 5 results. But this is a subset of what `recall()` provides.
-
-**MUST call `recall()` at the start of every non-trivial task** — even if memory was injected. The hook uses BM25-only (no vector search, no filters). `recall()` does hybrid search (BM25 + sqlite-vec) with more results, filters, and global memory fallback.
+Hooks auto-inject BM25-only memory (shallow). **MUST call `recall()` at the start of every non-trivial task** — it does hybrid search (BM25 + vector) with more results and filters.
 
 ```
-recall({ "query": "<user's question or task>", "mode": "hybrid" })
+recall({ "query": "<user's question or task>", "mode": "hybrid", "limit": 5 })
 ```
-
-If recall returns nothing, proceed normally. Don't mention the empty result.
 
 ## Rule 2: Capture after non-trivial work
 
-Call `capture` automatically after completing work. Don't ask.
+Call `capture` automatically after completing work. Don't ask. Include `atoms` — short distilled facts that recall returns instead of raw content (90% fewer tokens).
 
 ```
-capture({ "content": "Chose SQLite over Postgres for zero-setup MVP.", "type": "decision", "tags": ["arch"] })
+capture({
+  "content": "Chose SQLite over Postgres for zero-setup MVP. SQLite has FTS5 + sqlite-vec built in, no server needed.",
+  "type": "decision",
+  "tags": ["arch"],
+  "atoms": ["Use SQLite (not Postgres) for zero-setup MVP", "SQLite has FTS5 + sqlite-vec built in"]
+})
 ```
 
-**Types:** `decision` (chose X over Y, include why) · `learning` (non-obvious fact) · `task` (completed work) · `error` (bug + root cause + fix) · `conversation` (multi-turn, pass `messages`)
+**Types:** `decision` (chose X over Y, include why) · `learning` (non-obvious fact) · `task` (completed work) · `error` (bug + root cause + fix)
 
-**Good:** specific, useful later. **Bad:** "We talked about the database."
+**Atoms:** 1-3 short self-contained facts. Each useful on its own without the raw content. Write for decisions, learnings, errors. Skip for conversations.
 
-## Rule 3: Use CodeGraph instead of grep
+## Rule 3: Consolidate atoms into scenarios (L2)
 
-For function/class/method definitions, call `codegraph_search` — NOT grep. It auto-indexes `src/` on first use, no setup needed.
+When you have 5+ atoms about the same topic, call `scenario_create` to create a high-signal summary. Recall injects scenarios automatically (~100 tokens instead of 5+ atoms).
+
+```
+scenario_create({
+  "atom_ids": ["01...", "01...", "01..."],
+  "summary": "Database: SQLite chosen for MVP — FTS5 + sqlite-vec built in, zero setup, no server needed.",
+  "persona_tags": ["database", "arch"]
+})
+```
+
+**When:** After capturing 5+ decisions/learnings about the same topic (e.g., database, hooks, deployment).
+
+## Rule 4: Update persona (L3)
+
+When you notice a user preference or pattern (2+ occurrences), call `persona_update`. SessionStart injects persona automatically every session (~50 tokens).
+
+```
+persona_update({ "trait": "language", "value": "Vietnamese" })
+persona_update({ "trait": "output_style", "value": "concise" })
+```
+
+**When:** User asks for concise output 2+ times, works in a specific language, prefers a framework, uses a specific project.
+
+## Rule 5: Use CodeGraph instead of grep
+
+For function/class/method definitions, call `codegraph_search` — NOT grep. Auto-indexes `src/` on first use.
 
 ```
 codegraph_search({ "query": "handleCapture" })
 codegraph_callers({ "symbol_id": "<id from search>" })
-codegraph_impact({ "symbol_id": "<id>" })  // before modifying a function
 ```
 
 Use grep only for: string literals, config values, file names.
 
-## Rule 4: Handoff when switching agents
+## Other tools
 
-Call `handoff` at session end or before switching agents. Creates a packet the next agent loads via `recall`.
-
-```
-handoff({ "task": "Fix auth bug", "status": "in_progress", "progress": "Found root cause", "next_steps": ["Implement fix"] })
-```
-
-Skip if task is done or trivial.
-
-## Rule 5: Forget only on explicit request
-
-Call `forget` ONLY when the user asks to delete. Always require `confirm: true`.
-
-```
-forget({ "id": "<id>", "confirm": true, "reject": true, "reason": "Wrong: port is 9090 not 8080." })
-```
-
-`reject: true` tombstones the content hash — blocks re-capture of wrong info.
-
-## Trust states
-
-- `candidate` (default) → `verified` (confirmed correct) → `stale` (replaced, via `resolve` or `supersedes`) → `rejected` (wrong, via `forget`)
-- Use `resolve` when two captures conflict. Use `supersedes` on `capture` to replace an old value.
-
-## ADR for architectural decisions
-
-Use `adr` (not `capture`) for decisions with context, alternatives, and consequences.
-
-```
-adr({ "title": "Use SQLite", "context": "Need zero-setup", "decision": "SQLite + FTS5 + sqlite-vec", "alternatives": ["Postgres+pgvector", "DuckDB"], "consequences": "Single-writer, no remote access" })
-```
-
-## Search with filters
-
-Use `search` (not `recall`) when you need specific filters:
-
-```
-search({ "query": "auth", "filters": { "type": "decision", "tags": ["arch"] } })
-```
-
-## Update and consolidate
-
-- `update` — correct a capture's content/tags. Preserves ID and created_at.
-- `consolidate` — find and merge duplicates. `consolidate({ "threshold": 0.75 })` to dry-run, add `"confirm": true` to merge.
-
-## Hooks (automatic if installed)
-
-If `npx remem-mcp install-hooks` was run:
-- **SessionStart** — recent captures injected automatically
-- **UserPromptSubmit** — heuristic recall: memory matching the user's prompt is injected automatically (skips short acks, ~60-80% skip rate). You do NOT need to call `recall` for prompts that match — the context is already in your context window. Only call `recall` for deeper retrieval or when the injected memory is insufficient.
-- **PreToolUse** — past errors injected before lint/build/test
-- **PostToolUse** — failed commands auto-captured with root cause
-- **PreCompact** — saves a checkpoint before context compaction (Claude Code only)
-- **PostCompaction** — re-injects memory after context compaction (all agents)
-- **Stop** — auto-captures session transcript + reminds to handoff
-- **SessionEnd** — session summary auto-captured
-
-You can still call tools manually anytime.
-
-## Multi-tenant
-
-Pass `team_id`, `agent_id`, `user_id`, or `task_id` to isolate memory between teams/projects.
+- `forget({ "id", "confirm": true })` — only when user asks to delete. `reject: true` blocks re-capture of wrong info.
+- `handoff({ "task", "status", "progress", "next_steps" })` — at session end or before switching agents.
+- `adr({ "title", "context", "decision", "alternatives", "consequences" })` — for architectural decisions.
+- `search({ "query", "filters": { "type", "tags" } })` — when you need specific filters.
+- `resolve` — when two captures conflict. `supersedes` on `capture` replaces old values.
+- `update` — correct a capture's content/tags.
+- `consolidate({ "threshold": 0.75 })` — merge duplicate captures. `scenario_create({ "atom_ids", "summary" })` — create L2 scenario. `persona_update({ "trait", "value" })` — update L3 persona.
 
 ## Global + project memory
 
-Set `REMEM_GLOBAL_SESSION_KEY=global` in MCP config to enable cross-project memory.
-
-**How it works:**
-- `recall` and `search` automatically search both project and global memory. Project results appear first, then global.
-- `session_start` returns recent captures from both project and global sessions.
-- 3 slots are reserved for global results so cross-project knowledge isn't buried when project memory is large.
-
-**When to store global memory:**
-- Pass `session_key="global"` to `capture` for: coding conventions, tool preferences, recurring patterns, lessons that apply to any project.
-- Or pass `auto_global=true` — server auto-classifies: generic rules/learnings → global, content with file paths/line numbers → project.
-- Don't store global: project-specific bugs, file paths, one-off decisions.
-
-**Example:**
-```
-capture(content="Always run tests before committing", type="learning", auto_global=true)
-# → auto-classified as global (no file paths, has "always" signal)
-
-capture(content="Fixed bug in src/server.ts line 1418", type="task", auto_global=true)
-# → stays project (has file path)
-```
-
-## CLI commands
-
-```bash
-npx remem-mcp errors              # Error learning dashboard
-npx remem-mcp extract --limit 50  # L1 atom extraction (needs REMEM_LLM_API_KEY)
-npx remem-mcp sync-export         # Export memory for team (commit to repo)
-npx remem-mcp sync-import         # Import teammate's memory
-```
+Set `REMEM_GLOBAL_SESSION_KEY=global` to enable cross-project memory. `recall`/`search` search both. Pass `auto_global=true` to `capture` for auto-classification (generic → global, file paths → project).

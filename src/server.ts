@@ -30,6 +30,7 @@ import type {
   DeleteFilter,
   DeleteResult,
   KnowledgeEntry,
+  ScenarioEntry,
   SearchMode,
   SearchResult,
   StorageBackend,
@@ -282,6 +283,15 @@ const TOOLS: Tool[] = [
           description:
             "Set to true to auto-classify: generic rules/learnings go to global, project-specific content stays in project. " +
             "Only applies when session_key is not explicitly set. Requires REMEM_GLOBAL_SESSION_KEY to be configured.",
+        },
+        atoms: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Optional L1 atom facts distilled from this capture. Each atom is a short, self-contained fact " +
+            "useful on its own (e.g., 'vitest config missing causes npm test exit 1'). " +
+            "When provided, recall() returns these atoms instead of the raw content — 90% fewer tokens. " +
+            "Write 1-3 atoms for decisions, learnings, and errors. Skip for conversations.",
         },
         format: {
           type: "string",
@@ -648,6 +658,62 @@ const TOOLS: Tool[] = [
         },
       },
       required: ["knowledge_ids"],
+    },
+  },
+  // ─── L2 scenario consolidation ───────────────────────────────
+  {
+    name: "scenario_create",
+    description:
+      "Consolidate multiple L1 atoms into an L2 scenario summary. " +
+      "Call this when you have 5+ atoms about the same topic — it creates a high-signal summary " +
+      "that recall injects in ~100 tokens instead of 5+ individual atoms. " +
+      "No LLM needed — you write the summary yourself based on the atoms you've seen.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        atom_ids: {
+          type: "array",
+          items: { type: "string" },
+          description: "The L1 atom IDs to consolidate (1-20).",
+        },
+        summary: {
+          type: "string",
+          description:
+            "A 1-3 sentence summary that captures the key insight from these atoms. " +
+            "Write it as a self-contained fact useful on its own.",
+        },
+        persona_tags: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional tags for categorization (e.g., ['database', 'migration']).",
+        },
+        ...TENANT_PARAMS,
+      },
+      required: ["atom_ids", "summary"],
+    },
+  },
+  // ─── L3 persona update ───────────────────────────────────────
+  {
+    name: "persona_update",
+    description:
+      "Update the L3 persona profile for this user/team. " +
+      "Call this when you notice a user preference or pattern (e.g., 'prefers concise output', 'works in Vietnamese', 'uses AZR project'). " +
+      "Persona is injected at SessionStart — every session gets it automatically in ~50 tokens. " +
+      "No LLM needed — you write the trait/value yourself.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        trait: {
+          type: "string",
+          description: "The trait name (e.g., 'language', 'output_style', 'project', 'timezone').",
+        },
+        value: {
+          type: "string",
+          description: "The trait value (e.g., 'Vietnamese', 'concise', 'AZR', 'Asia/Ho_Chi_Minh').",
+        },
+        ...TENANT_PARAMS,
+      },
+      required: ["trait", "value"],
     },
   },
   // ─── Skill management tools ──────────────────────────────────
@@ -1329,6 +1395,10 @@ export function createServer(opts: ServerOptions): Server {
         return handleKnowledgeList(args, opts);
       case "knowledge_delete":
         return handleKnowledgeDelete(args, opts);
+      case "scenario_create":
+        return handleScenarioConsolidate(args, opts);
+      case "persona_update":
+        return handlePersonaUpdate(args, opts);
       case "skill_get":
         return handleSkillGet(args, opts);
       case "skill_list":
@@ -1492,29 +1562,35 @@ async function handleRecall(
   // This prevents noise from repeated checkpoints/audits with identical content.
   results = dedupByContentPrefix(results, 60);
 
+  // Atom-aware: if atoms exist for a capture, use the atom fact as content
+  // instead of the raw capture. L1 facts are distilled and shorter than L0 raw text.
+  const atomMap = new Map<string, string>();
+  for (const r of results) {
+    try {
+      const atoms = await opts.pipelineCtx.storage.listAtoms({ captureId: r.entry.id, limit: 5 });
+      if (atoms.length > 0) {
+        atomMap.set(r.entry.id, atoms.map((a) => a.fact).join(" | "));
+      }
+    } catch {
+      // atoms unavailable (non-SQLite backend) — fall back to raw content
+    }
+  }
+  // Replace content with atom facts where available
+  for (const r of results) {
+    const atomContent = atomMap.get(r.entry.id);
+    if (atomContent) {
+      r.entry = { ...r.entry, content: atomContent };
+    }
+  }
+
   let text = formatResults(results);
 
   // JSON format: return a structured array (mirrors the search tool). Used by
   // programmatic consumers (e.g. benchmark adapters) that parse the response.
   if (format === "json") {
-    // Atom-aware: if atoms exist for a capture, use the atom fact as content
-    // instead of the raw capture. This ensures current-state facts (e.g.,
-    // "Migrated database to Turso") replace raw migration text that contains
-    // old values (e.g., "from SQLite to Turso") so stale values don't leak.
-    const atomMap = new Map<string, string>();
-    for (const r of results) {
-      try {
-        const atoms = await opts.pipelineCtx.storage.listAtoms({ captureId: r.entry.id, limit: 5 });
-        if (atoms.length > 0) {
-          atomMap.set(r.entry.id, atoms.map((a) => a.fact).join(" | "));
-        }
-      } catch {
-        // atoms unavailable (non-SQLite backend) — fall back to raw content
-      }
-    }
     const jsonResults = results.map((r) => ({
       id: r.entry.id,
-      content: atomMap.get(r.entry.id) ?? r.entry.content,
+      content: r.entry.content,
       score: r.score,
       type: r.entry.type,
       tags: r.entry.tags,
@@ -1562,6 +1638,24 @@ async function handleRecall(
     }
   } catch {
     // Wiki not available (non-SQLite backend)
+  }
+
+  // Augment with L2 scenarios (high-signal summaries, ~100 tokens)
+  try {
+    const scenarios = await opts.storage.listScenarios({
+      teamId,
+      agentId,
+      userId,
+      limit: 3,
+    });
+    if (scenarios.length > 0) {
+      const scenarioLines = scenarios.map(
+        (s) => `  ${s.summary}`,
+      );
+      text += `\n\n## Scenarios (L2 summaries)\n${scenarioLines.join("\n")}`;
+    }
+  } catch {
+    // Scenarios not available
   }
 
   if (vectorDegraded) {
@@ -1857,6 +1951,36 @@ async function handleCapture(
     }
   }
 
+  // Save agent-provided L1 atoms (if any). These are distilled facts the agent
+  // wrote alongside the raw capture — no LLM API key needed, no rule-based extraction.
+  // Agent atoms take precedence over pipeline atoms (agent understands context better).
+  const agentAtoms = args.atoms as string[] | undefined;
+  if (agentAtoms && agentAtoms.length > 0) {
+    try {
+      // Clear any existing pipeline-extracted atoms for this capture first
+      try {
+        opts.pipelineCtx.storage.deleteAtomsByCaptureId(id);
+      } catch {
+        // Method may not exist on all backends — ignore
+      }
+      for (const fact of agentAtoms.slice(0, 5)) {
+        const atomId = generateId();
+        await opts.pipelineCtx.storage.putAtom({
+          id: atomId,
+          captureId: id,
+          fact,
+          confidence: 0.95, // agent-written atoms are high confidence
+          createdAt: Date.now(),
+          teamId,
+          agentId,
+          userId,
+        });
+      }
+    } catch (err) {
+      console.error(`[remem-mcp] Agent atom save failed: ${err}`);
+    }
+  }
+
   opts.audit.log({
     tool: "capture",
     argsHash: AuditLogger.hashArgs({ type, tags, sessionKey, teamId, userId, taskId }),
@@ -1998,23 +2122,30 @@ async function handleSearch(
   // Dedup near-identical captures (same first 60 chars) — keep highest score.
   results = dedupByContentPrefix(results, 60);
 
-  if (format === "json") {
-    // Atom-aware search: if atoms exist for a capture, use the atom fact as
-    // content instead of the raw capture. This ensures current-state facts
-    // (e.g., "Migrated database to Turso") replace raw migration text that
-    // contains old values (e.g., "from SQLite to Turso").
-    const atomMap = new Map<string, string>();
-    for (const r of results) {
-      try {
-        const atoms = await opts.pipelineCtx.storage.listAtoms({ captureId: r.entry.id, limit: 5 });
-        if (atoms.length > 0) {
-          atomMap.set(r.entry.id, atoms.map((a) => a.fact).join(" | "));
-        }
-      } catch {}
+  // Atom-aware: if atoms exist for a capture, use the atom fact as content
+  // instead of the raw capture. This ensures distilled facts (L1) replace
+  // raw capture text (L0) — less noise, more signal.
+  const atomMap = new Map<string, string>();
+  for (const r of results) {
+    try {
+      const atoms = await opts.pipelineCtx.storage.listAtoms({ captureId: r.entry.id, limit: 5 });
+      if (atoms.length > 0) {
+        atomMap.set(r.entry.id, atoms.map((a) => a.fact).join(" | "));
+      }
+    } catch {}
+  }
+  // Replace content with atom facts where available (mutate in place)
+  for (const r of results) {
+    const atomContent = atomMap.get(r.entry.id);
+    if (atomContent) {
+      r.entry = { ...r.entry, content: atomContent };
     }
+  }
+
+  if (format === "json") {
     const jsonResults = results.map((r) => ({
       id: r.entry.id,
-      content: atomMap.get(r.entry.id) ?? r.entry.content,
+      content: r.entry.content,
       score: r.score,
       type: r.entry.type,
       tags: r.entry.tags,
@@ -3901,6 +4032,124 @@ async function handleKnowledgeDelete(
     redacted: false,
   });
   return { content: [{ type: "text", text: `Deleted ${count} knowledge asset(s).` }] };
+}
+
+// ─── L2 scenario consolidation handler ──────────────────────────
+
+async function handleScenarioConsolidate(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  const atomIds = args.atom_ids as string[];
+  const summary = args.summary as string;
+  const personaTags = args.persona_tags as string[] | undefined;
+  const { teamId, userId, taskId } = extractTenant(args);
+  const agentId = (args.agent_id as string) ?? detectAgentId();
+
+  if (!atomIds || atomIds.length === 0) {
+    return { content: [{ type: "text", text: "Error: atom_ids is required." }], isError: true };
+  }
+  if (!summary || summary.trim().length < 10) {
+    return { content: [{ type: "text", text: "Error: summary must be at least 10 characters." }], isError: true };
+  }
+  if (atomIds.length > 20) {
+    return { content: [{ type: "text", text: "Error: Maximum 20 atom_ids per consolidation." }], isError: true };
+  }
+
+  const id = generateId();
+  const scenario: ScenarioEntry = {
+    id,
+    atomIds,
+    summary: summary.trim(),
+    personaTags,
+    createdAt: Date.now(),
+    teamId,
+    agentId,
+    userId,
+  };
+
+  try {
+    await opts.storage.putScenario(scenario);
+  } catch (err) {
+    return { content: [{ type: "text", text: `Error: ${err}` }], isError: true };
+  }
+
+  opts.audit.log({
+    tool: "consolidate",
+    argsHash: AuditLogger.hashArgs({ atomIds, summary }),
+    resultLen: id.length,
+    quotaHit: false,
+    redacted: false,
+  });
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: `Consolidated ${atomIds.length} atoms into scenario ${id}. Recall will inject this summary automatically.`,
+      },
+    ],
+  };
+}
+
+// ─── L3 persona update handler ──────────────────────────────────
+
+async function handlePersonaUpdate(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  const trait = args.trait as string;
+  const value = args.value as string;
+  const { teamId, userId } = extractTenant(args);
+  const agentId = (args.agent_id as string) ?? detectAgentId();
+
+  if (!trait || !value) {
+    return { content: [{ type: "text", text: "Error: trait and value are required." }], isError: true };
+  }
+
+  const tid = teamId ?? "default";
+  const uid = userId ?? "default";
+
+  // Read existing persona, append/update trait
+  let existing = await opts.storage.readPersona(tid, agentId, uid);
+  let content: string;
+  if (existing) {
+    // Parse existing content as "trait: value" lines, update or append
+    const lines = existing.content.split("\n").filter((l) => l.trim());
+    const traitPattern = new RegExp(`^${trait.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:`, "i");
+    const idx = lines.findIndex((l) => traitPattern.test(l));
+    if (idx >= 0) {
+      lines[idx] = `${trait}: ${value}`;
+    } else {
+      lines.push(`${trait}: ${value}`);
+    }
+    content = lines.join("\n");
+  } else {
+    content = `${trait}: ${value}`;
+  }
+
+  try {
+    await opts.storage.writePersona(tid, agentId, uid, content);
+  } catch (err) {
+    return { content: [{ type: "text", text: `Error: ${err}` }], isError: true };
+  }
+
+  opts.audit.log({
+    tool: "persona_update",
+    argsHash: AuditLogger.hashArgs({ trait, value }),
+    resultLen: content.length,
+    quotaHit: false,
+    redacted: false,
+  });
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: `Persona updated: ${trait} = ${value}. SessionStart will inject this automatically.`,
+      },
+    ],
+  };
 }
 
 // ─── Skill handlers ────────────────────────────────────────────
