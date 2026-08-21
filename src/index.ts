@@ -1058,7 +1058,11 @@ After that, the agent follows the rules automatically.`);
       return;
     }
     const db = openDbWithSchema(defaultDbPath());
-    const syms = searchSymbols(db, query, { teamId, limit, repoPath });
+    // Try with repoPath filter first; if no results, retry without (repo_path may be relative)
+    let syms = searchSymbols(db, query, { teamId, limit, repoPath });
+    if (syms.length === 0) {
+      syms = searchSymbols(db, query, { teamId, limit });
+    }
     if (syms.length === 0) {
       console.log("No symbols found.");
       db.close();
@@ -1145,7 +1149,10 @@ After that, the agent follows the rules automatically.`);
       return;
     }
     const db = openDbWithSchema(defaultDbPath());
-    const syms = listSymbols(db, filePath, { repoPath });
+    let syms = listSymbols(db, filePath, { repoPath });
+    if (syms.length === 0) {
+      syms = listSymbols(db, filePath, {});
+    }
     if (syms.length === 0) {
       console.log("No symbols found.");
       db.close();
