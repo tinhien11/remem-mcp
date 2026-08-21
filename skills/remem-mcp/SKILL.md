@@ -50,9 +50,11 @@ scenario_create({
 
 **When:** After capturing 5+ decisions/learnings about the same topic (e.g., database, hooks, deployment).
 
+**Auto-pipeline:** The Stop hook spawns a background worker that auto-extracts L1 atoms from uncaptured L0 entries, auto-consolidates 5+ atoms on the same topic into L2 scenarios, and auto-updates L3 persona from repeated tags. You don't need to call `scenario_create` or `persona_update` manually — the worker does it. Only call them manually if you want a specific summary the worker wouldn't generate.
+
 ## Rule 4: Update persona (L3)
 
-When you notice a user preference or pattern (2+ occurrences), call `persona_update`. SessionStart injects persona automatically every session (~50 tokens).
+When you notice a user preference or pattern (2+ occurrences), call `persona_update`. SessionStart AND UserPromptSubmit inject persona automatically every turn (~50 tokens).
 
 ```
 persona_update({ "trait": "language", "value": "Vietnamese" })
@@ -60,6 +62,8 @@ persona_update({ "trait": "output_style", "value": "concise" })
 ```
 
 **When:** User asks for concise output 2+ times, works in a specific language, prefers a framework, uses a specific project.
+
+**Auto-pipeline:** The background worker auto-detects tags appearing 2+ times in captures and appends them to persona. Manual `persona_update` is for explicit user preferences the worker can't detect.
 
 ## Rule 5: Use CodeGraph instead of grep
 

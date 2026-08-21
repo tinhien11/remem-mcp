@@ -19,6 +19,7 @@ import { personaCommand } from "./cli/persona.js";
 import { scenariosCommand } from "./cli/scenarios.js";
 import { skillsCommand } from "./cli/skills.js";
 import { status } from "./cli/status.js";
+import { workerCommand } from "./cli/worker.js";
 import {
   findCallees,
   findCallers,
@@ -1241,6 +1242,11 @@ After that, the agent follows the rules automatically.`);
   if (arg === "consolidate") {
     const flags = parseFlags(process.argv.slice(3));
     await consolidateCommand(defaultDbPath(), flags);
+    return;
+  }
+  if (arg === "worker-run") {
+    const flags = parseFlags(process.argv.slice(3));
+    await workerCommand(defaultDbPath(), flags);
     return;
   }
   if (arg === "knowledge") {

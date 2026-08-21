@@ -547,6 +547,34 @@ export function hookRecall(dbPath: string): void {
         // persona table not available — skip
       }
 
+      // Inject L2 scenarios (high-signal summaries, ~100 tokens)
+      try {
+        const scenarios = db
+          .prepare("SELECT summary FROM scenarios ORDER BY created_at DESC LIMIT 3")
+          .all() as { summary: string }[];
+        if (scenarios.length > 0) {
+          lines.push("");
+          lines.push(`## Scenarios (L2)`);
+          for (const s of scenarios) lines.push(`- ${s.summary}`);
+        }
+      } catch {
+        // scenarios table not available — skip
+      }
+
+      // Inject skills (~100 tokens)
+      try {
+        const skills = db
+          .prepare("SELECT name, description FROM skills ORDER BY updated_at DESC LIMIT 3")
+          .all() as { name: string; description: string }[];
+        if (skills.length > 0) {
+          lines.push("");
+          lines.push(`## Skills`);
+          for (const s of skills) lines.push(`- ${s.name}: ${(s.description || "").slice(0, 80)}`);
+        }
+      } catch {
+        // skills table not available — skip
+      }
+
       db.close();
 
       lines.push("");
@@ -856,6 +884,56 @@ export function hookUserPromptSubmit(dbPath: string): void {
         }
       }
 
+      // Inject L2 scenarios (high-signal summaries, ~100 tokens)
+      try {
+        const scenarios = db
+          .prepare("SELECT summary FROM scenarios ORDER BY created_at DESC LIMIT 3")
+          .all() as { summary: string }[];
+        if (scenarios.length > 0) {
+          const scenarioLines = scenarios.map((s) => `- ${s.summary}`);
+          if (recallContext) {
+            recallContext += `\n\n## Scenarios (L2 summaries)\n${scenarioLines.join("\n")}`;
+          } else {
+            recallContext = `[remem-mcp] Scenarios (L2 summaries):\n${scenarioLines.join("\n")}`;
+          }
+        }
+      } catch {
+        // scenarios table not available — skip
+      }
+
+      // Inject L3 persona (user preferences, ~50 tokens)
+      try {
+        const personaRow = db
+          .prepare("SELECT content FROM persona WHERE team_id = ? AND user_id = ? ORDER BY updated_at DESC LIMIT 1")
+          .get("default", "default") as { content: string } | undefined;
+        if (personaRow && personaRow.content) {
+          if (recallContext) {
+            recallContext += `\n\n## Persona (L3)\n${personaRow.content}`;
+          } else {
+            recallContext = `[remem-mcp] Persona (L3):\n${personaRow.content}`;
+          }
+        }
+      } catch {
+        // persona table not available — skip
+      }
+
+      // Inject matched skills (~100 tokens)
+      try {
+        const skills = db
+          .prepare("SELECT name, description FROM skills ORDER BY updated_at DESC LIMIT 3")
+          .all() as { name: string; description: string }[];
+        if (skills.length > 0) {
+          const skillLines = skills.map((s) => `- ${s.name}: ${(s.description || "").slice(0, 80)}`);
+          if (recallContext) {
+            recallContext += `\n\n## Skills\n${skillLines.join("\n")}`;
+          } else {
+            recallContext = `[remem-mcp] Skills:\n${skillLines.join("\n")}`;
+          }
+        }
+      } catch {
+        // skills table not available — skip
+      }
+
       db.close();
 
       // Build output — include recall context if any
@@ -966,6 +1044,16 @@ export function hookStop(dbPath?: string): void {
         child.unref();
         logToFile(`Stop: spawned background capture for session ${sid}`);
       }
+
+      // Spawn background pipeline worker (L0→L1→L2→L3 auto-distill, zero LLM cost)
+      const scriptPath = process.argv[1];
+      const workerChild = spawn(
+        process.execPath,
+        [scriptPath, "worker-run", dbPath],
+        { detached: true, stdio: "ignore" },
+      );
+      workerChild.unref();
+      logToFile(`Stop: spawned background pipeline worker for session ${sid}`);
     }
 
     // Second+ fire (stop_hook_active): agent already got the reminder, let it stop.
