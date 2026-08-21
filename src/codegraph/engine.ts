@@ -203,21 +203,44 @@ export async function parseFile(
       });
 
       // Extract calls within this symbol's body using improved regex
-      // Captures: foo(), obj.method(), Class.create(), module.func()
-      // Two patterns: simple call (identifier) and method call (obj.method)
+      // Captures: foo(), obj.method(), Class.create(), module.func(), <Component/>
+      // Three patterns: JSX component, method call (obj.method), simple call (foo)
       const simpleCallRegex = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g;
       const methodCallRegex = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\.([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g;
+      // JSX: <Component .../> or <Component>...</Component> (capitalized = component)
+      // Also self-closing: <Component/>
+      const jsxRegex = /<([A-Z][a-zA-Z0-9_$]*)\b/g;
       const bodyStartLine = lineStart;
       const bodyLines = source.split("\n").slice(lineStart - 1, lineEnd);
 
       // Track lines already captured by method call regex to avoid duplicates
       const methodCallLines = new Set<number>();
+      const jsxCallLines = new Set<number>();
 
       for (let i = 0; i < bodyLines.length; i++) {
         const line = bodyLines[i];
         const lineNum = bodyStartLine + i;
 
-        // First: match method calls (obj.method) — captures full qualified name
+        // First: match JSX components <Component> — capitalized identifiers
+        jsxRegex.lastIndex = 0;
+        let jMatch = jsxRegex.exec(line);
+        while (jMatch !== null) {
+          const calleeName = jMatch[1];
+          if (!isKeywordOrSelf(calleeName, item.name)) {
+            calls.push({
+              callerId: id,
+              calleeName,
+              calleeId: null,
+              line: lineNum,
+              kind: "call",
+              callType: "jsx",
+            });
+            jsxCallLines.add(lineNum);
+          }
+          jMatch = jsxRegex.exec(line);
+        }
+
+        // Second: match method calls (obj.method) — captures full qualified name
         methodCallRegex.lastIndex = 0;
         let mMatch = methodCallRegex.exec(line);
         while (mMatch !== null) {
@@ -238,8 +261,8 @@ export async function parseFile(
           mMatch = methodCallRegex.exec(line);
         }
 
-        // Then: match simple calls (foo) — skip if line already has method call
-        if (!methodCallLines.has(lineNum)) {
+        // Then: match simple calls (foo) — skip if line already has method call or JSX
+        if (!methodCallLines.has(lineNum) && !jsxCallLines.has(lineNum)) {
           simpleCallRegex.lastIndex = 0;
           let match = simpleCallRegex.exec(line);
           while (match !== null) {
