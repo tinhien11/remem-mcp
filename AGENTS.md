@@ -27,6 +27,27 @@ You have a long-term memory server (`remem-mcp` MCP). Always prefer it over grep
 - UserPromptSubmit hook auto-injects memory matching your prompt + auto-captures facts
 - Stop hook auto-captures the session — but still call `capture` for key decisions during the session
 
+## Capture Exclusions
+
+Per-repository capture exclusions via `.remem.toml` marker file. Drop a `.remem.toml` in any project root to prevent auto-capture of noise from build artifacts, dependencies, etc.
+
+### Format
+```toml
+[capture]
+ignore_paths = ["node_modules", "dist", ".git", "*.min.js"]
+```
+
+### Matching
+- **Path segment**: `node_modules` matches any path containing `node_modules` as a component (e.g. `/project/node_modules/foo.js`)
+- **Glob suffix**: `*.min.js` matches any path ending with `.min.js`
+- **Bash commands**: patterns are checked against command text — if a command references an ignored path, the error/pattern capture is skipped
+
+### Behavior
+- Marker file is searched from `cwd` upward through ancestors (first match wins)
+- Exclusions are checked **before** any DB write — dropped events never enter storage
+- Applied to both Write/Edit (pattern capture) and Bash (error capture) in PostToolUse hook
+- No marker file = no exclusions = capture everything (default behavior)
+
 ## CodeGraph
 
 CodeGraph indexes code structure (symbols, calls, imports) into SQLite for fast structural queries. Adapted from Codebase-Memory (arXiv:2603.27277).

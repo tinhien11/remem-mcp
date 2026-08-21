@@ -1379,6 +1379,16 @@ export function hookPostToolUse(dbPath: string): void {
         return;
       }
 
+      // Capture exclusions: skip events for commands referencing ignored paths
+      const bashIgnorePatterns = loadCaptureExclusions(cwd);
+      if (bashIgnorePatterns.length > 0 && shouldExcludeCommand(command, bashIgnorePatterns)) {
+        logToFile(
+          `PostToolUse: skipping Bash — command matches capture exclusion: ${command.slice(0, 80)}`,
+        );
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+
       let db: Database.Database;
       try {
         db = new Database(dbPath);
