@@ -1167,9 +1167,21 @@ export function hookPostToolUse(dbPath: string): void {
 
       // [Moat 3: Pattern Learning] Capture code patterns from Write/Edit
       if (isWriteEdit) {
+        // Capture exclusions: drop events for files in ignored paths (node_modules, dist, etc.)
+        const writeEditCwd = input.cwd ?? toolInput.workdir ?? process.cwd();
+        const ignorePatterns = loadCaptureExclusions(writeEditCwd);
+        if (ignorePatterns.length > 0 && toolInput.file_path) {
+          if (shouldExcludePath(toolInput.file_path, ignorePatterns)) {
+            logToFile(
+              `PostToolUse: skipping Write/Edit — file_path "${toolInput.file_path}" matches capture exclusion`,
+            );
+            process.stdout.write(JSON.stringify({}));
+            return;
+          }
+        }
         try {
           const db = new Database(dbPath);
-          const sessionKey = hashPath(input.cwd ?? toolInput.workdir ?? process.cwd());
+          const sessionKey = hashPath(writeEditCwd);
           const pattern = detectPattern(toolName, toolInput);
           if (pattern) {
             const id = `pat-${createHash("sha256")
@@ -2770,6 +2782,131 @@ export function hookPreToolUse(dbPath: string): void {
       process.stdout.write(JSON.stringify({}));
     }
   });
+}
+
+// ─── Capture Exclusions ─────────────────────────────────────────────
+// Per-repository capture exclusions via .remem.toml marker file.
+// A dropped event never enters the DB — filtered before any write.
+//
+// Format (simple TOML subset, no dependency needed):
+//   [capture]
+//   ignore_paths = ["node_modules", "dist", ".git", "*.min.js"]
+//
+// Patterns are matched as path segments (substring within a path component)
+// or glob-style suffixes (*.min.js). The marker file is searched from cwd
+// upward through ancestors, first match wins.
+
+/** Cache: cwd → ignore patterns (or empty array if no marker file). */
+const exclusionCache = new Map<string, string[]>();
+
+/** Maximum ancestors to walk when searching for .remem.toml. */
+const MAX_ANCESTORS = 20;
+
+/**
+ * Parse the [capture] ignore_paths from a .remem.toml file.
+ * Minimal parser — handles only the `ignore_paths = [...]` array syntax.
+ */
+function parseCaptureExclusions(content: string): string[] {
+  // Find the [capture] section
+  const sectionMatch = content.match(/^\[capture\]\s*$/m);
+  if (!sectionMatch) return [];
+
+  // Get text from [capture] to the next [section] or EOF
+  const sectionStart = sectionMatch.index! + sectionMatch[0].length;
+  const nextSection = content.slice(sectionStart).match(/^\[.+\]\s*$/m);
+  const sectionText = nextSection
+    ? content.slice(sectionStart, sectionStart + nextSection.index!)
+    : content.slice(sectionStart);
+
+  // Parse ignore_paths = ["a", "b", "c"]
+  const pathsMatch = sectionText.match(/ignore_paths\s*=\s*\[([^\]]*)\]/);
+  if (!pathsMatch) return [];
+
+  // Extract quoted strings from the array
+  const items = pathsMatch[1].match(/"([^"]+)"/g);
+  if (!items) return [];
+
+  return items.map((item) => item.replace(/"/g, ""));
+}
+
+/**
+ * Walk up from cwd to find a .remem.toml marker file and load capture exclusions.
+ * Results are cached per-cwd for the process lifetime (hooks are short-lived).
+ * Returns an array of ignore patterns (empty if no marker file or no [capture] section).
+ */
+export function loadCaptureExclusions(cwd: string): string[] {
+  const cached = exclusionCache.get(cwd);
+  if (cached !== undefined) return cached;
+
+  let patterns: string[] = [];
+  try {
+    let dir = cwd;
+    for (let i = 0; i < MAX_ANCESTORS; i++) {
+      const markerPath = join(dir, ".remem.toml");
+      if (existsSync(markerPath)) {
+        const content = readFileSync(markerPath, "utf-8");
+        patterns = parseCaptureExclusions(content);
+        break;
+      }
+      const parent = dirname(dir);
+      if (parent === dir) break; // reached filesystem root
+      dir = parent;
+    }
+  } catch {
+    // Best-effort — if we can't read the marker, capture everything
+  }
+
+  exclusionCache.set(cwd, patterns);
+  return patterns;
+}
+
+/**
+ * Check if a file path matches any ignore pattern.
+ * Patterns are matched as:
+ * - Glob suffix: "*.min.js" matches any path ending with ".min.js"
+ * - Path segment: "node_modules" matches if any path component equals "node_modules"
+ * - Simple substring: "dist" matches if "dist" appears as a path segment
+ */
+export function shouldExcludePath(filePath: string, ignorePatterns: string[]): boolean {
+  if (ignorePatterns.length === 0) return false;
+  const normalized = filePath.replace(/\\/g, "/");
+  const segments = normalized.split("/");
+
+  for (const pattern of ignorePatterns) {
+    // Glob suffix: *.ext
+    if (pattern.startsWith("*.")) {
+      if (normalized.endsWith(pattern.slice(1))) return true;
+      continue;
+    }
+    // Path segment match: "node_modules" matches /foo/node_modules/bar
+    if (segments.includes(pattern)) return true;
+  }
+  return false;
+}
+
+/**
+ * Check if a Bash command references files in ignored paths.
+ * Extracts file paths from common command patterns and checks them.
+ * Also checks if any ignore pattern appears as a path segment in the command.
+ */
+export function shouldExcludeCommand(command: string, ignorePatterns: string[]): boolean {
+  if (ignorePatterns.length === 0) return false;
+
+  for (const pattern of ignorePatterns) {
+    // Glob suffix — skip for command matching (commands rarely reference *.min.js directly)
+    if (pattern.startsWith("*.")) continue;
+
+    // Check if the pattern appears as a path segment in the command
+    // e.g. "node_modules" matches "cat node_modules/foo.js" or "ls ./node_modules"
+    const re = new RegExp(`(^|[\\s/])${escapeRegex(pattern)}([\\s/]|$)`);
+    if (re.test(command)) return true;
+  }
+  return false;
+}
+
+/** Escape special regex characters in a string. */
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**
