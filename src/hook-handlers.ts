@@ -514,10 +514,9 @@ export function hookRecall(dbPath: string): void {
       // No all-captures fallback — that would leak other projects' memory.
       // If no results, the session simply starts with no injected context.
 
-      db.close();
-
       if (rows.length === 0) {
         // No memory — output empty context
+        db.close();
         logToFile("SessionStart: no recent memory found");
         process.stdout.write(JSON.stringify({}));
         return;
@@ -547,6 +546,8 @@ export function hookRecall(dbPath: string): void {
       } catch {
         // persona table not available — skip
       }
+
+      db.close();
 
       lines.push("");
       lines.push("Use these memories to inform your work. Call recall() for more details.");
