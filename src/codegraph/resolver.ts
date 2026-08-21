@@ -245,6 +245,24 @@ export function resolveCall(
   return { calleeId: null, confidence: 0, strategy: "unresolved" };
 }
 
+/** Names too short or builtin to bother resolving. */
+const SKIP_NAMES = new Set([
+  "T", "L", "R", "S", "P", "C", "D", "E", "F", "M", "N", "V", "X", "Y",
+  "String", "Array", "Object", "Number", "Boolean", "Map", "Set", "Date",
+  "Error", "RegExp", "Promise", "Symbol", "Buffer", "Vec", "Box", "Option",
+  "Result", "Some", "None", "Ok", "Err", "List", "Dict", "Tuple",
+]);
+
+/** Check if a callee name should be skipped (too short or builtin type). */
+function shouldSkipResolution(calleeName: string): boolean {
+  if (calleeName.length <= 2) return true;
+  if (SKIP_NAMES.has(calleeName)) return true;
+  // Skip single-letter + dot patterns like "T.foo"
+  const parts = calleeName.split(".");
+  if (parts.length >= 2 && parts[0].length <= 1) return true;
+  return false;
+}
+
 /**
  * Run call resolution on all unresolved calls in the database.
  * Called after indexDirectory() completes.
@@ -254,6 +272,13 @@ export function resolveAllCalls(db: Database): {
   resolved: number;
   byStrategy: Record<string, number>;
 } {
+  // Create index for faster lookups (idempotent)
+  try {
+    db.exec("CREATE INDEX IF NOT EXISTS idx_calls_callee_name ON calls(callee_name)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_symbols_module ON symbols(module_path)");
+  } catch {}
+
   // Load all symbols into FunctionRegistry
   const symbols = db
     .prepare("SELECT id, name, kind, file_path, module_path, language, parent_id FROM symbols")
@@ -266,32 +291,41 @@ export function resolveAllCalls(db: Database): {
     .all() as ImportRow[];
   const importMap = new ImportMap(imports);
 
-  // Get all unresolved calls
+  // Get all unresolved calls — skip short/builtin names to save resolution time
   const calls = db
     .prepare("SELECT id, caller_id, callee_name, callee_id, line, call_type FROM calls WHERE callee_id IS NULL")
     .all() as CallRow[];
 
   const stats = { total: calls.length, resolved: 0, byStrategy: {} as Record<string, number> };
+  let skipped = 0;
 
-  // Get caller file paths
+  // Get caller file paths — batch query
   const callerFiles = new Map<string, string>();
   const callerIds = [...new Set(calls.map((c) => c.caller_id))];
   if (callerIds.length > 0) {
-    const placeholders = callerIds.map(() => "?").join(",");
-    const rows = db
-      .prepare(`SELECT id, file_path FROM symbols WHERE id IN (${placeholders})`)
-      .all(...callerIds) as { id: string; file_path: string }[];
-    for (const r of rows) {
-      callerFiles.set(r.id, r.file_path);
+    // Batch in chunks of 500 to avoid SQLite param limit
+    for (let i = 0; i < callerIds.length; i += 500) {
+      const chunk = callerIds.slice(i, i + 500);
+      const placeholders = chunk.map(() => "?").join(",");
+      const rows = db
+        .prepare(`SELECT id, file_path FROM symbols WHERE id IN (${placeholders})`)
+        .all(...chunk) as { id: string; file_path: string }[];
+      for (const r of rows) {
+        callerFiles.set(r.id, r.file_path);
+      }
     }
   }
 
-  // Resolve each call
+  // Resolve each call — skip short/builtin names
   const updateStmt = db.prepare(
     "UPDATE calls SET callee_id = ?, confidence = ? WHERE id = ?",
   );
   const batch = db.transaction(() => {
     for (const call of calls) {
+      if (shouldSkipResolution(call.callee_name)) {
+        skipped++;
+        continue;
+      }
       const callerFile = callerFiles.get(call.caller_id) ?? "";
       const result = resolveCall(call.callee_name, callerFile, registry, importMap);
       if (result.calleeId) {
@@ -302,6 +336,10 @@ export function resolveAllCalls(db: Database): {
     }
   });
   batch();
+
+  if (skipped > 0) {
+    console.error(`[remem-mcp] resolveAllCalls: skipped ${skipped} short/builtin names`);
+  }
 
   return stats;
 }

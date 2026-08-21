@@ -152,6 +152,14 @@ export async function parseFile(
   const calls: CallInfo[] = [];
   const imports: ImportInfo[] = [];
 
+  // Cache source lines once — used for offset calculation in extractSymbols
+  const sourceLines = source.split("\n");
+  // Precompute cumulative line start offsets for O(1) line→offset lookup
+  const lineOffsets: number[] = [0];
+  for (let i = 0; i < sourceLines.length; i++) {
+    lineOffsets.push(lineOffsets[i] + sourceLines[i].length + 1); // +1 for \n
+  }
+
   // Extract symbols from structure
   const extractSymbols = (
     items: Array<{
@@ -175,17 +183,10 @@ export async function parseFile(
       const id = generateId();
       const lineStart = (item.span?.startLine ?? 0) + 1; // 1-indexed
       const lineEnd = (item.span?.endLine ?? lineStart) + 1;
-      const _bodyText = source.slice(
-        item.span?.startLine !== undefined
-          ? source.split("\n").slice(0, item.span.startLine).join("\n").length + 1
-          : 0,
-        item.span?.endLine !== undefined
-          ? source
-              .split("\n")
-              .slice(0, item.span.endLine + 1)
-              .join("\n").length
-          : source.length,
-      );
+      // Use cached lineOffsets instead of source.split("\n") per symbol
+      const bodyStart = item.span?.startLine !== undefined ? lineOffsets[item.span.startLine] : 0;
+      const bodyEnd = item.span?.endLine !== undefined ? lineOffsets[item.span.endLine + 1] - 1 : source.length;
+      const bodyText = source.slice(bodyStart, bodyEnd);
       symbols.push({
         id,
         name: item.name,
@@ -204,30 +205,21 @@ export async function parseFile(
 
       // Extract calls within this symbol's body — single-pass on body text
       // Captures: foo(), obj.method(), <Component/>, Class.create()
-      // Uses offset→line map instead of per-line regex (10x faster on large files)
-      const bodyText = source.slice(
-        item.span?.startLine !== undefined
-          ? source.split("\n").slice(0, item.span.startLine).join("\n").length + 1
-          : 0,
-        item.span?.endLine !== undefined
-          ? source.split("\n").slice(0, item.span.endLine + 1).join("\n").length
-          : source.length,
-      );
+      // Uses cached bodyText + offset→line map (no per-line regex)
       const bodyStartLine = lineStart;
 
-      // Build offset→line map once for this body
-      const lineStarts: number[] = [0];
-      for (let i = 0; i < bodyText.length; i++) {
-        if (bodyText[i] === "\n") lineStarts.push(i + 1);
-      }
+      // Build offset→line map for this body using cached lineOffsets
       const offsetToLine = (offset: number): number => {
-        let lo = 0, hi = lineStarts.length - 1;
+        // offset is relative to bodyText which starts at bodyStart in source
+        const sourceOffset = bodyStart + offset;
+        // Binary search in lineOffsets
+        let lo = 0, hi = lineOffsets.length - 1;
         while (lo < hi) {
           const mid = (lo + hi + 1) >> 1;
-          if (lineStarts[mid] <= offset) lo = mid;
+          if (lineOffsets[mid] <= sourceOffset) lo = mid;
           else hi = mid - 1;
         }
-        return bodyStartLine + lo;
+        return lo + 1; // 1-indexed
       };
 
       // Track offsets already captured to avoid duplicates
