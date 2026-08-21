@@ -144,6 +144,14 @@ export async function parseFile(
     return null;
   }
 
+  // Skip files that are too large — tree-sitter parsing + regex extraction
+  // scales O(n) with file size, and very large files are usually generated/vendored
+  const MAX_FILE_LINES = 3000;
+  const MAX_FILE_BYTES = 200_000; // 200KB
+  if (source.length > MAX_FILE_BYTES || source.split("\n").length > MAX_FILE_LINES) {
+    return null;
+  }
+
   const result = pack.process(source, { language });
   if (!result) return null;
 
