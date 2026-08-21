@@ -8,7 +8,7 @@ You have a long-term memory server via MCP. Use the tools automatically — do n
 ## Tools
 
 **Core:** `recall` `capture` `search` `forget` `resolve` `handoff` `adr` `update` `consolidate` `scenario_create` `persona_update`
-**CodeGraph:** `codegraph_search` (auto-indexes on first use) `codegraph_callers` `codegraph_callees` `codegraph_impact`
+**CodeGraph:** `codegraph_search` (auto-indexes on first use) `codegraph_callers` `codegraph_callees` `codegraph_impact` `codegraph_list` `codegraph_detect_changes` (git diff → affected symbols)
 **Wiki:** `wiki_ingest` `wiki_search` `wiki_get` `wiki_outdated`
 
 ## Rule 1: Recall before answering
@@ -72,7 +72,10 @@ For function/class/method definitions, call `codegraph_search` — NOT grep. Aut
 ```
 codegraph_search({ "query": "handleCapture" })
 codegraph_callers({ "symbol_id": "<id from search>" })
+codegraph_detect_changes({ "repo_path": "/abs/path" })  // git diff → affected symbols + risk
 ```
+
+CodeGraph uses 6-strategy call resolution (import-map → same-module → unique-name → suffix → fuzzy) with confidence scoring. JSX components (`<FleetMap/>`) and method calls (`obj.method()`) are captured. Stdlib calls (fmt.Printf, console.log) are filtered out.
 
 Use grep only for: string literals, config values, file names.
 
