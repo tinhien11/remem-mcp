@@ -1,5 +1,5 @@
 -- Schema for remem-mcp
--- Version: 8
+-- Version: 13
 --
 -- This file runs on the first start. It creates all tables, triggers, and indexes.
 -- It uses CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS.
@@ -75,7 +75,13 @@ CREATE TABLE IF NOT EXISTS captures (
   retrieved_count   INTEGER NOT NULL DEFAULT 0,
   heeded_count      INTEGER NOT NULL DEFAULT 0,
   recurrence_count  INTEGER NOT NULL DEFAULT 0,
-  last_outcome      TEXT
+  last_outcome      TEXT,
+  -- v10: Authority tier + salience for decay/forget sweep
+  tier              TEXT NOT NULL DEFAULT 'episodic',  -- rule, decision, episodic, test
+  salience          REAL NOT NULL DEFAULT 1.0,          -- decay score, updated by forget sweep
+  -- v12: TTL for time-sensitive captures + feedback-derived salience floor
+  expires_at        INTEGER,                            -- timestamp; forgetSweep hard-deletes past this
+  feedback_salience REAL NOT NULL DEFAULT 1.0           -- multiplier from feedback signals (0.1–2.0)
 );
 
 -- L0 messages: role-based conversation messages linked to a capture.
@@ -113,6 +119,61 @@ CREATE TABLE IF NOT EXISTS scenarios (
   agent_id     TEXT,
   user_id     TEXT
 );
+
+-- v10: Entity index for entity-assisted recall.
+-- Stores <=10 extracted nouns per capture for lexical RRF matching.
+CREATE TABLE IF NOT EXISTS entities (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  capture_id  TEXT NOT NULL REFERENCES captures(id) ON DELETE CASCADE,
+  entity      TEXT NOT NULL,
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_entities_capture ON entities (capture_id);
+CREATE INDEX IF NOT EXISTS idx_entities_entity ON entities (entity);
+
+-- v11: Memory-to-memory links for link-neighbor RRF expansion.
+-- Auto-linked on capture via shared tags/entities/session-proximity.
+-- Manually linked via link_captures MCP tool.
+CREATE TABLE IF NOT EXISTS memory_links (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  from_id     TEXT NOT NULL REFERENCES captures(id) ON DELETE CASCADE,
+  to_id       TEXT NOT NULL REFERENCES captures(id) ON DELETE CASCADE,
+  link_type   TEXT NOT NULL DEFAULT 'related',  -- shared-tag, shared-entity, session-proximity, related, cause-effect, supersedes, prerequisite
+  auto        INTEGER NOT NULL DEFAULT 0,       -- 1 = auto-generated, 0 = manual
+  weight      REAL NOT NULL DEFAULT 1.0,         -- v13: Hebbian weight, strengthened on co-retrieval
+  created_at  INTEGER NOT NULL,
+  UNIQUE (from_id, to_id, link_type)
+);
+CREATE INDEX IF NOT EXISTS idx_memory_links_from ON memory_links (from_id);
+CREATE INDEX IF NOT EXISTS idx_memory_links_to ON memory_links (to_id);
+CREATE INDEX IF NOT EXISTS idx_memory_links_type ON memory_links (link_type);
+
+-- v12: Capture feedback signals (helpful/not_helpful/stale/wrong).
+-- Adjusts salience score. Creates feedback flywheel.
+CREATE TABLE IF NOT EXISTS capture_feedback (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  capture_id  TEXT NOT NULL REFERENCES captures(id) ON DELETE CASCADE,
+  signal      TEXT NOT NULL,                    -- helpful, not_helpful, stale, wrong
+  reason      TEXT,
+  agent_id    TEXT,
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_capture ON capture_feedback (capture_id);
+CREATE INDEX IF NOT EXISTS idx_feedback_signal ON capture_feedback (signal);
+
+-- v12: Mutation log — every storage mutation (put/delete/reject/supersede/feedback/link/forget).
+-- Distinct from audit_log (which logs MCP tool calls).
+CREATE TABLE IF NOT EXISTS mutation_log (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  action      TEXT NOT NULL,                    -- put, delete, reject, supersede, feedback, link, forget, correct, confirm
+  capture_id  TEXT,
+  details     TEXT,                             -- JSON blob with action-specific metadata
+  agent_id    TEXT,
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mutation_action ON mutation_log (action);
+CREATE INDEX IF NOT EXISTS idx_mutation_capture ON mutation_log (capture_id);
+CREATE INDEX IF NOT EXISTS idx_mutation_created ON mutation_log (created_at);
 
 -- L3: Persona (long-term user profile, one per team/agent/user)
 CREATE TABLE IF NOT EXISTS persona (

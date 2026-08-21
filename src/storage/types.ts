@@ -80,11 +80,28 @@ export interface QueryOptions {
   offset: number;
   mode: SearchMode;
   filters?: SearchFilters;
+  /** v12: When true, attach per-hit score_details explaining ranking. */
+  explain?: boolean;
+}
+
+export interface ScoreDetails {
+  bm25_rank?: number;
+  bm25_score?: number;
+  vector_rank?: number;
+  vector_score?: number;
+  entity_rank?: number;
+  entity_matches?: string[];
+  authority_multiplier?: number;
+  feedback_salience?: number;
+  link_provenance?: string;  // "expanded from <id>" if link-neighbor
+  raw_fallback?: boolean;
 }
 
 export interface SearchResult {
   entry: CaptureEntry;
   score: number;
+  /** v12: Per-hit score breakdown when explain=true. */
+  scoreDetails?: ScoreDetails;
 }
 
 export interface DeleteFilter {
@@ -347,4 +364,73 @@ export interface StorageBackend {
 
   /** Close the database connection. */
   close(): void;
+
+  // v10: Decay/forget sweep
+
+  /** Run a forget sweep: compute salience for all captures, soft-delete those below threshold.
+   *  Returns stats: { swept, remaining, checked }. */
+  forgetSweep(opts?: {
+    dryRun?: boolean;
+    threshold?: number;
+    maxAgeDays?: number;
+  }): Promise<{ swept: number; remaining: number; checked: number }>;
+
+  // v10: Entity-assisted recall
+
+  /** Store extracted entities for a capture (replaces existing). */
+  putEntities(captureId: string, entities: string[]): void;
+
+  /** Get entities for a capture. */
+  getEntities(captureId: string): string[];
+
+  /** Search captures by entity match (lexical). Returns capture IDs ranked by match count. */
+  searchByEntities(
+    entities: string[],
+    limit: number,
+    sessionKey?: string,
+    filters?: { teamId?: string; userId?: string; taskId?: string; type?: string },
+  ): { id: string; score: number }[];
+
+  // v11: Memory-to-memory links
+
+  /** Link two captures. Auto-links use auto=1. */
+  linkCaptures(fromId: string, toId: string, linkType: string, auto?: boolean): void;
+
+  /** Get links from a capture (outbound). */
+  getLinksFrom(captureId: string): { to_id: string; link_type: string; auto: number }[];
+
+  /** Get links to a capture (inbound). */
+  getLinksTo(captureId: string): { from_id: string; link_type: string; auto: number }[];
+
+  /** Expand capture IDs via link-neighbor traversal (1-hop). Returns {id, hopScore}. */
+  expandByLinks(ids: string[], limit: number): { id: string; score: number }[];
+
+  /** v13: Hebbian co-retrieval strengthening. Strengthens links between co-occurring captures. */
+  strengthenLinksOnCoRetrieval(ids: string[]): void;
+
+  // v12: Feedback + audit + TTL
+
+  /** Record feedback signal for a capture. Adjusts feedback_salience multiplier. */
+  recordFeedback(
+    captureId: string,
+    signal: "helpful" | "not_helpful" | "stale" | "wrong",
+    reason?: string,
+    agentId?: string,
+  ): void;
+
+  /** Get feedback signals for a capture. */
+  getFeedback(captureId: string): { signal: string; reason: string | null; created_at: number }[];
+
+  /** Record an audit log entry. Called by all write methods. */
+  recordAudit(action: string, captureId: string | null, details?: unknown, agentId?: string): void;
+
+  /** Query audit log. */
+  queryAudit(opts: { action?: string; captureId?: string; since?: number; limit?: number }): {
+    id: number;
+    action: string;
+    capture_id: string | null;
+    details: string | null;
+    agent_id: string | null;
+    created_at: number;
+  }[];
 }

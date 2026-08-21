@@ -15,17 +15,13 @@ High-level system design. Last updated Aug 2026.
 │   MCP Server         │          │  Hook Handlers       │
 │   (src/server.ts)    │          │  (src/hook-handlers)  │
 │                      │          │                      │
-│  45 tools:           │          │  SessionStart        │
+│  15 tools:           │          │  SessionStart        │
 │  • recall            │          │  UserPromptSubmit    │
-│  • capture           │          │  PreToolUse          │
-│  • search            │          │  PostToolUse         │
-│  • codegraph_*       │          │  Stop                │
-│  • wiki_*            │          │  PostCompact         │
-│  • canvas_get        │          │                      │
-│  • ref_read          │          │  Inject: L2/L3/skills│
-│  • skill_*           │          │  +canvas+skills      │
+│  • capture           │          │  Stop                │
+│  • search            │          │  PostCompact         │
+│  • codegraph_*       │          │                      │
+│  • wiki_*            │          │  Inject: L2/L3/skills│
 │  • handoff/adr       │          │  Auto-capture: facts │
-│  • proxy (HTTP)      │          │  Offload: refs+canvas│
 └──────────┬───────────┘          └─────────┬────────────┘
            │                                 │
            │                                 │ spawn
@@ -47,21 +43,23 @@ High-level system design. Last updated Aug 2026.
 │  ┌─────────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐ │
 │  │  Captures   │  │  Atoms   │  │ Scenarios│  │  Persona │ │
 │  │  (L0 raw)   │  │  (L1)    │  │  (L2)    │  │  (L3)    │ │
-│  └─────────────┘  └──────────┘  └──────────┘  └──────────┘ │
+│  │  +tier      │  └──────────┘  └──────────┘  └──────────┘ │
+│  │  +salience  │                                              │
+│  └──────┬──────┘                                               │
+│         │                                                      │
+│  ┌──────▼──────┐  ┌──────────┐                               │
+│  │  Entities   │  │Mem Links │  (v10/v11 — recall boost)     │
+│  │  (v10)      │  │  (v11)   │                               │
+│  └─────────────┘  └──────────┘                               │
 │                                                              │
 │  ┌─────────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐ │
 │  │  Symbols    │  │  Calls   │  │  Imports  │  │  Skills  │ │
-│  │  (CodeGraph)│  │(CodeGraph)│  │(CodeGraph)│  │  (F3)    │ │
+│  │  (CodeGraph)│  │(CodeGraph)│  │(CodeGraph)│  │          │ │
 │  └─────────────┘  └──────────┘  └──────────┘  └──────────┘ │
 │                                                              │
-│  ┌─────────────┐  ┌──────────┐  ┌──────────┐               │
-│  │ Wiki Pages  │  │   ADRs   │  │  Canvas  │               │
-│  └─────────────┘  └──────────┘  │ (F1:     │               │
-│                                 │  Mermaid)│               │
-│  ┌─────────────┐                └──────────┘               │
-│  │  Refs       │  ┌──────────┐                              │
-│  │  (F1: *.md) │  │ Persona  │                              │
-│  └─────────────┘  └──────────┘                              │
+│  ┌─────────────┐  ┌──────────┐                               │
+│  │ Wiki Pages  │  │   ADRs   │                               │
+│  └─────────────┘  └──────────┘                               │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -158,7 +156,7 @@ Session start
 │ SessionStart │     • L2 scenarios (recent)
 │ hook         │     • L3 persona (language, style, prefs)
 └──────┬───────┘     • Skills (matched by query)
-       │             • Canvas from last session (F1)
+       │
        ▼
   Agent receives prompt
        │
@@ -169,90 +167,23 @@ Session start
 └──────┬───────────┘
        │
        ▼
-  Agent calls a tool (Bash, Write, Edit, etc.)
-       │
-       ▼
-┌──────────────────┐   Inject into agent context:
-│ PreToolUse       │   • Canvas (F1: Mermaid graph, ~100 tokens)
-│ hook             │   • Skills (F3: archived + matched by trigger)
-└──────┬───────────┘   • Danger warning (npm publish, docker prune...)
-       │             • Error prediction (file error history)
-       ▼             • Past errors (lint/build/test, decayed)
-  Tool executes
-       │
-       ▼
-┌──────────────────┐   1. Offload tool output to refs/*.md (F1)
-│ PostToolUse      │   2. Append node to Mermaid canvas (F1)
-│ hook             │   3. Capture errors/patterns/decisions (L0)
-└──────┬───────────┘   4. Skill extraction if task capture (F3)
+  Agent works (calls MCP tools: recall, capture, codegraph_*)
        │
        ▼
 ┌──────────┐   1. Capture session transcript (L0)
 │ Stop     │   2. Spawn background worker
 │ hook     │   3. Worker: L0 → L1 atoms → L2 scenarios → L3 persona
-└──────────┘   4. Auto-extract skills from task captures (F3)
+└──────────┘
 ```
-
-## Unified Flow (F1 + F2 + F3)
-
-Three features integrated into one continuous flow. Enable with `REMEM_FLOW=full`.
-
-### F1 — Symbolic Short-Term Memory (Mermaid Canvas)
-
-Replaces verbose tool logs with a compact Mermaid graph. PostToolUse offloads raw output to `refs/{sessionKey}/{nodeId}.md` and appends a node to the canvas. PreToolUse injects the Mermaid graph (~100 tokens for 5 steps). Drill down via `ref_read(node_id)`.
-
-**92% token reduction** vs. raw tool logs.
-
-```
-PostToolUse                    PreToolUse
-  │                              │
-  ├─ writeRef(nodeId, raw)       └─ getCanvasContext()
-  │   → refs/{sessionKey}/*.md       → SELECT mermaid_text FROM canvases
-  ├─ appendCanvasNode()              → inject as additionalContext
-  └─ renderCanvasMermaid()
-      → update canvases.mermaid_text
-```
-
-Tools: `canvas_get`, `ref_read`. Files: `src/pipeline/mermaid.ts`, `src/storage/refs.ts`, `src/storage/canvas.ts`.
-
-### F2 — Memory Proxy (HTTP)
-
-For agents without MCP hook support. Intercepts OpenAI/Anthropic API calls, injects memory into system prompt, auto-captures conversations.
-
-```
-Agent → POST :8765/v1/chat/completions
-         ├─ injectMemory() → <remem-mcp> block (recall + skills + canvas)
-         ├─ forwardRequest() → upstream LLM
-         └─ captureConversation() → storage.put()
-```
-
-Endpoints: `POST /v1/chat/completions` (OpenAI), `POST /v1/messages` (Anthropic), `POST /session/init`, `GET /health`. Files: `src/proxy/server.ts`, `src/proxy/inject.ts`, `src/proxy/session.ts`, `src/proxy/capture.ts`.
-
-### F3 — Skill Auto-Extraction
-
-Stop hook detects step-by-step task captures and auto-creates reusable Skills with trigger conditions, steps, and validation rules. Skills are injected into PreToolUse when triggers match the current command.
-
-```
-Task capture (type="task")
-  └─ extractSkillFromCapture()
-       ├─ extractSteps() — numbered/bullet/"Step N:" patterns
-       ├─ extractTriggers() — from tags + content keywords
-       ├─ extractValidationRules() — verify/check/validate patterns
-       └─ putSkill() with auto-versioning
-```
-
-Tools: `skill_create`, `skill_archive`, `skill_get`, `skill_list`, `skill_search`. CLI: `remem-mcp skill-extract`. Files: `src/pipeline/skill.ts`.
-
-See [docs/unified-flow.md](docs/unified-flow.md) for full architecture.
 
 ## File Layout
 
 ```
 src/
-├── index.ts              # Entry: CLI + MCP server + proxy CLI
-├── server.ts             # MCP tool dispatcher (45 tools)
+├── index.ts              # Entry: CLI + MCP server
+├── server.ts             # MCP tool dispatcher (15 tools)
 ├── hooks.ts              # Hook entry point (stdin → handler)
-├── hook-handlers.ts      # SessionStart/UserPromptSubmit/PreToolUse/PostToolUse/Stop logic
+├── hook-handlers.ts      # SessionStart/UserPromptSubmit/Stop logic
 ├── install-skill.ts      # Auto-install SKILL.md to agent config
 │
 ├── codegraph/
@@ -261,22 +192,17 @@ src/
 │
 ├── pipeline/
 │   ├── atom.ts           # L0 → L1 atom extraction
-│   ├── worker.ts         # Background: L1 → L2 → L3 auto-consolidation
-│   ├── mermaid.ts        # F1: MermaidPipeline + LLMMermaidPipeline
-│   └── skill.ts          # F3: SkillExtractionPipeline (rule-based)
-│
-├── proxy/                # F2: Memory Proxy (HTTP)
-│   ├── server.ts         # HTTP server, routing, upstream forwarding
-│   ├── inject.ts         # Memory query + <remem-mcp> block builder
-│   ├── session.ts        # SessionStore (team/agent/task binding)
-│   └── capture.ts        # Auto-capture conversation
+│   └── worker.ts         # Background: L1 → L2 → L3 auto-consolidation
 │
 ├── storage/
-│   ├── sqlite.ts         # DB wrapper + schema migrations (v1→v9)
-│   ├── schema.sql        # DDL: captures, atoms, symbols, calls, canvases, skills...
-│   ├── canvas.ts         # F1: CanvasStorage (Mermaid nodes + edges)
-│   ├── refs.ts           # F1: Context offloading (write/read refs/*.md)
+│   ├── sqlite.ts         # DB wrapper + schema migrations (v1→v11)
+│   ├── schema.sql        # DDL: captures, atoms, symbols, calls, entities, memory_links...
 │   └── types.ts          # TypeScript interfaces
+│
+├── utils/
+│   ├── rrf.ts            # Reciprocal Rank Fusion merge
+│   ├── ulid.ts           # ID generation
+│   └── write-queue.ts    # Async mutex (v11 — for future async backends)
 │
 └── cli/
     ├── consolidate.ts    # Manual L1→L2 consolidation
@@ -285,7 +211,7 @@ src/
     └── worker.ts         # CLI: remem-mcp worker-run
 ```
 
-## Schema (v9)
+## Schema (v11)
 
 ```
 captures (L0)          atoms (L1)           scenarios (L2)
@@ -298,41 +224,99 @@ captures (L0)          atoms (L1)           scenarios (L2)
 │ team_id      │       │ team_id      │     │ team_id      │
 │ trust_state  │       └──────────────┘     └──────────────┘
 │ access_count │
-│ ...          │       persona (L3)        skills (F3)
-└──────────────┘       ┌──────────────┐     ┌──────────────┐
-                       │ key          │     │ id           │
-symbols (CodeGraph)    │ value        │     │ name         │
-┌──────────────┐       │ team_id      │     │ trigger_cond │
-│ id           │       │ user_id      │     │ steps (JSON) │
-│ name         │       └──────────────┘     │ validation   │
-│ kind         │                            │ source_ids   │
-│ file_path    │       calls (CodeGraph)     │ archived     │
-│ line_start   │       ┌──────────────┐     │ team_id      │
-│ line_end     │       │ caller_id    │──▶ symbols.id     └──────────────┘
-│ language     │       │ callee_name  │
-│ module_path  │       │ callee_id    │──▶ symbols.id (resolved)
-│ content_hash │       │ confidence   │    (0.0-1.0)
-│ team_id      │       │ call_type    │    (direct/method/jsx)
-└──────────────┘       │ line         │
-                       │ team_id      │     canvases (F1)
-                       └──────────────┘     ┌──────────────┐
-                                            │ id           │
-                                            │ session_key  │
-                                            │ mermaid_text │ (cached graph)
-                                            │ node_count   │
-                                            │ team_id      │
-                                            └──────┬───────┘
-                                                   │
-                                            canvas_nodes        canvas_edges
-                                            ┌──────────────┐    ┌──────────────┐
-                                            │ id           │    │ id           │
-                                            │ canvas_id    │──▶ │ canvas_id    │
-                                            │ node_id      │    │ from_node    │
-                                            │ label        │    │ to_node      │
-                                            │ seq          │    │ label        │
-                                            │ ref_path     │    └──────────────┘
-                                            │ tool_name    │
-                                            └──────────────┘
+│ tier (v10)   │       persona (L3)        skills
+│ salience(v10)│       ┌──────────────┐     ┌──────────────┐
+└──────┬───────┘       │ key          │     │ id           │
+       │               │ value        │     │ name         │
+  ┌────▼─────┐         │ team_id      │     │ trigger      │
+  │ entities │         │ user_id      │     │ instructions │
+  │  (v10)   │         └──────────────┘     │ team_id      │
+  └──────────┘                              └──────────────┘
+
+memory_links (v11)     symbols (CodeGraph)
+┌──────────────┐       ┌──────────────┐
+│ from_id      │──▶ captures.id       │ id           │
+│ to_id        │──▶ captures.id       │ name         │
+│ link_type    │       │ kind         │
+│ auto         │       │ file_path    │
+│ created_at   │       │ line_start   │
+└──────────────┘       │ line_end     │
+                       │ language     │
+calls (CodeGraph)      │ module_path  │
+┌──────────────┐       │ content_hash │
+│ caller_id    │──▶ symbols.id        │ team_id      │
+│ callee_name  │       └──────────────┘
+│ callee_id    │──▶ symbols.id (resolved)
+│ confidence   │    (0.0-1.0)
+│ call_type    │    (direct/method/jsx)
+│ line         │
+│ team_id      │
+└──────────────┘
+```
+
+## Recall Boost (v10/v11)
+
+Three features adapted from `akitaonrails/ai-memory` research, layered on top of hybrid search:
+
+```
+Query
+  │
+  ▼
+┌──────────────────────────────────────────────────┐
+│  Hybrid Search (BM25 + sqlite-vec + entities)    │
+│  RRF fusion → ranked results                     │
+└───────────────────────┬──────────────────────────┘
+                        │
+                        ▼
+┌──────────────────────────────────────────────────┐
+│  v10: Authority multiplier (0.5x–1.5x)           │
+│  tier=rule +0.2, tier=decision +0.15             │
+│  tags canonical/active/pinned +0.1 each          │
+│  tags superseded/historical -0.15 each            │
+│  Clamped to [0.5, 1.5]                           │
+└───────────────────────┬──────────────────────────┘
+                        │
+                        ▼
+┌──────────────────────────────────────────────────┐
+│  v11: Link-neighbor expansion (1-hop)            │
+│  Top results → expandByLinks → add linked        │
+│  captures with 0.5x decayed RRF score            │
+│  Filters: deleted/rejected/superseded excluded   │
+└───────────────────────┬──────────────────────────┘
+                        │
+                        ▼
+┌──────────────────────────────────────────────────┐
+│  v11: Raw fallback (if 0 results)                │
+│  Broader FTS5 search — includes stale/rejected   │
+│  Still excludes deleted/superseded               │
+└───────────────────────┬──────────────────────────┘
+                        │
+                        ▼
+                   Final results
+```
+
+### v10: Decay/forget sweep
+
+```
+salience = exp(-0.01 * age_days)
+         + 0.3 * log(1 + access_count) * exp(-0.02 * days_since_access)
+
+forgetSweep({ threshold: 0.05, maxAgeDays: 365 })
+  → soft-delete captures below threshold
+  → exempt: evergreen tags, tier=rule/decision, verified (floor 0.3)
+```
+
+### v11: Memory-to-memory links
+
+```
+put() capture
+  │
+  ├─ shared tags (same session, max 5)     → link_type=shared-tag
+  ├─ shared entities (same session, max 5) → link_type=shared-entity
+  └─ session proximity (≤5min, max 3)      → link_type=session-proximity
+
+Manual: linkCaptures(fromId, toId, "cause-effect")
+  → link_type=related|cause-effect|supersedes|prerequisite
 ```
 
 ## Performance (Aug 2026 dogfood)
@@ -346,4 +330,18 @@ Orca TS       3,000    7,632   78,981       28%      705s
 
 Bottleneck: tree-sitter parsing (~300ms/file on large TS files)
 Unresolved calls: stdlib (fmt.Printf, console.log, JSON.stringify)
+```
+
+### Test suite (v10/v11)
+
+```
+v10 features (decay, authority, entity recall)     26 tests
+v11 features (memory links, raw fallback, queue)   17 tests
+Integration (new-features, multi-tenant)           30 tests
+                                                   ────────
+Total                                              73 tests pass
+
+Pre-existing failures (unrelated to v10/v11):
+  search-quality.test.ts    onnxruntime-node broken (native module)
+  e2e-cli-hooks.test.ts     "no such table: captures" (test setup issue)
 ```

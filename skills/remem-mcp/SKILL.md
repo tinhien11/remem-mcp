@@ -7,7 +7,7 @@ You have a long-term memory server via MCP. Use the tools automatically — do n
 
 ## Tools
 
-**Core:** `recall` `capture` `search` `forget` `resolve` `handoff` `adr` `update` `consolidate` `scenario_create` `persona_update`
+**Core:** `recall` `capture` `search` `feedback` `forget` `resolve` `handoff` `adr` `update` `consolidate` `scenario_create` `persona_update`
 **CodeGraph:** `codegraph_search` (auto-indexes on first use) `codegraph_callers` `codegraph_callees` `codegraph_impact` `codegraph_list` `codegraph_detect_changes` (git diff → affected symbols)
 **Wiki:** `wiki_ingest` `wiki_search` `wiki_get` `wiki_outdated`
 **Canvas (F1):** `canvas_get` (Mermaid graph for session) `ref_read` (drill down to raw tool output by node_id)
@@ -20,6 +20,14 @@ Hooks auto-inject BM25-only memory (shallow). **MUST call `recall()` at the star
 ```
 recall({ "query": "<user's question or task>", "mode": "hybrid", "limit": 5 })
 ```
+
+After using recall results, call `feedback` for the most useful result. This creates a flywheel — useful memories rise, unhelpful ones fade.
+
+```
+feedback({ "capture_id": "<id from recall result>", "signal": "helpful" })
+```
+
+**Signals:** `helpful` (answered question) · `not_helpful` (irrelevant) · `stale` (outdated) · `wrong` (incorrect)
 
 ## Rule 2: Capture after non-trivial work
 

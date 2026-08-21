@@ -7,10 +7,12 @@ import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 import { type RankedResult, rrfMerge } from "../utils/rrf.js";
 import { generateId } from "../utils/ulid.js";
+import { WriteQueue } from "../utils/write-queue.js";
 import type {
   AtomEntry,
   CaptureEntry,
   ConflictResult,
+  ScoreDetails,
   DeleteFilter,
   DeleteResult,
   KnowledgeEntry,
@@ -150,7 +152,7 @@ export function stripQueryProperNouns(query: string): string {
 }
 
 /** Current schema version. */
-const CURRENT_SCHEMA_VERSION = 9;
+const CURRENT_SCHEMA_VERSION = 13;
 
 /**
  * Evergreen tags: captures with any of these tags are exempt from temporal
@@ -172,12 +174,114 @@ function isEvergreen(tags: string[] | undefined | null): boolean {
 }
 
 /**
+ * Auto-assign an authority tier based on capture type and tags (v10).
+ * - decision → "decision" (durable, high authority)
+ * - pattern → "rule" (procedural, high authority)
+ * - error/learning/task → "episodic" (default, decays over time)
+ * - Tags can override: "rule", "decision", "canonical" → respective tier
+ */
+function autoAssignTier(type: string, tags: string[] | undefined | null): string {
+  // Tag overrides
+  if (tags) {
+    const lower = tags.map((t) => t.toLowerCase());
+    if (lower.includes("rule") || lower.includes("canonical")) return "rule";
+    if (lower.includes("decision")) return "decision";
+    if (lower.includes("test") || lower.includes("test-fixture")) return "test";
+  }
+  // Type-based defaults
+  if (type === "decision") return "decision";
+  if (type === "pattern") return "rule";
+  return "episodic";
+}
+
+/**
+ * Authority boost tags (v10). Bounded multiplier applied after RRF fusion.
+ * Positive tags boost, negative tags penalize. Never absolute filters.
+ */
+const AUTHORITY_POSITIVE_TAGS: ReadonlySet<string> = new Set([
+  "canonical",
+  "active",
+  "source-of-truth",
+  "pinned",
+]);
+const AUTHORITY_NEGATIVE_TAGS: ReadonlySet<string> = new Set([
+  "superseded",
+  "historical",
+  "test-fixture",
+  "do-not-answer-from",
+]);
+
+/** Compute authority multiplier for a capture (v10). Bounded: 0.5x to 1.5x. */
+function authorityMultiplier(tier: string, tags: string[] | undefined | null): number {
+  let multiplier = 1.0;
+  // Tier boosts
+  if (tier === "rule") multiplier += 0.2;
+  else if (tier === "decision") multiplier += 0.15;
+  else if (tier === "test") multiplier -= 0.1;
+  // Tag boosts
+  if (tags) {
+    for (const tag of tags) {
+      const lower = tag.toLowerCase();
+      if (AUTHORITY_POSITIVE_TAGS.has(lower)) multiplier += 0.1;
+      if (AUTHORITY_NEGATIVE_TAGS.has(lower)) multiplier -= 0.15;
+    }
+  }
+  // Clamp to bounded range
+  return Math.max(0.5, Math.min(1.5, multiplier));
+}
+
+/**
+ * Extract up to 10 significant nouns/entities from text (v10 entity-assisted recall).
+ * Simple heuristic: capitalized words, technical terms, and words >4 chars that
+ * aren't stopwords. No NLP dependency — just lexical extraction.
+ */
+const ENTITY_STOPWORDS: ReadonlySet<string> = new Set([
+  "the", "this", "that", "with", "from", "have", "been", "will", "would",
+  "could", "should", "there", "their", "about", "which", "when", "what",
+  "they", "them", "then", "than", "into", "after", "before", "between",
+  "during", "through", "above", "below", "under", "over", "again",
+  "because", "while", "where", "these", "those", "being", "having",
+  "using", "based", "other", "some", "such", "more", "most", "only",
+  "very", "also", "just", "like", "even", "still", "back", "make",
+  "made", "used", "uses", "using", "want", "need", "know", "think",
+  "thing", "things", "stuff", "code", "file", "files", "line", "lines",
+  "here", "there", "where", "when", "what", "which", "whose",
+]);
+
+export function extractEntities(text: string): string[] {
+  // Extract capitalized words (proper nouns, tech terms)
+  const capsMatches = text.match(/\b[A-Z][a-zA-Z]{2,}\b/g) ?? [];
+  // Extract technical terms: words with hyphens, dots, or all-caps acronyms
+  const techMatches = text.match(/\b[a-z]+[-_][a-z]+\b/gi) ?? [];
+  const acroMatches = text.match(/\b[A-Z]{2,}\b/g) ?? [];
+  // Extract significant lowercase words (>4 chars, not stopwords)
+  const words = text.match(/\b[a-z]{5,}\b/gi) ?? [];
+
+  const candidates = [...capsMatches, ...techMatches, ...acroMatches, ...words];
+  const seen = new Set<string>();
+  const entities: string[] = [];
+
+  for (const candidate of candidates) {
+    const lower = candidate.toLowerCase();
+    if (ENTITY_STOPWORDS.has(lower)) continue;
+    if (seen.has(lower)) continue;
+    seen.add(lower);
+    entities.push(lower);
+    if (entities.length >= 10) break;
+  }
+
+  return entities;
+}
+
+/**
  * SQLite storage backend.
  * Uses better-sqlite3 + sqlite-vec + FTS5.
  * Default backend. Zero setup.
  */
 export class SQLiteBackend implements StorageBackend {
   private db: Database.Database;
+  /** v11: Single-writer queue — serializes all write operations to prevent "database is locked". */
+  private writeQueue: WriteQueue = new WriteQueue();
 
   /** Get the underlying database instance (for CodeGraph/Wiki operations). */
   getDatabase(): Database.Database {
@@ -346,6 +450,41 @@ export class SQLiteBackend implements StorageBackend {
       this.db.transaction(() => {
         this.migrateV8ToV9();
         this.writeSchemaVersion(9);
+      })();
+    }
+    if (currentVersion < 10) {
+      migrationsRan = true;
+      this.backupDatabase(dbPath, 9);
+      this.db.transaction(() => {
+        this.runSchema(); // creates entities table + new columns in captures
+        this.migrateV9ToV10();
+        this.writeSchemaVersion(10);
+      })();
+    }
+    if (currentVersion < 11) {
+      migrationsRan = true;
+      this.backupDatabase(dbPath, 10);
+      this.db.transaction(() => {
+        this.runSchema(); // creates memory_links table
+        this.writeSchemaVersion(11);
+      })();
+    }
+    if (currentVersion < 12) {
+      migrationsRan = true;
+      this.backupDatabase(dbPath, 11);
+      this.db.transaction(() => {
+        this.runSchema(); // creates capture_feedback + audit_log tables + new captures columns
+        this.migrateV11ToV12();
+        this.writeSchemaVersion(12);
+      })();
+    }
+    if (currentVersion < 13) {
+      migrationsRan = true;
+      this.backupDatabase(dbPath, 12);
+      this.db.transaction(() => {
+        this.runSchema(); // creates memory_links with weight column
+        this.migrateV12ToV13();
+        this.writeSchemaVersion(13);
       })();
     }
     this.rebuildFtsIfNeeded(migrationsRan);
@@ -647,9 +786,68 @@ export class SQLiteBackend implements StorageBackend {
     console.error("[remem-mcp] Migrated schema v8 → v9 (CodeGraph call resolution)");
   }
 
+  /** Migrate schema v9 → v10: add tier + salience columns to captures, create entities table, backfill tiers. */
+  private migrateV9ToV10(): void {
+    let addedAny = false;
+    try {
+      this.db.exec("ALTER TABLE captures ADD COLUMN tier TEXT NOT NULL DEFAULT 'episodic'");
+      addedAny = true;
+    } catch {}
+    try {
+      this.db.exec("ALTER TABLE captures ADD COLUMN salience REAL NOT NULL DEFAULT 1.0");
+      addedAny = true;
+    } catch {}
+    if (addedAny) {
+      console.error("[remem-mcp] Added tier + salience columns to captures");
+    }
+    // Backfill tier based on capture type
+    this.db.exec("UPDATE captures SET tier = 'decision' WHERE type = 'decision' AND tier = 'episodic'");
+    this.db.exec("UPDATE captures SET tier = 'rule' WHERE type = 'pattern' AND tier = 'episodic'");
+    this.db.exec("UPDATE captures SET tier = 'test' WHERE type = 'error' AND tags LIKE '%test%' AND tier = 'episodic'");
+    // entities table is created by runSchema() via CREATE TABLE IF NOT EXISTS
+    console.error("[remem-mcp] Migrated schema v9 → v10 (authority tiers + salience + entities table)");
+  }
+
+  /**
+   * v11 → v12: Add expires_at + feedback_salience columns to captures.
+   * Create capture_feedback + audit_log tables (via runSchema).
+   * No data migration needed — new columns have defaults.
+   */
+  private migrateV11ToV12(): void {
+    // Add columns if they don't exist (ALTER TABLE ADD COLUMN is idempotent-safe via check)
+    const cols = this.db.prepare("PRAGMA table_info(captures)").all() as { name: string }[];
+    const colNames = new Set(cols.map((c) => c.name));
+    if (!colNames.has("expires_at")) {
+      this.db.exec("ALTER TABLE captures ADD COLUMN expires_at INTEGER");
+    }
+    if (!colNames.has("feedback_salience")) {
+      this.db.exec("ALTER TABLE captures ADD COLUMN feedback_salience REAL NOT NULL DEFAULT 1.0");
+    }
+    // capture_feedback + mutation_log tables created by runSchema() via CREATE TABLE IF NOT EXISTS
+    console.error("[remem-mcp] Migrated schema v11 → v12 (feedback + mutation log + TTL)");
+  }
+
+  /**
+   * v12 → v13: Add weight column to memory_links for Hebbian co-retrieval strengthening.
+   */
+  private migrateV12ToV13(): void {
+    const cols = this.db.prepare("PRAGMA table_info(memory_links)").all() as { name: string }[];
+    const colNames = new Set(cols.map((c) => c.name));
+    if (!colNames.has("weight")) {
+      this.db.exec("ALTER TABLE memory_links ADD COLUMN weight REAL NOT NULL DEFAULT 1.0");
+    }
+    console.error("[remem-mcp] Migrated schema v12 → v13 (Hebbian link weights)");
+  }
+
   async put(entry: CaptureEntry): Promise<void> {
+    this.putInternal(entry);
+  }
+
+  private putInternal(entry: CaptureEntry): void {
     const contentHash =
       entry.contentHash ?? createHash("sha256").update(entry.content).digest("hex");
+    // Auto-assign tier based on capture type (v10 authority-aware ranking)
+    const tier = autoAssignTier(entry.type, entry.tags);
     // Atomically check + insert to close the TOCTOU race in capture dedup. Callers
     // (handleCapture, handoff, adr, sdk) first call findByContentHash and then put;
     // without a transaction two concurrent captures with identical content could
@@ -668,8 +866,8 @@ export class SQLiteBackend implements StorageBackend {
       if (dup) return false;
       this.db
         .prepare(
-          `INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata, team_id, user_id, task_id, trust_state)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata, team_id, user_id, task_id, trust_state, tier)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           entry.id,
@@ -685,6 +883,7 @@ export class SQLiteBackend implements StorageBackend {
           entry.userId ?? null,
           entry.taskId ?? null,
           entry.trustState ?? "candidate",
+          tier,
         );
       // Store role-based messages inside the same transaction so a crash can't
       // orphan messages under a capture that didn't commit.
@@ -699,7 +898,22 @@ export class SQLiteBackend implements StorageBackend {
       }
       return true;
     });
-    putTx();
+    const inserted = putTx();
+    // v10: Extract and store entities for entity-assisted recall
+    // v11: Auto-link to existing captures via shared tags/entities/session-proximity
+    if (inserted) {
+      try {
+        const entities = extractEntities(entry.content);
+        if (entities.length > 0) {
+          this.putEntitiesInternal(entry.id, entities);
+        }
+        this.autoLinkCapture(entry.id, entry.tags, entities, entry.sessionKey);
+      } catch {
+        // non-fatal — entity extraction + auto-linking are supplementary
+      }
+      // v12: Audit log
+      this.recordAuditInternal("put", entry.id, { type: entry.type, tags: entry.tags }, entry.agentId);
+    }
   }
 
   async putVector(id: string, embedding: number[]): Promise<void> {
@@ -910,7 +1124,10 @@ export class SQLiteBackend implements StorageBackend {
     queryEmbedding: number[] | null,
     opts: QueryOptions,
   ): Promise<SearchResult[]> {
-    const { mode, limit, offset, sessionKey, filters } = opts;
+    const { mode, limit, offset, sessionKey, filters, explain } = opts;
+
+    // v12: Per-hit score details for explain mode
+    const explainMap = new Map<string, ScoreDetails>();
 
     // Detect temporal intent: queries asking for "current/latest/now" state
     // should strongly prefer recent memories over older ones with better keyword match.
@@ -959,8 +1176,58 @@ export class SQLiteBackend implements StorageBackend {
       bm25Results = this.bm25Search(query, bm25CandidateLimit, sessionKey, filters);
     }
 
+    // v10: Entity-assisted recall — extract entities from query, search entities table
+    let entityResults: RankedResult[] = [];
+    let queryEntities: string[] = [];
+    if (mode === "hybrid" || mode === "keyword") {
+      try {
+        queryEntities = extractEntities(query);
+        if (queryEntities.length > 0) {
+          entityResults = this.searchByEntities(
+            queryEntities,
+            limit * 2,
+            sessionKey,
+            filters ? { teamId: filters.teamId, userId: filters.userId, taskId: filters.taskId, type: filters.type } : undefined,
+          );
+        }
+      } catch {
+        // non-fatal — entity search is supplementary
+      }
+    }
+
+    // v12: Populate explain map with per-stream ranks
+    if (explain) {
+      bm25Results.forEach((r, i) => {
+        explainMap.set(r.id, { ...(explainMap.get(r.id) ?? {}), bm25_rank: i + 1, bm25_score: r.score });
+      });
+      vecResults.forEach((r, i) => {
+        explainMap.set(r.id, { ...(explainMap.get(r.id) ?? {}), vector_rank: i + 1, vector_score: r.score });
+      });
+      entityResults.forEach((r, i) => {
+        explainMap.set(r.id, { ...(explainMap.get(r.id) ?? {}), entity_rank: i + 1, entity_matches: queryEntities });
+      });
+    }
+
     if (mode === "keyword") {
-      return this.fetchEntries(bm25Results, limit, offset, temporalIntent);
+      // Merge BM25 + entity results via simple RRF
+      const allResults = [...bm25Results, ...entityResults];
+      if (entityResults.length > 0) {
+        // Simple RRF merge: combine by rank
+        const scores = new Map<string, number>();
+        const sortedBm25 = [...bm25Results].sort((a, b) => a.score - b.score);
+        sortedBm25.forEach((r, i) => {
+          scores.set(r.id, (scores.get(r.id) ?? 0) + 1 / (40 + i + 1));
+        });
+        entityResults.forEach((r, i) => {
+          scores.set(r.id, (scores.get(r.id) ?? 0) + r.score);
+        });
+        const merged = [...scores.entries()]
+          .map(([id, score]) => ({ id, score }))
+          .sort((a, b) => b.score - a.score)
+          .slice(0, limit + offset);
+        return this.fetchEntriesById(merged.slice(offset, offset + limit), temporalIntent, false, explain ? explainMap : undefined);
+      }
+      return this.fetchEntriesById((allResults.length > 0 ? allResults : bm25Results).slice(offset, offset + limit), temporalIntent, false, explain ? explainMap : undefined);
     }
     if (mode === "vector") {
       // vecResults carry raw L2 distance (lower = better). fetchEntriesById expects
@@ -985,6 +1252,15 @@ export class SQLiteBackend implements StorageBackend {
       // that rank low in vector distance but are the most recent captures.
       const rrfPoolSize = Math.min(Math.max((limit + offset) * 20, 100), 500);
       const fused = rrfMerge(bm25Results, vecResults, rrfPoolSize);
+      // v10: Add entity-match results to the fusion
+      if (entityResults.length > 0) {
+        const entityIds = new Set(entityResults.map((e) => e.id));
+        for (const e of entityResults) {
+          if (!fused.some((f) => f.id === e.id)) {
+            fused.push(e);
+          }
+        }
+      }
       const fusedIds = new Set(fused.map((f) => f.id));
       // Include all vector results not already in the RRF fusion.
       const extraVec = vecResults
@@ -994,9 +1270,121 @@ export class SQLiteBackend implements StorageBackend {
       const scored = await this.fetchEntriesById(paged, temporalIntent, true);
       return scored.slice(0, limit);
     }
+    // v10: Add entity results to the RRF fusion before paging
     const fused = rrfMerge(bm25Results, vecResults, limit + offset);
+    if (entityResults.length > 0) {
+      for (const e of entityResults) {
+        if (!fused.some((f) => f.id === e.id)) {
+          fused.push(e);
+        }
+      }
+      fused.sort((a, b) => b.score - a.score);
+    }
+    // v11: Link-neighbor expansion — expand top results via memory_links (1-hop)
+    const topIds = fused.slice(0, Math.min(limit, 20)).map((f) => f.id);
+    if (topIds.length > 0) {
+      const expanded = this.expandByLinks(topIds, limit * 2);
+      const fusedIds = new Set(fused.map((f) => f.id));
+      for (const exp of expanded) {
+        if (!fusedIds.has(exp.id)) {
+          fused.push(exp);
+          // v12: Record link provenance for explain mode
+          if (explain) {
+            const sourceId = topIds.find((id) =>
+              this.getLinksFrom(id).some((l) => l.to_id === exp.id) ||
+              this.getLinksTo(id).some((l) => l.from_id === exp.id)
+            );
+            explainMap.set(exp.id, {
+              ...(explainMap.get(exp.id) ?? {}),
+              link_provenance: sourceId ? `expanded from ${sourceId}` : "link-neighbor",
+            });
+          }
+        }
+      }
+      fused.sort((a, b) => b.score - a.score);
+    }
     const paged = fused.slice(offset, offset + limit);
-    return this.fetchEntriesById(paged, temporalIntent);
+    const results = await this.fetchEntriesById(paged, temporalIntent, false, explain ? explainMap : undefined);
+
+    // v11: Raw observation fallback — if no results, search raw captures
+    // including stale/rejected (but not deleted). This catches cases where
+    // the compiled/filtered search misses but raw content matches.
+    if (results.length === 0 && mode === "hybrid") {
+      const rawResults = this.rawFallbackSearch(query, limit, sessionKey, filters);
+      if (rawResults.length > 0) {
+        if (explain) {
+          rawResults.forEach((r) => {
+            explainMap.set(r.id, { ...(explainMap.get(r.id) ?? {}), raw_fallback: true });
+          });
+        }
+        return this.fetchEntriesById(rawResults.slice(0, limit), temporalIntent, false, explain ? explainMap : undefined);
+      }
+    }
+    // v13: Hebbian co-retrieval strengthening — strengthen links between co-occurring results
+    if (results.length >= 2) {
+      try {
+        this.strengthenLinksOnCoRetrieval(results.map((r) => r.entry.id));
+      } catch {
+        // non-fatal — Hebbian strengthening is supplementary
+      }
+    }
+    return results;
+  }
+
+  /**
+   * v11: Raw observation fallback search.
+   * Searches FTS5 without trust_state filter — includes stale and rejected.
+   * Still excludes soft-deleted and superseded (those are intentionally removed).
+   */
+  private rawFallbackSearch(
+    query: string,
+    limit: number,
+    sessionKey?: string,
+    filters?: SearchFilters,
+  ): { id: string; score: number }[] {
+    const ftsQuery = this.escapeFtsQuery(query);
+    if (!ftsQuery) return [];
+    const conditions = ["c.deleted_at IS NULL", "c.superseded_by IS NULL"];
+    const params: unknown[] = [];
+    if (sessionKey) {
+      conditions.push("c.session_key = ?");
+      params.push(sessionKey);
+    }
+    if (filters?.teamId) {
+      conditions.push("c.team_id = ?");
+      params.push(filters.teamId);
+    }
+    if (filters?.userId) {
+      conditions.push("c.user_id = ?");
+      params.push(filters.userId);
+    }
+    if (filters?.taskId) {
+      conditions.push("c.task_id = ?");
+      params.push(filters.taskId);
+    }
+    if (filters?.type) {
+      conditions.push("c.type = ?");
+      params.push(filters.type);
+    }
+    try {
+      const rows = this.db
+        .prepare(
+          `SELECT fts.id as id, bm25(captures_fts) as score
+           FROM captures_fts fts
+           JOIN captures c ON c.id = fts.id
+           WHERE captures_fts MATCH ? AND ${conditions.join(" AND ")}
+           ORDER BY score ASC
+           LIMIT ?`,
+        )
+        .all(ftsQuery, ...params, limit) as { id: string; score: number }[];
+      // Convert BM25 (negative, lower=better) to positive RRF-style score
+      return rows.map((r, i) => ({
+        id: r.id,
+        score: 1 / (40 + i + 1),
+      }));
+    } catch {
+      return [];
+    }
   }
 
   /** Run a BM25 search via FTS5. */
@@ -1153,6 +1541,7 @@ export class SQLiteBackend implements StorageBackend {
     results: { id: string; score: number }[],
     temporalIntent: boolean = false,
     scaleBoost: boolean = false,
+    explainMap?: Map<string, ScoreDetails>,
   ): Promise<SearchResult[]> {
     if (results.length === 0) return [];
     const ids = results.map((r) => r.id);
@@ -1247,7 +1636,29 @@ export class SQLiteBackend implements StorageBackend {
             : 1.0; // No access data → neutral
         const accessScored =
           biasedScore >= 0 ? biasedScore * accessBoost : biasedScore / accessBoost;
-        return { entry: rowToEntry(row), score: accessScored };
+        // v10: Authority-aware ranking — bounded multiplier based on tier + tags.
+        // Applied after all other boosts, before final sort. Clamped to 0.5x-1.5x.
+        const tier = (row as { tier?: string }).tier ?? "episodic";
+        const authBoost = authorityMultiplier(tier, tags);
+        const authScored =
+          accessScored >= 0 ? accessScored * authBoost : accessScored / authBoost;
+        // v12: Feedback salience multiplier (0.1x–2.0x) from helpful/not_helpful/stale/wrong signals.
+        const feedbackSalience = (row as { feedback_salience?: number }).feedback_salience ?? 1.0;
+        const feedbackScored =
+          feedbackSalience !== 1.0
+            ? authScored >= 0
+              ? authScored * feedbackSalience
+              : authScored / feedbackSalience
+            : authScored;
+        // v12: Attach score details for explain mode
+        const scoreDetails = explainMap
+          ? {
+              ...(explainMap.get(row.id) ?? {}),
+              authority_multiplier: authBoost,
+              feedback_salience: feedbackSalience,
+            }
+          : undefined;
+        return { entry: rowToEntry(row), score: feedbackScored, scoreDetails };
       })
       .filter((r): r is SearchResult => r !== null)
       // For temporal-intent queries ("currently", "now", "latest"), filter out stale
@@ -1965,6 +2376,515 @@ export class SQLiteBackend implements StorageBackend {
       // refs dir doesn't exist yet
     }
     return null;
+  }
+
+  // ─── v10: Decay/forget sweep ──────────────────────────────────
+
+  /**
+   * Run a forget sweep: compute salience for all non-deleted, non-evergreen captures,
+   * then soft-delete (set deleted_at) those below the threshold.
+   *
+   * Salience formula (adapted from ai-memory):
+   *   salience = exp(-lambda * age_days) + sigma * log(1 + access_count) * exp(-mu * days_since_access)
+   *
+   * - lambda: age decay rate (default 0.01, ~70 day half-life)
+   * - sigma: access frequency weight (default 0.3)
+   * - mu: access recency decay (default 0.02, ~35 day half-life)
+   *
+   * Evergreen tags and tier=rule/decision captures are exempt (salience stays 1.0).
+   * Verified captures get a floor of 0.3.
+   */
+  async forgetSweep(opts: {
+    dryRun?: boolean;
+    threshold?: number;
+    maxAgeDays?: number;
+  } = {}): Promise<{ swept: number; remaining: number; checked: number }> {
+    const dryRun = opts.dryRun ?? false;
+    const threshold = opts.threshold ?? 0.05;
+    const maxAgeDays = opts.maxAgeDays ?? 365;
+    const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;
+
+    // Decay parameters
+    const lambda = 0.01;
+    const sigma = 0.3;
+    const mu = 0.02;
+    const now = Date.now();
+
+    // Select candidates: non-deleted, not evergreen, older than maxAgeDays
+    // v12: Also select TTL-expired captures (expires_at < now) — these are hard-deleted regardless of salience
+    const rows = this.db
+      .prepare(
+        `SELECT id, type, tags, created_at, access_count, last_accessed_at, trust_state, tier, expires_at, feedback_salience
+         FROM captures
+         WHERE deleted_at IS NULL AND (created_at < ? OR (expires_at IS NOT NULL AND expires_at < ?))`,
+      )
+      .all(now - maxAgeMs, now) as {
+        id: string;
+        type: string;
+        tags: string | null;
+        created_at: number;
+        access_count: number;
+        last_accessed_at: number | null;
+        trust_state: string;
+        tier: string;
+        expires_at: number | null;
+        feedback_salience: number;
+      }[];
+
+    let swept = 0;
+    let remaining = 0;
+    const toDelete: string[] = [];
+
+    for (const row of rows) {
+      // v12: TTL-expired captures are hard-deleted regardless of salience/tier
+      if (row.expires_at !== null && row.expires_at < now) {
+        toDelete.push(row.id);
+        swept++;
+        continue;
+      }
+
+      const tags = row.tags ? (JSON.parse(row.tags) as string[]) : [];
+      const evergreen = isEvergreen(tags);
+      // Rule and decision tiers are exempt from sweep
+      if (evergreen || row.tier === "rule" || row.tier === "decision") {
+        remaining++;
+        continue;
+      }
+
+      const ageDays = (now - row.created_at) / (24 * 60 * 60 * 1000);
+      const daysSinceAccess = row.last_accessed_at
+        ? (now - row.last_accessed_at) / (24 * 60 * 60 * 1000)
+        : ageDays;
+
+      const ageTerm = Math.exp(-lambda * ageDays);
+      const accessTerm =
+        sigma * Math.log(1 + (row.access_count ?? 0)) * Math.exp(-mu * daysSinceAccess);
+      let salience = ageTerm + accessTerm;
+
+      // Verified captures get a floor
+      if (row.trust_state === "verified") {
+        salience = Math.max(salience, 0.3);
+      }
+
+      // v12: Apply feedback salience multiplier
+      salience *= row.feedback_salience ?? 1.0;
+
+      if (salience < threshold) {
+        toDelete.push(row.id);
+        swept++;
+      } else {
+        remaining++;
+      }
+    }
+
+    if (!dryRun && toDelete.length > 0) {
+      const deleteStmt = this.db.prepare(
+        "UPDATE captures SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
+      );
+      const tx = this.db.transaction(() => {
+        for (const id of toDelete) {
+          deleteStmt.run(now, id);
+          // v12: Audit log
+          this.recordAuditInternal("forget", id, { reason: "salience_below_threshold_or_ttl_expired" });
+        }
+      });
+      tx();
+    }
+
+    return { swept, remaining, checked: rows.length };
+  }
+
+  // ─── v10: Entity-assisted recall ──────────────────────────────
+
+  /** Store extracted entities for a capture (replaces existing). */
+  putEntities(captureId: string, entities: string[]): void {
+    this.putEntitiesInternal(captureId, entities);
+  }
+
+  /** Internal entity storage — called from within putInternal. */
+  private putEntitiesInternal(captureId: string, entities: string[]): void {
+    if (entities.length === 0) return;
+    const tx = this.db.transaction(() => {
+      this.db.prepare("DELETE FROM entities WHERE capture_id = ?").run(captureId);
+      const stmt = this.db.prepare(
+        "INSERT INTO entities (capture_id, entity, created_at) VALUES (?, ?, ?)",
+      );
+      const now = Date.now();
+      for (const entity of entities.slice(0, 10)) {
+        stmt.run(captureId, entity.toLowerCase(), now);
+      }
+    });
+    tx();
+  }
+
+  /** Get entities for a capture. */
+  getEntities(captureId: string): string[] {
+    const rows = this.db
+      .prepare("SELECT entity FROM entities WHERE capture_id = ? ORDER BY id")
+      .all(captureId) as { entity: string }[];
+    return rows.map((r) => r.entity);
+  }
+
+  /**
+   * Search captures by entity match (lexical).
+   * Returns capture IDs ranked by number of matching entities (RRF-style).
+   */
+  searchByEntities(
+    entities: string[],
+    limit: number,
+    sessionKey?: string,
+    filters?: { teamId?: string; userId?: string; taskId?: string; type?: string },
+  ): { id: string; score: number }[] {
+    if (entities.length === 0) return [];
+    const normalized = entities.map((e) => e.toLowerCase());
+    const placeholders = normalized.map(() => "?").join(",");
+    const params: unknown[] = [...normalized];
+    const conditions: string[] = [
+      "c.deleted_at IS NULL",
+      "c.trust_state != 'rejected'",
+      "c.superseded_by IS NULL",
+    ];
+    if (sessionKey) {
+      conditions.push("c.session_key = ?");
+      params.push(sessionKey);
+    }
+    if (filters?.teamId) {
+      conditions.push("c.team_id = ?");
+      params.push(filters.teamId);
+    }
+    if (filters?.userId) {
+      conditions.push("c.user_id = ?");
+      params.push(filters.userId);
+    }
+    if (filters?.taskId) {
+      conditions.push("c.task_id = ?");
+      params.push(filters.taskId);
+    }
+    if (filters?.type) {
+      conditions.push("c.type = ?");
+      params.push(filters.type);
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT e.capture_id as id, COUNT(*) as match_count
+         FROM entities e
+         JOIN captures c ON c.id = e.capture_id
+         WHERE e.entity IN (${placeholders})
+           AND ${conditions.join(" AND ")}
+         GROUP BY e.capture_id
+         ORDER BY match_count DESC
+         LIMIT ?`,
+      )
+      .all(...params, limit) as { id: string; match_count: number }[];
+
+    // RRF-style scoring: rank by match count (more matches = higher score)
+    return rows.map((r, i) => ({
+      id: r.id,
+      score: 1 / (40 + i + 1), // same k as RRF
+    }));
+  }
+
+  // ─── v11: Memory-to-memory links ──────────────────────────────
+
+  /** Link two captures. Auto-links use auto=1. */
+  linkCaptures(fromId: string, toId: string, linkType: string, auto: boolean = false): void {
+    if (fromId === toId) return; // no self-links
+    try {
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO memory_links (from_id, to_id, link_type, auto, created_at)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(fromId, toId, linkType, auto ? 1 : 0, Date.now());
+      // v12: Audit log
+      this.recordAuditInternal("link", fromId, { toId, linkType, auto });
+    } catch {
+      // non-fatal — link already exists or capture missing
+    }
+  }
+
+  /** Get links from a capture (outbound). */
+  getLinksFrom(captureId: string): { to_id: string; link_type: string; auto: number }[] {
+    return this.db
+      .prepare("SELECT to_id, link_type, auto FROM memory_links WHERE from_id = ?")
+      .all(captureId) as { to_id: string; link_type: string; auto: number }[];
+  }
+
+  /** Get links to a capture (inbound). */
+  getLinksTo(captureId: string): { from_id: string; link_type: string; auto: number }[] {
+    return this.db
+      .prepare("SELECT from_id, link_type, auto FROM memory_links WHERE to_id = ?")
+      .all(captureId) as { from_id: string; link_type: string; auto: number }[];
+  }
+
+  /**
+   * Expand capture IDs via link-neighbor traversal (1-hop).
+   * Returns linked capture IDs with decayed score (0.5x of original).
+   * Only includes non-deleted, non-rejected captures.
+   */
+  expandByLinks(ids: string[], limit: number): { id: string; score: number }[] {
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => "?").join(",");
+    // Get both outbound and inbound links, dedupe. v13: include weight.
+    const rows = this.db
+      .prepare(
+        `SELECT linked_id as id, MAX(weight) as weight FROM (
+          SELECT to_id as linked_id, weight FROM memory_links WHERE from_id IN (${placeholders})
+          UNION
+          SELECT from_id as linked_id, weight FROM memory_links WHERE to_id IN (${placeholders})
+        )
+        WHERE linked_id NOT IN (${placeholders})
+        GROUP BY linked_id
+        ORDER BY weight DESC
+        LIMIT ?`,
+      )
+      .all(...ids, ...ids, ...ids, limit) as { id: string; weight: number }[];
+
+    // Filter to non-deleted, non-rejected, non-superseded captures
+    if (rows.length === 0) return [];
+    const validPlaceholders = rows.map(() => "?").join(",");
+    const validRows = this.db
+      .prepare(
+        `SELECT id FROM captures WHERE id IN (${validPlaceholders})
+         AND deleted_at IS NULL AND trust_state != 'rejected' AND superseded_by IS NULL`,
+      )
+      .all(...rows.map((r) => r.id)) as { id: string }[];
+    const validIds = new Set(validRows.map((r) => r.id));
+
+    // Score: decayed RRF score scaled by link weight (v13: Hebbian weight)
+    return rows
+      .filter((r) => validIds.has(r.id))
+      .map((r, i) => ({
+        id: r.id,
+        score: (0.5 * (r.weight ?? 1.0)) / (40 + i + 1), // decayed RRF × weight
+      }));
+  }
+
+  /**
+   * v13: Hebbian co-retrieval strengthening.
+   * When captures co-occur in search results, strengthen links between them.
+   * Creates links if they don't exist, increments weight if they do.
+   */
+  strengthenLinksOnCoRetrieval(ids: string[]): void {
+    if (ids.length < 2) return;
+    const now = Date.now();
+    const linkType = "co-retrieval";
+    // v13: Hebbian co-retrieval strengthening.
+    // Use INSERT OR IGNORE + UPDATE to handle both new and existing links.
+    const insertStmt = this.db.prepare(
+      `INSERT OR IGNORE INTO memory_links (from_id, to_id, link_type, auto, weight, created_at)
+       VALUES (?, ?, ?, 1, 1.0, ?)`,
+    );
+    const updateStmt = this.db.prepare(
+      `UPDATE memory_links SET weight = weight + 0.1 WHERE from_id = ? AND to_id = ? AND link_type = ?`,
+    );
+    // Create/strengthen links for all pairs (limit to top 10 to avoid O(n²) blowup)
+    const topIds = ids.slice(0, 10);
+    for (let i = 0; i < topIds.length; i++) {
+      for (let j = i + 1; j < topIds.length; j++) {
+        // Always store with smaller id first to avoid duplicate pairs
+        const [a, b] = topIds[i] < topIds[j] ? [topIds[i], topIds[j]] : [topIds[j], topIds[i]];
+        try {
+          insertStmt.run(a, b, linkType, now);
+          updateStmt.run(a, b, linkType);
+        } catch {
+          // non-fatal
+        }
+      }
+    }
+  }
+
+  /**
+   * Auto-link a new capture to existing captures based on shared tags and entities.
+   * Called after put() + entity extraction.
+   */
+  private autoLinkCapture(captureId: string, tags: string[], entities: string[], sessionKey: string): void {
+    const now = Date.now();
+    const linkStmt = this.db.prepare(
+      `INSERT OR IGNORE INTO memory_links (from_id, to_id, link_type, auto, created_at)
+       VALUES (?, ?, ?, 1, ?)`,
+    );
+
+    // 1. Link by shared tags (same session, non-deleted)
+    if (tags.length > 0) {
+      const tagPlaceholders = tags.map(() => "?").join(",");
+      const tagRows = this.db
+        .prepare(
+          `SELECT DISTINCT c.id as other_id FROM captures c
+           WHERE c.id != ? AND c.session_key = ? AND c.deleted_at IS NULL
+             AND c.tags IS NOT NULL
+             AND (c.tags LIKE ${tags.map(() => "?").join(" OR c.tags LIKE ")})`,
+        )
+        .all(
+          captureId,
+          sessionKey,
+          ...tags.map((t) => `%"${t}"%`),
+        ) as { other_id: string }[];
+      for (const row of tagRows.slice(0, 5)) {
+        // Max 5 tag links
+        linkStmt.run(captureId, row.other_id, "shared-tag", now);
+      }
+    }
+
+    // 2. Link by shared entities (same session)
+    if (entities.length > 0) {
+      const entityPlaceholders = entities.map(() => "?").join(",");
+      const entityRows = this.db
+        .prepare(
+          `SELECT DISTINCT e.capture_id as other_id FROM entities e
+           JOIN captures c ON c.id = e.capture_id
+           WHERE e.capture_id != ? AND c.session_key = ? AND c.deleted_at IS NULL
+             AND e.entity IN (${entityPlaceholders})`,
+        )
+        .all(captureId, sessionKey, ...entities) as { other_id: string }[];
+      for (const row of entityRows.slice(0, 5)) {
+        // Max 5 entity links
+        linkStmt.run(captureId, row.other_id, "shared-entity", now);
+      }
+    }
+
+    // 3. Link by session proximity (captures within 5 minutes in same session)
+    const proximityRows = this.db
+      .prepare(
+        `SELECT id as other_id FROM captures
+         WHERE id != ? AND session_key = ? AND deleted_at IS NULL
+           AND ABS(created_at - ?) < 300000
+         ORDER BY ABS(created_at - ?) ASC LIMIT 3`,
+      )
+      .all(captureId, sessionKey, now, now) as { other_id: string }[];
+    for (const row of proximityRows) {
+      linkStmt.run(captureId, row.other_id, "session-proximity", now);
+    }
+  }
+
+  // ─── v12: Feedback + audit + TTL ──────────────────────────────
+
+  /**
+   * Record feedback signal for a capture. Adjusts feedback_salience multiplier.
+   * - helpful: +0.1 (max 2.0)
+   * - not_helpful: -0.1 (min 0.1)
+   * - stale: floor salience at 0.3
+   * - wrong: floor salience at 0.1
+   */
+  recordFeedback(
+    captureId: string,
+    signal: "helpful" | "not_helpful" | "stale" | "wrong",
+    reason?: string,
+    agentId?: string,
+  ): void {
+    const now = Date.now();
+    this.db.transaction(() => {
+      // Insert feedback row
+      this.db
+        .prepare(
+          "INSERT INTO capture_feedback (capture_id, signal, reason, agent_id, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(captureId, signal, reason ?? null, agentId ?? null, now);
+
+      // Adjust feedback_salience multiplier
+      const row = this.db
+        .prepare("SELECT feedback_salience FROM captures WHERE id = ?")
+        .get(captureId) as { feedback_salience: number } | undefined;
+      if (!row) return;
+
+      let newSalience = row.feedback_salience;
+      if (signal === "helpful") {
+        newSalience = Math.min(2.0, newSalience + 0.1);
+      } else if (signal === "not_helpful") {
+        newSalience = Math.max(0.1, newSalience - 0.1);
+      } else if (signal === "stale") {
+        newSalience = Math.min(newSalience, 0.3);
+      } else if (signal === "wrong") {
+        newSalience = Math.min(newSalience, 0.1);
+      }
+
+      this.db
+        .prepare("UPDATE captures SET feedback_salience = ? WHERE id = ?")
+        .run(newSalience, captureId);
+
+      // Audit log
+      this.recordAuditInternal("feedback", captureId, { signal, reason, newSalience }, agentId);
+    })();
+  }
+
+  /** Get feedback signals for a capture. */
+  getFeedback(captureId: string): { signal: string; reason: string | null; created_at: number }[] {
+    return this.db
+      .prepare(
+        "SELECT signal, reason, created_at FROM capture_feedback WHERE capture_id = ? ORDER BY id DESC",
+      )
+      .all(captureId) as { signal: string; reason: string | null; created_at: number }[];
+  }
+
+  /** Record a mutation log entry. Public API. */
+  recordAudit(action: string, captureId: string | null, details?: unknown, agentId?: string): void {
+    this.recordAuditInternal(action, captureId, details, agentId);
+  }
+
+  /** Internal mutation log — called from within transactions. */
+  private recordAuditInternal(
+    action: string,
+    captureId: string | null,
+    details?: unknown,
+    agentId?: string,
+  ): void {
+    try {
+      this.db
+        .prepare(
+          "INSERT INTO mutation_log (action, capture_id, details, agent_id, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(
+          action,
+          captureId,
+          details ? JSON.stringify(details) : null,
+          agentId ?? null,
+          Date.now(),
+        );
+    } catch {
+      // non-fatal — mutation log is supplementary
+    }
+  }
+
+  /** Query mutation log. */
+  queryAudit(opts: {
+    action?: string;
+    captureId?: string;
+    since?: number;
+    limit?: number;
+  }): {
+    id: number;
+    action: string;
+    capture_id: string | null;
+    details: string | null;
+    agent_id: string | null;
+    created_at: number;
+  }[] {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    if (opts.action) {
+      conditions.push("action = ?");
+      params.push(opts.action);
+    }
+    if (opts.captureId) {
+      conditions.push("capture_id = ?");
+      params.push(opts.captureId);
+    }
+    if (opts.since) {
+      conditions.push("created_at >= ?");
+      params.push(opts.since);
+    }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const limit = opts.limit ?? 100;
+    return this.db
+      .prepare(`SELECT * FROM mutation_log ${where} ORDER BY created_at DESC LIMIT ?`)
+      .all(...params, limit) as {
+      id: number;
+      action: string;
+      capture_id: string | null;
+      details: string | null;
+      agent_id: string | null;
+      created_at: number;
+    }[];
   }
 }
 

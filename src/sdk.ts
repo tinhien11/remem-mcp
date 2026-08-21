@@ -146,7 +146,10 @@ export class Memory {
     await this.storage.put(entry);
 
     try {
-      const embedding = await this.embedder.embed(redactedContent);
+      // v13: Contextual retrieval — prepend type + tags as preamble before embedding.
+      // Content stays pristine for FTS; only the vector sees the enriched text.
+      const contextualContent = this.buildContextualPreamble(type, tags) + redactedContent;
+      const embedding = await this.embedder.embed(contextualContent);
       await this.storage.putVector(id, embedding);
     } catch {
       // Embedding is optional
@@ -209,11 +212,12 @@ export class Memory {
   /** Search with filters. Searches project + global (if configured). */
   async search(
     query: string,
-    opts?: { mode?: SearchMode; filters?: SearchFilters; limit?: number; sessionKey?: string },
+    opts?: { mode?: SearchMode; filters?: SearchFilters; limit?: number; sessionKey?: string; explain?: boolean },
   ): Promise<SearchResult[]> {
     const limit = Math.min(opts?.limit ?? 20, 100);
     const mode = opts?.mode ?? "hybrid";
     const sessionKey = opts?.sessionKey ?? this.sessionKey;
+    const explain = opts?.explain ?? false;
 
     let queryEmbedding: number[] | null = null;
     if (mode === "hybrid" || mode === "vector") {
@@ -231,6 +235,7 @@ export class Memory {
         offset: 0,
         mode,
         filters: opts?.filters,
+        explain,
       });
       let globalResults: SearchResult[] = [];
       try {
@@ -240,6 +245,7 @@ export class Memory {
           offset: 0,
           mode,
           filters: opts?.filters,
+          explain,
         });
       } catch {
         // Global search failure is non-fatal
@@ -257,6 +263,7 @@ export class Memory {
       offset: 0,
       mode,
       filters: opts?.filters,
+      explain,
     });
   }
 
@@ -265,9 +272,54 @@ export class Memory {
     return this.embedder.embed(text);
   }
 
+  /**
+   * v13: Build a contextual preamble for embedding (Anthropic contextual retrieval technique).
+   * Prepends type + tags to give the vector model more context about what the capture is.
+   * The raw content stays pristine for FTS5 lexical search.
+   */
+  private buildContextualPreamble(type: string, tags: string[]): string {
+    const parts: string[] = [];
+    if (type && type !== "conversation") {
+      parts.push(`[${type}]`);
+    }
+    if (tags && tags.length > 0) {
+      parts.push(`tags: ${tags.join(", ")}`);
+    }
+    return parts.length > 0 ? parts.join(" ") + ". " : "";
+  }
+
   /** Delete a capture by ID. */
   async forget(id: string): Promise<DeleteResult> {
     return this.storage.delete(id);
+  }
+
+  /** Get a capture by ID. Returns null if not found or deleted. */
+  async get(id: string): Promise<CaptureEntry | null> {
+    return this.storage.get(id);
+  }
+
+  /** Run forget sweep to evict low-salience and TTL-expired captures. */
+  async forgetSweep(opts?: { dryRun?: boolean; threshold?: number; maxAgeDays?: number }) {
+    return this.storage.forgetSweep(opts ?? {});
+  }
+
+  /** Record feedback for a capture (v12). Adjusts salience multiplier. */
+  async feedback(
+    captureId: string,
+    signal: "helpful" | "not_helpful" | "stale" | "wrong",
+    reason?: string,
+  ): Promise<void> {
+    this.storage.recordFeedback(captureId, signal, reason, "sdk");
+  }
+
+  /** Get feedback signals for a capture (v12). */
+  async getFeedback(captureId: string): Promise<{ signal: string; reason: string | null; created_at: number }[]> {
+    return this.storage.getFeedback(captureId);
+  }
+
+  /** Query mutation log (v12). */
+  async queryAudit(opts: { action?: string; captureId?: string; since?: number; limit?: number }) {
+    return this.storage.queryAudit(opts);
   }
 
   /** Update an existing capture's content, tags, type, or trust state. */

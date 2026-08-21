@@ -317,6 +317,38 @@ const TOOLS: Tool[] = [
     },
   },
   {
+    name: "feedback",
+    description:
+      "Record a quality signal for a recalled memory. Call this AFTER using a recall result: " +
+      "use 'helpful' if the memory answered your question, 'not_helpful' if it was irrelevant, " +
+      "'stale' if the information is outdated, or 'wrong' if it is incorrect. " +
+      "This creates a feedback flywheel — useful memories rise, unhelpful ones fade. " +
+      "Do not call this for memories you have not actually used.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        capture_id: {
+          type: "string",
+          description: "The capture ID from a recall/search result.",
+        },
+        signal: {
+          type: "string",
+          enum: ["helpful", "not_helpful", "stale", "wrong"],
+          description:
+            "helpful = memory was useful (salience +0.1, max 2.0). " +
+            "not_helpful = memory was irrelevant (salience -0.1, min 0.1). " +
+            "stale = information is outdated (salience floored at 0.3). " +
+            "wrong = information is incorrect (salience floored at 0.1).",
+        },
+        reason: {
+          type: "string",
+          description: "Optional explanation for the feedback signal.",
+        },
+      },
+      required: ["capture_id", "signal"],
+    },
+  },
+  {
     name: "search",
     description:
       "Search memory by keyword or by semantic similarity. " +
@@ -365,6 +397,12 @@ const TOOLS: Tool[] = [
           default: "text",
           description:
             "The response format. Use 'json' for structured data (e.g. benchmarks). Defaults to 'text'.",
+        },
+        explain: {
+          type: "boolean",
+          default: false,
+          description:
+            "When true, attach per-hit score_details explaining ranking (BM25 rank, vector score, entity matches, authority multiplier, feedback salience, link provenance). Useful for debugging search quality.",
         },
       },
       required: ["query"],
@@ -1518,6 +1556,8 @@ export function createServer(opts: ServerOptions): Server {
         return handleRecall(args, opts);
       case "capture":
         return handleCapture(args, opts);
+      case "feedback":
+        return handleFeedback(args, opts);
       case "search":
         return handleSearch(args, opts);
       case "related":
@@ -1828,6 +1868,38 @@ async function handleRecall(
   });
 
   return { content: [{ type: "text", text: finalText }] };
+}
+
+/** Handle the feedback tool (v12). */
+async function handleFeedback(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<ToolResult> {
+  const captureId = String(args.capture_id ?? "");
+  const signal = String(args.signal ?? "") as "helpful" | "not_helpful" | "stale" | "wrong";
+  const reason = args.reason ? String(args.reason) : undefined;
+
+  if (!captureId || !signal) {
+    return errorResult("capture_id and signal are required");
+  }
+  const validSignals = ["helpful", "not_helpful", "stale", "wrong"];
+  if (!validSignals.includes(signal)) {
+    return errorResult(`signal must be one of: ${validSignals.join(", ")}`);
+  }
+
+  const storage = opts.storage;
+  // Verify capture exists
+  const entry = await storage.get(captureId);
+  if (!entry) {
+    return errorResult(`capture not found: ${captureId}`);
+  }
+
+  storage.recordFeedback(captureId, signal, reason, opts.agentId);
+
+  return textResult(
+    `Recorded feedback: ${signal} for capture ${captureId.slice(-8)}. ` +
+      `Salience multiplier adjusted. This memory will ${signal === "helpful" ? "rank higher" : signal === "not_helpful" ? "rank lower" : signal === "stale" ? "be deprioritized as outdated" : "be deprioritized as incorrect"} in future searches.`,
+  );
 }
 
 /** Handle the capture tool. */
@@ -2206,6 +2278,7 @@ async function handleSearch(
   const query = args.query as string;
   const mode = (args.mode as SearchMode) ?? "hybrid";
   const format = (args.format as "text" | "json") ?? "text";
+  const explain = (args.explain as boolean) ?? false;
   const filters = args.filters as
     | {
         type?: CaptureType;
@@ -2261,6 +2334,7 @@ async function handleSearch(
       offset: 0,
       mode,
       filters: searchFilters,
+      explain,
     });
     let globalResults: SearchResult[] = [];
     try {
@@ -2270,6 +2344,7 @@ async function handleSearch(
         offset: 0,
         mode,
         filters: searchFilters,
+        explain,
       });
     } catch {
       // Global search failure is non-fatal
@@ -2284,6 +2359,7 @@ async function handleSearch(
       offset: 0,
       mode,
       filters: searchFilters,
+      explain,
     });
   }
 
@@ -3327,6 +3403,8 @@ async function handleConfirm(
   }
   try {
     db.prepare("UPDATE captures SET confirmations = confirmations + 1 WHERE id = ?").run(captureId);
+    // v13: Auto-feedback — confirm implies the capture was helpful
+    opts.storage.recordFeedback(captureId, "helpful", "auto: confirmed by agent", opts.agentId);
   } catch (err) {
     return { content: [{ type: "text", text: `Error: ${err}` }], isError: true };
   }
@@ -3337,7 +3415,7 @@ async function handleConfirm(
     content: [
       {
         type: "text",
-        text: `Confirmed capture ${captureId}. Confidence: ${confidence.toFixed(2)} (${row.confirmations + 1} confirmations, ${row.corrections} corrections).`,
+        text: `Confirmed capture ${captureId}. Confidence: ${confidence.toFixed(2)} (${row.confirmations + 1} confirmations, ${row.corrections} corrections). Feedback salience boosted.`,
       },
     ],
   };
@@ -3373,6 +3451,8 @@ async function handleCorrect(
     if (reason) {
       db.prepare("UPDATE captures SET rejection_reason = ? WHERE id = ?").run(reason, captureId);
     }
+    // v13: Auto-feedback — correct implies the capture was wrong
+    opts.storage.recordFeedback(captureId, "wrong", reason ? `auto: ${reason}` : "auto: corrected by agent", opts.agentId);
   } catch (err) {
     return { content: [{ type: "text", text: `Error: ${err}` }], isError: true };
   }
