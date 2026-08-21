@@ -31,54 +31,16 @@ npx remem-mcp status            # One dashboard: everything at a glance
 
 ## Quick start (after install)
 
-**Nothing.** Just use your agent normally. Memory works automatically.
+**Nothing.** Just use your agent normally. No commands, no setup, no init.
 
-```
-You: "fix the login bug in auth.go"
-  → agent gets injected past errors + decisions about auth.go
-  → agent calls codegraph_search("login") instead of grep
-  → agent fixes it
-  → Stop hook auto-captures what was done
-
-Next session:
-You: "add rate limiting to the API"
-  → agent recalls the auth.go fix + your API patterns
-  → no re-explaining needed
-```
-
-### Verify it's working
+Memory works automatically:
+- **Session start** → past errors, decisions, and persona injected into agent context
+- **Each prompt** → matching memory injected (you'll see `[remem-mcp]` at the top)
+- **Session end** → worker auto-extracts facts, consolidates summaries, updates persona
 
 ```bash
-npx remem-mcp status
-# → DB: 41559 captures, 516 atoms, 9 scenarios
-# → Hooks: SessionStart ✓  UserPromptSubmit ✓  Stop ✓
-# → CodeGraph: 301 symbols indexed
-
-npx remem-mcp recent 5
-# → last 5 captures (errors, decisions, patterns)
-
-npx remem-mcp errors
-# → error dashboard with fix suggestions
+npx remem-mcp status    # verify: hooks ✓, DB ✓, CodeGraph ✓
 ```
-
-### What the agent sees
-
-At the start of each turn, the agent gets injected memory (you'll see `[remem-mcp]` at the top):
-
-```
-[remem-mcp] Memory relevant to your prompt (BM25, shallow):
-- (error [auth, jwt]) 2026-08-20: JWT verification fails on expired tokens
-- (decision [auth, rate-limit]) 2026-08-19: Use Redis for rate limiting, not in-memory
-
-[remem-mcp] Scenarios (L2 summaries):
-- Auth system uses JWT + Redis rate limiting, deployed behind Nginx gateway
-
-[remem-mcp] Persona (L3):
-language: Vietnamese
-output_style: concise
-```
-
-The agent uses this automatically. You don't need to call any tool.
 
 ---
 
