@@ -180,6 +180,7 @@ CREATE TABLE IF NOT EXISTS symbols (
   team_id      TEXT,
   repo_path    TEXT,                   -- root path of the indexed repo
   content_hash TEXT,                   -- hash of the symbol body for change detection
+  module_path  TEXT,                   -- qualified module path (e.g. src/storage/sqlite) for call resolution
   created_at   INTEGER NOT NULL,
   updated_at   INTEGER NOT NULL
 );
@@ -192,6 +193,8 @@ CREATE TABLE IF NOT EXISTS calls (
   callee_id    TEXT REFERENCES symbols(id), -- resolved callee (null if unresolved)
   line         INTEGER NOT NULL,       -- line where the call occurs
   kind         TEXT NOT NULL DEFAULT 'call', -- call, import, reference
+  confidence   REAL,                   -- resolution confidence (0.0-1.0, null if unresolved)
+  call_type    TEXT NOT NULL DEFAULT 'direct', -- direct, method, qualified, constructor
   team_id      TEXT
 );
 

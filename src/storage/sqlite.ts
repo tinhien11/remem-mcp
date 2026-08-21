@@ -339,6 +339,14 @@ export class SQLiteBackend implements StorageBackend {
         this.writeSchemaVersion(8);
       })();
     }
+    if (currentVersion < 9) {
+      migrationsRan = true;
+      this.backupDatabase(dbPath, 8);
+      this.db.transaction(() => {
+        this.migrateV8ToV9();
+        this.writeSchemaVersion(9);
+      })();
+    }
     this.rebuildFtsIfNeeded(migrationsRan);
   }
 
@@ -604,6 +612,27 @@ export class SQLiteBackend implements StorageBackend {
       console.error("[remem-mcp] Added correction outcome tracking columns");
     }
     console.error("[remem-mcp] Migrated schema v7 → v8 (correction outcome tracking)");
+  }
+
+  /** Migrate schema v8 → v9: add CodeGraph call resolution columns (module_path, confidence, call_type). */
+  private migrateV8ToV9(): void {
+    let addedAny = false;
+    try {
+      this.db.exec("ALTER TABLE symbols ADD COLUMN module_path TEXT");
+      addedAny = true;
+    } catch {}
+    try {
+      this.db.exec("ALTER TABLE calls ADD COLUMN confidence REAL");
+      addedAny = true;
+    } catch {}
+    try {
+      this.db.exec("ALTER TABLE calls ADD COLUMN call_type TEXT NOT NULL DEFAULT 'direct'");
+      addedAny = true;
+    } catch {}
+    if (addedAny) {
+      console.error("[remem-mcp] Added CodeGraph call resolution columns (module_path, confidence, call_type)");
+    }
+    console.error("[remem-mcp] Migrated schema v8 → v9 (CodeGraph call resolution)");
   }
 
   async put(entry: CaptureEntry): Promise<void> {

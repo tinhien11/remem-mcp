@@ -202,42 +202,60 @@ export async function parseFile(
           .digest("hex"),
       });
 
-      // Extract calls within this symbol's body
-      // We do a simple regex-based call extraction for now
-      const callRegex = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g;
-      let match: RegExpExecArray | null;
+      // Extract calls within this symbol's body using improved regex
+      // Captures: foo(), obj.method(), Class.create(), module.func()
+      // Two patterns: simple call (identifier) and method call (obj.method)
+      const simpleCallRegex = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g;
+      const methodCallRegex = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\.([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g;
       const bodyStartLine = lineStart;
       const bodyLines = source.split("\n").slice(lineStart - 1, lineEnd);
+
+      // Track lines already captured by method call regex to avoid duplicates
+      const methodCallLines = new Set<number>();
+
       for (let i = 0; i < bodyLines.length; i++) {
         const line = bodyLines[i];
-        callRegex.lastIndex = 0;
-        match = callRegex.exec(line);
-        while (match !== null) {
-          const calleeName = match[1];
-          // Skip language keywords and the symbol itself
-          const isKeyword =
-            calleeName === item.name ||
-            calleeName === "if" ||
-            calleeName === "for" ||
-            calleeName === "while" ||
-            calleeName === "switch" ||
-            calleeName === "return" ||
-            calleeName === "function" ||
-            calleeName === "def" ||
-            calleeName === "func" ||
-            calleeName === "fn" ||
-            calleeName === "print" ||
-            calleeName === "console";
-          if (!isKeyword) {
+        const lineNum = bodyStartLine + i;
+
+        // First: match method calls (obj.method) — captures full qualified name
+        methodCallRegex.lastIndex = 0;
+        let mMatch = methodCallRegex.exec(line);
+        while (mMatch !== null) {
+          const receiver = mMatch[1];
+          const methodName = mMatch[2];
+          const calleeName = `${receiver}.${methodName}`;
+          if (!isKeywordOrSelf(methodName, item.name) && !isKeywordOrSelf(receiver, item.name)) {
             calls.push({
               callerId: id,
               calleeName,
               calleeId: null,
-              line: bodyStartLine + i,
+              line: lineNum,
               kind: "call",
+              callType: "method",
             });
+            methodCallLines.add(lineNum);
           }
-          match = callRegex.exec(line);
+          mMatch = methodCallRegex.exec(line);
+        }
+
+        // Then: match simple calls (foo) — skip if line already has method call
+        if (!methodCallLines.has(lineNum)) {
+          simpleCallRegex.lastIndex = 0;
+          let match = simpleCallRegex.exec(line);
+          while (match !== null) {
+            const calleeName = match[1];
+            if (!isKeywordOrSelf(calleeName, item.name)) {
+              calls.push({
+                callerId: id,
+                calleeName,
+                calleeId: null,
+                line: lineNum,
+                kind: "call",
+                callType: "direct",
+              });
+            }
+            match = simpleCallRegex.exec(line);
+          }
         }
       }
 
@@ -262,6 +280,22 @@ export async function parseFile(
   }
 
   return { symbols, calls, imports };
+}
+
+/** Check if a name is a language keyword or the symbol itself (should be skipped in call extraction). */
+function isKeywordOrSelf(name: string, symbolName: string): boolean {
+  if (name === symbolName) return true;
+  const keywords = new Set([
+    "if", "for", "while", "switch", "return", "function", "def", "func", "fn",
+    "print", "console", "require", "import", "export", "class", "struct",
+    "enum", "interface", "type", "const", "let", "var", "new", "delete",
+    "typeof", "instanceof", "void", "in", "of", "await", "async", "yield",
+    "throw", "try", "catch", "finally", "break", "continue", "do",
+    "else", "case", "default", "extends", "implements", "super", "this",
+    "self", "true", "false", "null", "undefined", "nil", "None", "True", "False",
+    "println", "printf", "fmt", "err", "panic", "recover",
+  ]);
+  return keywords.has(name);
 }
 
 /** Index a single file into the database. */
@@ -299,9 +333,10 @@ export async function indexFile(
 
   // Insert symbols
   const symbolStmt = db.prepare(
-    `INSERT INTO symbols (id, name, kind, file_path, line_start, line_end, language, signature, docstring, parent_id, team_id, repo_path, content_hash, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO symbols (id, name, kind, file_path, line_start, line_end, language, signature, docstring, parent_id, team_id, repo_path, content_hash, module_path, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
+  const modulePath = relPath.replace(/\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|c|cpp|cc|cxx|hpp|cs)$/, "");
   for (const s of parsed.symbols) {
     symbolStmt.run(
       s.id,
@@ -317,21 +352,26 @@ export async function indexFile(
       teamId,
       repoPath,
       s.contentHash,
+      modulePath,
       now,
       now,
     );
   }
 
-  // Resolve callee IDs and insert calls
+  // Insert calls (callee_id resolved later by 6-strategy cascade in indexDirectory)
   const callStmt = db.prepare(
-    `INSERT INTO calls (caller_id, callee_name, callee_id, line, kind, team_id) VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO calls (caller_id, callee_name, callee_id, line, kind, call_type, team_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
   for (const c of parsed.calls) {
-    // Try to resolve callee by name within the same repo
-    const callee = db
-      .prepare("SELECT id FROM symbols WHERE name = ? AND team_id IS ? LIMIT 1")
-      .get(c.calleeName, teamId) as { id: string } | undefined;
-    callStmt.run(c.callerId, c.calleeName, callee?.id ?? null, c.line, c.kind, teamId);
+    callStmt.run(
+      c.callerId,
+      c.calleeName,
+      null, // Will be resolved by resolveAllCalls() in indexDirectory
+      c.line,
+      c.kind,
+      (c as { callType?: string }).callType ?? "direct",
+      teamId,
+    );
   }
 
   // Insert imports
@@ -419,20 +459,17 @@ export async function indexDirectory(
     results.push(result);
   }
 
-  // Re-resolve callee IDs now that all symbols are indexed
-  const unresolved = db
-    .prepare("SELECT id, callee_name FROM calls WHERE callee_id IS NULL")
-    .all() as { id: number; callee_name: string }[];
-  if (unresolved.length > 0) {
-    const updateStmt = db.prepare("UPDATE calls SET callee_id = ? WHERE id = ?");
-    for (const u of unresolved) {
-      const callee = db
-        .prepare("SELECT id FROM symbols WHERE name = ? AND team_id IS ? LIMIT 1")
-        .get(u.callee_name, teamId) as { id: string } | undefined;
-      if (callee) {
-        updateStmt.run(callee.id, u.id);
-      }
-    }
+  // Resolve callee IDs using 6-strategy cascade (import-map, same-module, unique-name, suffix, fuzzy)
+  // Adapted from Codebase-Memory (arXiv:2603.27277)
+  const { resolveAllCalls } = await import("./resolver.js");
+  const stats = resolveAllCalls(db);
+  if (stats.total > 0) {
+    console.error(
+      `[remem-mcp] indexDirectory: resolved ${stats.resolved}/${stats.total} calls` +
+        (Object.keys(stats.byStrategy).length > 0
+          ? ` (${JSON.stringify(stats.byStrategy)})`
+          : ""),
+    );
   }
 
   return results;
