@@ -112,13 +112,15 @@ export async function runPipelineWorker(
       }
     }
 
-    // 2. L1→L2: Auto-consolidate atoms by topic keyword
+    // 2. L1→L2: Auto-consolidate atoms by topic (tag-based, fallback to keyword)
     // Don't filter by team_id — legacy atoms have NULL team_id
     const atoms = await storage.listAtoms({ limit: 200 });
     const groups = new Map<string, typeof atoms>();
     for (const a of atoms) {
-      const words = a.fact.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
-      const key = words[0] ?? "misc";
+      // Group by significant keywords in fact (not just first word)
+      const words = a.fact.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 3);
+      // Use first 2 significant words as key — more stable grouping
+      const key = words.slice(0, 2).join("-") || "misc";
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(a);
     }
