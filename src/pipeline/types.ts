@@ -55,6 +55,7 @@ export interface PipelineOutput {
   atoms?: Atom[];
   scenarios?: Scenario[];
   canvas?: MermaidCanvas;
+  skill?: { id: string; name: string; steps: string[]; triggers: string[]; validation: string[] };
 }
 
 export interface LLMClient {

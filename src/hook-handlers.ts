@@ -4444,6 +4444,38 @@ function offloadToolOutput(
   // Append node to canvas in SQLite (top layer)
   const db = new Database(dbPath);
   try {
+    // Ensure canvas tables exist (hook may run before any MCP tool call)
+    db.exec(`CREATE TABLE IF NOT EXISTS canvases (
+      id TEXT PRIMARY KEY,
+      session_key TEXT NOT NULL,
+      mermaid_text TEXT,
+      node_count INTEGER DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      team_id TEXT
+    )`);
+    db.exec(`CREATE TABLE IF NOT EXISTS canvas_nodes (
+      id TEXT PRIMARY KEY,
+      canvas_id TEXT NOT NULL,
+      node_id TEXT NOT NULL,
+      label TEXT NOT NULL,
+      capture_id TEXT,
+      seq INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (canvas_id) REFERENCES canvases(id)
+    )`);
+    db.exec(`CREATE TABLE IF NOT EXISTS canvas_edges (
+      id TEXT PRIMARY KEY,
+      canvas_id TEXT NOT NULL,
+      from_node_id TEXT NOT NULL,
+      to_node_id TEXT NOT NULL,
+      label TEXT,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (canvas_id) REFERENCES canvases(id)
+    )`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_canvases_session ON canvases(session_key)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_canvas_nodes_canvas ON canvas_nodes(canvas_id)`);
+
     const now = Date.now();
 
     // Get or create canvas

@@ -1802,9 +1802,9 @@ export class SQLiteBackend implements StorageBackend {
   async putSkill(entry: SkillEntry): Promise<void> {
     this.db
       .prepare(
-        `INSERT INTO skills (id, team_id, agent_id, name, description, content, version, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, content = excluded.content, version = excluded.version, updated_at = excluded.updated_at`,
+        `INSERT INTO skills (id, team_id, agent_id, name, description, content, version, created_at, updated_at, trigger_conditions, steps, validation_rules, source_capture_ids, archived)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, content = excluded.content, version = excluded.version, updated_at = excluded.updated_at, trigger_conditions = excluded.trigger_conditions, steps = excluded.steps, validation_rules = excluded.validation_rules, source_capture_ids = excluded.source_capture_ids, archived = excluded.archived`,
       )
       .run(
         entry.id,
@@ -1816,6 +1816,11 @@ export class SQLiteBackend implements StorageBackend {
         entry.version,
         entry.createdAt,
         entry.updatedAt,
+        entry.triggerConditions ? JSON.stringify(entry.triggerConditions) : null,
+        entry.steps ? JSON.stringify(entry.steps) : null,
+        entry.validationRules ? JSON.stringify(entry.validationRules) : null,
+        entry.sourceCaptureIds ? JSON.stringify(entry.sourceCaptureIds) : null,
+        entry.archived ? 1 : 0,
       );
   }
 
@@ -2025,6 +2030,11 @@ interface SkillDbRow {
   version: number;
   created_at: number;
   updated_at: number;
+  trigger_conditions: string | null;
+  steps: string | null;
+  validation_rules: string | null;
+  source_capture_ids: string | null;
+  archived: number | null;
 }
 
 // ─── Row → Entry converters ────────────────────────────────────
@@ -2074,5 +2084,10 @@ function skillRowToEntry(row: SkillDbRow): SkillEntry {
     version: row.version,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    triggerConditions: row.trigger_conditions ? JSON.parse(row.trigger_conditions) : undefined,
+    steps: row.steps ? JSON.parse(row.steps) : undefined,
+    validationRules: row.validation_rules ? JSON.parse(row.validation_rules) : undefined,
+    sourceCaptureIds: row.source_capture_ids ? JSON.parse(row.source_capture_ids) : undefined,
+    archived: row.archived === 1,
   };
 }

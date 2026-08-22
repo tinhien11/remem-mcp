@@ -38,10 +38,12 @@ export class SkillExtractionPipeline implements PipelineStage {
     const description = extractDescription(input.content);
 
     // Store the skill
+    let skillId: string | null = null;
     try {
       const now = Date.now();
+      skillId = generateId();
       await ctx.storage.putSkill({
-        id: generateId(),
+        id: skillId,
         teamId: input.teamId ?? "default",
         agentId: "pipeline",
         name: skillName,
@@ -58,9 +60,10 @@ export class SkillExtractionPipeline implements PipelineStage {
       });
     } catch (e) {
       // Storage may not support putSkill — skip
+      return {};
     }
 
-    return {};
+    return { skill: { id: skillId!, name: skillName, steps, triggers, validation } };
   }
 }
 
