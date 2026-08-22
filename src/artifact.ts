@@ -221,7 +221,7 @@ export function importArtifact(dbPath: string, projectRoot: string): number {
   db.close();
 
   if (inserted > 0) {
-    console.log(
+    console.error(
       `[remem-mcp] Imported ${inserted} captures from team artifact (${skipped} already exist).`,
     );
   }
