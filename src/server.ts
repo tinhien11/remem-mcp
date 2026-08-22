@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { execSync } from "node:child_process";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
@@ -4645,7 +4646,6 @@ function handleCodegraphDetectChanges(
   // Get changed files from git diff
   let changedFiles: string[];
   try {
-    const { execSync } = require("node:child_process") as typeof import("node:child_process");
     const output = execSync("git diff --name-only HEAD", {
       cwd: repoPath,
       encoding: "utf-8",
