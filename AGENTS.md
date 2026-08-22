@@ -26,3 +26,64 @@ You have a long-term memory server (`remem-mcp` MCP). Always prefer it over grep
 - SessionStart hook auto-injects recent memory — read it before responding
 - UserPromptSubmit hook auto-injects memory matching your prompt + auto-captures facts
 - Stop hook auto-captures the session — but still call `capture` for key decisions during the session
+
+## Capture Exclusions
+
+Per-repository capture exclusions via `.remem.toml` marker file. Drop a `.remem.toml` in any project root to prevent auto-capture of noise from build artifacts, dependencies, etc.
+
+### Format
+```toml
+[capture]
+ignore_paths = ["node_modules", "dist", ".git", "*.min.js"]
+```
+
+### Matching
+- **Path segment**: `node_modules` matches any path containing `node_modules` as a component (e.g. `/project/node_modules/foo.js`)
+- **Glob suffix**: `*.min.js` matches any path ending with `.min.js`
+- **Bash commands**: patterns are checked against command text — if a command references an ignored path, the error/pattern capture is skipped
+
+### Behavior
+- Marker file is searched from `cwd` upward through ancestors (first match wins)
+- Exclusions are checked **before** any DB write — dropped events never enter storage
+- Applied to both Write/Edit (pattern capture) and Bash (error capture) in PostToolUse hook
+- No marker file = no exclusions = capture everything (default behavior)
+
+## CodeGraph
+
+CodeGraph indexes code structure (symbols, calls, imports) into SQLite for fast structural queries. Adapted from Codebase-Memory (arXiv:2603.27277).
+
+### Architecture
+- **Parsing**: tree-sitter via `@kreuzberg/tree-sitter-language-pack` (9 languages: TS/JS/Python/Go/Rust/Java/C/C++/C#)
+- **Call extraction**: single-pass regex on body text — 3 patterns: JSX (`<Component/>`), method (`obj.method()`), simple (`foo()`)
+- **Call resolution**: 6-strategy cascade (`src/codegraph/resolver.ts`)
+  1. Import map (0.95) — `pkg.Func` → lookup prefix in file's import map
+  2. Import map suffix (0.85) — suffix matching against import-resolved modules
+  3. Same module (0.90) — prefix callee with enclosing file's module path
+  4. Unique name (0.75) — simple name lookup, accept if 1 candidate
+  5. Suffix match (0.55) — multiple candidates, nearest by path distance
+  6. Fuzzy (0.35) — Jaccard bigram similarity, last resort
+- **Stdlib filter**: skips Go (`fmt`, `json`, `os`...), TS (`console`, `JSON`, `Math`...), Python (`print`, `len`, `os`...), Rust (`println`, `vec`...) calls
+- **File size limit**: skips files >3000 lines or >200KB (generated/vendored)
+
+### MCP tools
+- `codegraph_index` — index a directory (run first)
+- `codegraph_search` — search symbols by name pattern
+- `codegraph_callers` — find who calls a symbol (inbound)
+- `codegraph_callees` — find what a symbol calls (outbound)
+- `codegraph_impact` — blast radius analysis (callers up to depth N)
+- `codegraph_list` — list symbols in a file
+- `codegraph_detect_changes` — git diff → affected symbols + risk classification
+
+### Schema (v9)
+- `symbols`: id, name, kind, file_path, line_start/end, language, module_path, content_hash
+- `calls`: caller_id, callee_name, callee_id (resolved), confidence, call_type (direct/method/jsx)
+- `imports`: file_path, symbol_name, source_path
+
+### Performance (dogfood Aug 2026)
+| Repo | Files | Symbols | Calls | Resolved | Time |
+|---|---|---|---|---|---|
+| remem-mcp | 79 | 301 | 6456 | 24% | 3.1s |
+| AZR Go | 455 | 3417 | 41603 | 34% | 111s |
+| Orca TS | 3000 | 7632 | 78981 | 28% | 705s |
+
+Unresolved = stdlib calls (fmt.Printf, console.log) — expected, not indexed.

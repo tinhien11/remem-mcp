@@ -19,6 +19,7 @@ import { personaCommand } from "./cli/persona.js";
 import { scenariosCommand } from "./cli/scenarios.js";
 import { skillsCommand } from "./cli/skills.js";
 import { status } from "./cli/status.js";
+import { workerCommand } from "./cli/worker.js";
 import {
   findCallees,
   findCallers,
@@ -1057,7 +1058,11 @@ After that, the agent follows the rules automatically.`);
       return;
     }
     const db = openDbWithSchema(defaultDbPath());
-    const syms = searchSymbols(db, query, { teamId, limit, repoPath });
+    // Try with repoPath filter first; if no results, retry without (repo_path may be relative)
+    let syms = searchSymbols(db, query, { teamId, limit, repoPath });
+    if (syms.length === 0) {
+      syms = searchSymbols(db, query, { teamId, limit });
+    }
     if (syms.length === 0) {
       console.log("No symbols found.");
       db.close();
@@ -1144,7 +1149,10 @@ After that, the agent follows the rules automatically.`);
       return;
     }
     const db = openDbWithSchema(defaultDbPath());
-    const syms = listSymbols(db, filePath, { repoPath });
+    let syms = listSymbols(db, filePath, { repoPath });
+    if (syms.length === 0) {
+      syms = listSymbols(db, filePath, {});
+    }
     if (syms.length === 0) {
       console.log("No symbols found.");
       db.close();
@@ -1241,6 +1249,11 @@ After that, the agent follows the rules automatically.`);
   if (arg === "consolidate") {
     const flags = parseFlags(process.argv.slice(3));
     await consolidateCommand(defaultDbPath(), flags);
+    return;
+  }
+  if (arg === "worker-run") {
+    const flags = parseFlags(process.argv.slice(3));
+    await workerCommand(defaultDbPath(), flags);
     return;
   }
   if (arg === "knowledge") {

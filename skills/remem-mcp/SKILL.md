@@ -8,7 +8,7 @@ You have a long-term memory server via MCP. Use the tools automatically — do n
 ## Tools
 
 **Core:** `recall` `capture` `search` `forget` `resolve` `handoff` `adr` `update` `consolidate` `scenario_create` `persona_update`
-**CodeGraph:** `codegraph_search` (auto-indexes on first use) `codegraph_callers` `codegraph_callees` `codegraph_impact`
+**CodeGraph:** `codegraph_search` (auto-indexes on first use) `codegraph_callers` `codegraph_callees` `codegraph_impact` `codegraph_list` `codegraph_detect_changes` (git diff → affected symbols)
 **Wiki:** `wiki_ingest` `wiki_search` `wiki_get` `wiki_outdated`
 
 ## Rule 1: Recall before answering
@@ -50,9 +50,11 @@ scenario_create({
 
 **When:** After capturing 5+ decisions/learnings about the same topic (e.g., database, hooks, deployment).
 
+**Auto-pipeline:** The Stop hook spawns a background worker that auto-extracts L1 atoms from uncaptured L0 entries, auto-consolidates 5+ atoms on the same topic into L2 scenarios, and auto-updates L3 persona from repeated tags. You don't need to call `scenario_create` or `persona_update` manually — the worker does it. Only call them manually if you want a specific summary the worker wouldn't generate.
+
 ## Rule 4: Update persona (L3)
 
-When you notice a user preference or pattern (2+ occurrences), call `persona_update`. SessionStart injects persona automatically every session (~50 tokens).
+When you notice a user preference or pattern (2+ occurrences), call `persona_update`. SessionStart AND UserPromptSubmit inject persona automatically every turn (~50 tokens).
 
 ```
 persona_update({ "trait": "language", "value": "Vietnamese" })
@@ -61,6 +63,8 @@ persona_update({ "trait": "output_style", "value": "concise" })
 
 **When:** User asks for concise output 2+ times, works in a specific language, prefers a framework, uses a specific project.
 
+**Auto-pipeline:** The background worker auto-detects tags appearing 2+ times in captures and appends them to persona. Manual `persona_update` is for explicit user preferences the worker can't detect.
+
 ## Rule 5: Use CodeGraph instead of grep
 
 For function/class/method definitions, call `codegraph_search` — NOT grep. Auto-indexes `src/` on first use.
@@ -68,7 +72,10 @@ For function/class/method definitions, call `codegraph_search` — NOT grep. Aut
 ```
 codegraph_search({ "query": "handleCapture" })
 codegraph_callers({ "symbol_id": "<id from search>" })
+codegraph_detect_changes({ "repo_path": "/abs/path" })  // git diff → affected symbols + risk
 ```
+
+CodeGraph uses 6-strategy call resolution (import-map → same-module → unique-name → suffix → fuzzy) with confidence scoring. JSX components (`<FleetMap/>`) and method calls (`obj.method()`) are captured. Stdlib calls (fmt.Printf, console.log) are filtered out.
 
 Use grep only for: string literals, config values, file names.
 

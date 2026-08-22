@@ -898,6 +898,30 @@ const TOOLS: Tool[] = [
       required: ["file_path"],
     },
   },
+  {
+    name: "codegraph_detect_changes",
+    description:
+      "Detect uncommitted git changes and map them to affected symbols with blast radius. " +
+      "Runs `git diff --name-only` to find changed files, finds symbols in those files, " +
+      "then traces callers to determine impact. Returns affected symbols + risk classification.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo_path: {
+          type: "string",
+          description: "The repository root path (absolute).",
+        },
+        team_id: { type: "string", description: "The team ID for isolation." },
+        max_depth: {
+          type: "integer",
+          default: 3,
+          maximum: 5,
+          description: "Max depth for caller traversal (blast radius).",
+        },
+      },
+      required: ["repo_path"],
+    },
+  },
   // ─── Wiki tools ───
   {
     name: "wiki_ingest",
@@ -1417,6 +1441,8 @@ export function createServer(opts: ServerOptions): Server {
         return handleCodegraphImpact(args, opts);
       case "codegraph_list":
         return handleCodegraphList(args, opts);
+      case "codegraph_detect_changes":
+        return handleCodegraphDetectChanges(args, opts);
       case "wiki_ingest":
         return handleWikiIngest(args, opts);
       case "wiki_search":
@@ -4462,6 +4488,128 @@ function handleCodegraphList(
         text: `Found ${symbols.length} symbol(s) in ${filePath}:\n${lines.join("\n")}`,
       },
     ],
+  };
+}
+
+function handleCodegraphDetectChanges(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): { content: Array<{ type: "text"; text: string }>; isError?: boolean } {
+  const repoPath = args.repo_path as string;
+  const teamId = (args.team_id as string) ?? undefined;
+  const maxDepth = (args.max_depth as number) ?? 3;
+
+  if (!repoPath) {
+    return { content: [{ type: "text", text: "Error: repo_path is required." }], isError: true };
+  }
+
+  const db = getDb(opts);
+
+  // Get changed files from git diff
+  let changedFiles: string[];
+  try {
+    const { execSync } = require("node:child_process") as typeof import("node:child_process");
+    const output = execSync("git diff --name-only HEAD", {
+      cwd: repoPath,
+      encoding: "utf-8",
+      timeout: 5000,
+    }).trim();
+    changedFiles = output ? output.split("\n") : [];
+    // Also check staged changes
+    const staged = execSync("git diff --cached --name-only", {
+      cwd: repoPath,
+      encoding: "utf-8",
+      timeout: 5000,
+    }).trim();
+    if (staged) {
+      const stagedFiles = staged.split("\n");
+      changedFiles = [...new Set([...changedFiles, ...stagedFiles])];
+    }
+  } catch {
+    return {
+      content: [{ type: "text", text: "Error: Failed to run git diff. Is this a git repository?" }],
+      isError: true,
+    };
+  }
+
+  if (changedFiles.length === 0) {
+    return { content: [{ type: "text", text: "No uncommitted changes detected." }] };
+  }
+
+  // Find symbols in changed files
+  const placeholders = changedFiles.map(() => "?").join(",");
+  const changedSymbols = db
+    .prepare(
+      `SELECT id, name, kind, file_path, line_start, line_end FROM symbols WHERE file_path IN (${placeholders})`,
+    )
+    .all(...changedFiles) as Array<{
+    id: string;
+    name: string;
+    kind: string;
+    file_path: string;
+    line_start: number;
+    line_end: number;
+  }>;
+
+  if (changedSymbols.length === 0) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Changed files: ${changedFiles.length}, but no indexed symbols found. Run codegraph_index first.`,
+        },
+      ],
+    };
+  }
+
+  // Trace callers for blast radius
+  const { impactAnalysis } = require("./codegraph/engine.js") as typeof import("./codegraph/engine.js");
+  const results: Array<{
+    symbol: { name: string; kind: string; file: string; line: number };
+    callers: Array<{ name: string; depth: number; path: string }>;
+    risk: string;
+  }> = [];
+
+  for (const sym of changedSymbols) {
+    try {
+      const impact = impactAnalysis(db, sym.id, { maxDepth });
+      const callerCount = impact.affected.length;
+      const risk =
+        callerCount >= 10 ? "high" : callerCount >= 3 ? "medium" : "low";
+      results.push({
+        symbol: {
+          name: sym.name,
+          kind: sym.kind,
+          file: sym.file_path,
+          line: sym.line_start,
+        },
+        callers: impact.affected.slice(0, 5).map((a) => ({
+          name: a.symbol.name,
+          depth: a.depth,
+          path: a.path.join(" → "),
+        })),
+        risk,
+      });
+    } catch {
+      // Symbol may have been deleted
+    }
+  }
+
+  const lines: string[] = [`Changed files: ${changedFiles.length}`, `Affected symbols: ${changedSymbols.length}`, ""];
+  for (const r of results) {
+    lines.push(`[${r.risk.toUpperCase()}] ${r.symbol.kind} ${r.symbol.name} (${r.symbol.file}:${r.symbol.line})`);
+    if (r.callers.length > 0) {
+      lines.push(`  Callers (${r.callers.length} shown):`);
+      for (const c of r.callers) {
+        lines.push(`    d${c.depth}: ${c.path}`);
+      }
+    } else {
+      lines.push(`  No callers found (leaf node).`);
+    }
+  }
+
+  return {
+    content: [{ type: "text", text: lines.join("\n") }],
   };
 }
 

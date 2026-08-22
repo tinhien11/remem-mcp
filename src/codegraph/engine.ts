@@ -144,6 +144,14 @@ export async function parseFile(
     return null;
   }
 
+  // Skip files that are too large — tree-sitter parsing + regex extraction
+  // scales O(n) with file size, and very large files are usually generated/vendored
+  const MAX_FILE_LINES = 3000;
+  const MAX_FILE_BYTES = 200_000; // 200KB
+  if (source.length > MAX_FILE_BYTES || source.split("\n").length > MAX_FILE_LINES) {
+    return null;
+  }
+
   const result = pack.process(source, { language });
   if (!result) return null;
 
@@ -151,6 +159,14 @@ export async function parseFile(
   const symbols: SymbolInfo[] = [];
   const calls: CallInfo[] = [];
   const imports: ImportInfo[] = [];
+
+  // Cache source lines once — used for offset calculation in extractSymbols
+  const sourceLines = source.split("\n");
+  // Precompute cumulative line start offsets for O(1) line→offset lookup
+  const lineOffsets: number[] = [0];
+  for (let i = 0; i < sourceLines.length; i++) {
+    lineOffsets.push(lineOffsets[i] + sourceLines[i].length + 1); // +1 for \n
+  }
 
   // Extract symbols from structure
   const extractSymbols = (
@@ -175,17 +191,10 @@ export async function parseFile(
       const id = generateId();
       const lineStart = (item.span?.startLine ?? 0) + 1; // 1-indexed
       const lineEnd = (item.span?.endLine ?? lineStart) + 1;
-      const _bodyText = source.slice(
-        item.span?.startLine !== undefined
-          ? source.split("\n").slice(0, item.span.startLine).join("\n").length + 1
-          : 0,
-        item.span?.endLine !== undefined
-          ? source
-              .split("\n")
-              .slice(0, item.span.endLine + 1)
-              .join("\n").length
-          : source.length,
-      );
+      // Use cached lineOffsets instead of source.split("\n") per symbol
+      const bodyStart = item.span?.startLine !== undefined ? lineOffsets[item.span.startLine] : 0;
+      const bodyEnd = item.span?.endLine !== undefined ? lineOffsets[item.span.endLine + 1] - 1 : source.length;
+      const bodyText = source.slice(bodyStart, bodyEnd);
       symbols.push({
         id,
         name: item.name,
@@ -202,42 +211,93 @@ export async function parseFile(
           .digest("hex"),
       });
 
-      // Extract calls within this symbol's body
-      // We do a simple regex-based call extraction for now
-      const callRegex = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g;
-      let match: RegExpExecArray | null;
+      // Extract calls within this symbol's body — single-pass on body text
+      // Captures: foo(), obj.method(), <Component/>, Class.create()
+      // Uses cached bodyText + offset→line map (no per-line regex)
       const bodyStartLine = lineStart;
-      const bodyLines = source.split("\n").slice(lineStart - 1, lineEnd);
-      for (let i = 0; i < bodyLines.length; i++) {
-        const line = bodyLines[i];
-        callRegex.lastIndex = 0;
-        match = callRegex.exec(line);
-        while (match !== null) {
-          const calleeName = match[1];
-          // Skip language keywords and the symbol itself
-          const isKeyword =
-            calleeName === item.name ||
-            calleeName === "if" ||
-            calleeName === "for" ||
-            calleeName === "while" ||
-            calleeName === "switch" ||
-            calleeName === "return" ||
-            calleeName === "function" ||
-            calleeName === "def" ||
-            calleeName === "func" ||
-            calleeName === "fn" ||
-            calleeName === "print" ||
-            calleeName === "console";
-          if (!isKeyword) {
-            calls.push({
-              callerId: id,
-              calleeName,
-              calleeId: null,
-              line: bodyStartLine + i,
-              kind: "call",
-            });
-          }
-          match = callRegex.exec(line);
+
+      // Build offset→line map for this body using cached lineOffsets
+      const offsetToLine = (offset: number): number => {
+        // offset is relative to bodyText which starts at bodyStart in source
+        const sourceOffset = bodyStart + offset;
+        // Binary search in lineOffsets
+        let lo = 0, hi = lineOffsets.length - 1;
+        while (lo < hi) {
+          const mid = (lo + hi + 1) >> 1;
+          if (lineOffsets[mid] <= sourceOffset) lo = mid;
+          else hi = mid - 1;
+        }
+        return lo + 1; // 1-indexed
+      };
+
+      // Track offsets already captured to avoid duplicates
+      const capturedOffsets = new Set<number>();
+
+      // Pass 1: JSX components <Component> — capitalized identifiers
+      const jsxRegex = /<([A-Z][a-zA-Z0-9_$]*)\b/g;
+      let jMatch: RegExpExecArray | null;
+      while ((jMatch = jsxRegex.exec(bodyText)) !== null) {
+        const calleeName = jMatch[1];
+        const offset = jMatch.index;
+        if (!isKeywordOrSelf(calleeName, item.name) && !capturedOffsets.has(offset)) {
+          calls.push({
+            callerId: id,
+            calleeName,
+            calleeId: null,
+            line: offsetToLine(offset),
+            kind: "call",
+            callType: "jsx",
+          });
+          capturedOffsets.add(offset);
+        }
+      }
+
+      // Pass 2: Method calls (obj.method) — captures full qualified name
+      const methodCallRegex = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\.([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g;
+      let mMatch: RegExpExecArray | null;
+      while ((mMatch = methodCallRegex.exec(bodyText)) !== null) {
+        const receiver = mMatch[1];
+        const methodName = mMatch[2];
+        const calleeName = `${receiver}.${methodName}`;
+        const offset = mMatch.index;
+        if (
+          !isKeywordOrSelf(methodName, item.name) &&
+          !isKeywordOrSelf(receiver, item.name) &&
+          !isStdlibCall(calleeName, language) &&
+          !capturedOffsets.has(offset)
+        ) {
+          calls.push({
+            callerId: id,
+            calleeName,
+            calleeId: null,
+            line: offsetToLine(offset),
+            kind: "call",
+            callType: "method",
+          });
+          capturedOffsets.add(offset);
+        }
+      }
+
+      // Pass 3: Simple calls (foo) — skip if offset already captured or stdlib
+      const simpleCallRegex = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g;
+      let match: RegExpExecArray | null;
+      while ((match = simpleCallRegex.exec(bodyText)) !== null) {
+        const calleeName = match[1];
+        const offset = match.index;
+        if (
+          !isKeywordOrSelf(calleeName, item.name) &&
+          !isStdlibCall(calleeName, language) &&
+          !capturedOffsets.has(offset)
+        ) {
+          calls.push({
+            callerId: id,
+            calleeName,
+            calleeId: null,
+            line: offsetToLine(offset),
+            kind: "call",
+            callType: "direct",
+          });
+          capturedOffsets.add(offset);
         }
       }
 
@@ -262,6 +322,97 @@ export async function parseFile(
   }
 
   return { symbols, calls, imports };
+}
+
+/** Check if a name is a language keyword or the symbol itself (should be skipped in call extraction). */
+function isKeywordOrSelf(name: string, symbolName: string): boolean {
+  if (name === symbolName) return true;
+  const keywords = new Set([
+    "if", "for", "while", "switch", "return", "function", "def", "func", "fn",
+    "print", "console", "require", "import", "export", "class", "struct",
+    "enum", "interface", "type", "const", "let", "var", "new", "delete",
+    "typeof", "instanceof", "void", "in", "of", "await", "async", "yield",
+    "throw", "try", "catch", "finally", "break", "continue", "do",
+    "else", "case", "default", "extends", "implements", "super", "this",
+    "self", "true", "false", "null", "undefined", "nil", "None", "True", "False",
+    "println", "printf", "fmt", "err", "panic", "recover",
+  ]);
+  return keywords.has(name);
+}
+
+/** Stdlib prefixes per language — calls to these are skipped (not indexed). */
+const STDLIB_PREFIXES: Record<string, Set<string>> = {
+  go: new Set([
+    "fmt", "json", "os", "io", "strings", "strconv", "time", "errors",
+    "sync", "context", "path", "filepath", "sort", "bytes", "bufio",
+    "encoding", "net", "http", "url", "regexp", "math", "log", "reflect",
+    "runtime", "unsafe", "atomic", "crypto", "hash", "base64", "hex",
+    "ioutil", "filepath", "unicode", "testing", "flag", "env",
+  ]),
+  typescript: new Set([
+    "console", "JSON", "Math", "Date", "Object", "Array", "String",
+    "Number", "Boolean", "Promise", "Symbol", "Map", "Set", "WeakMap",
+    "WeakSet", "Error", "RegExp", "Buffer", "process", "setTimeout",
+    "setInterval", "clearTimeout", "clearInterval", "fetch", "URL",
+    "URLSearchParams", "FormData", "Headers", "Request", "Response",
+    "AbortController", "Event", "EventTarget", "CustomEvent", "TextEncoder",
+    "TextDecoder", "crypto", "performance", "queueMicrotask", "atob", "btoa",
+    "parseInt", "parseFloat", "isNaN", "isFinite", "encodeURIComponent",
+    "decodeURIComponent", "encodeURI", "decodeURI",
+  ]),
+  javascript: new Set([
+    "console", "JSON", "Math", "Date", "Object", "Array", "String",
+    "Number", "Boolean", "Promise", "Symbol", "Map", "Set", "WeakMap",
+    "WeakSet", "Error", "RegExp", "Buffer", "process", "setTimeout",
+    "setInterval", "clearTimeout", "clearInterval", "fetch", "URL",
+    "URLSearchParams", "FormData", "Headers", "Request", "Response",
+    "AbortController", "Event", "EventTarget", "CustomEvent", "TextEncoder",
+    "TextDecoder", "crypto", "performance", "queueMicrotask", "atob", "btoa",
+    "parseInt", "parseFloat", "isNaN", "isFinite", "encodeURIComponent",
+    "decodeURIComponent", "encodeURI", "decodeURI",
+  ]),
+  python: new Set([
+    "print", "len", "range", "str", "int", "float", "bool", "list",
+    "dict", "set", "tuple", "type", "isinstance", "issubclass", "id",
+    "hash", "dir", "vars", "globals", "locals", "exec", "eval", "compile",
+    "open", "input", "repr", "format", "chr", "ord", "hex", "oct", "bin",
+    "abs", "min", "max", "sum", "round", "pow", "divmod", "sorted", "reversed",
+    "enumerate", "zip", "map", "filter", "any", "all", "next", "iter",
+    "getattr", "setattr", "hasattr", "delattr", "property", "staticmethod",
+    "classmethod", "super", "object", "Exception", "ValueError", "TypeError",
+    "KeyError", "IndexError", "AttributeError", "RuntimeError", "StopIteration",
+    "os", "sys", "json", "re", "time", "datetime", "pathlib", "typing",
+    "collections", "itertools", "functools", "subprocess", "argparse",
+    "logging", "unittest", "asyncio", "threading", "multiprocessing",
+    "pickle", "shutil", "tempfile", "glob", "fnmatch", "csv", "io",
+    "base64", "hashlib", "hmac", "secrets", "uuid", "copy", "math",
+    "random", "statistics", "decimal", "fractions", "sqlite3",
+  ]),
+  rust: new Set([
+    "println", "print", "eprintln", "eprint", "format", "vec", "String",
+    "Vec", "Option", "Result", "Some", "None", "Ok", "Err", "Box",
+    "Rc", "Arc", "RefCell", "Cell", "Mutex", "RwLock", "HashMap",
+    "HashSet", "BTreeMap", "BTreeSet", "VecDeque", "LinkedList",
+    "std", "core", "alloc", "macro", "todo", "unimplemented", "panic",
+    "assert", "assert_eq", "assert_ne", "debug_assert", "debug_assert_eq",
+    "cfg", "env", "include", "concat", "stringify", "file", "line",
+    "module_path", "column", "format_args", "write", "writeln",
+  ]),
+};
+
+/** Check if a callee name is a stdlib call for the given language. */
+function isStdlibCall(calleeName: string, language: string): boolean {
+  const prefixes = STDLIB_PREFIXES[language];
+  if (!prefixes) return false;
+  // Check direct match (e.g. "println", "len")
+  if (prefixes.has(calleeName)) return true;
+  // Check prefix match (e.g. "fmt.Printf" → prefix "fmt")
+  const dotIdx = calleeName.indexOf(".");
+  if (dotIdx > 0) {
+    const prefix = calleeName.slice(0, dotIdx);
+    if (prefixes.has(prefix)) return true;
+  }
+  return false;
 }
 
 /** Index a single file into the database. */
@@ -299,9 +450,10 @@ export async function indexFile(
 
   // Insert symbols
   const symbolStmt = db.prepare(
-    `INSERT INTO symbols (id, name, kind, file_path, line_start, line_end, language, signature, docstring, parent_id, team_id, repo_path, content_hash, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO symbols (id, name, kind, file_path, line_start, line_end, language, signature, docstring, parent_id, team_id, repo_path, content_hash, module_path, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
+  const modulePath = relPath.replace(/\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|c|cpp|cc|cxx|hpp|cs)$/, "");
   for (const s of parsed.symbols) {
     symbolStmt.run(
       s.id,
@@ -317,21 +469,26 @@ export async function indexFile(
       teamId,
       repoPath,
       s.contentHash,
+      modulePath,
       now,
       now,
     );
   }
 
-  // Resolve callee IDs and insert calls
+  // Insert calls (callee_id resolved later by 6-strategy cascade in indexDirectory)
   const callStmt = db.prepare(
-    `INSERT INTO calls (caller_id, callee_name, callee_id, line, kind, team_id) VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO calls (caller_id, callee_name, callee_id, line, kind, call_type, team_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
   for (const c of parsed.calls) {
-    // Try to resolve callee by name within the same repo
-    const callee = db
-      .prepare("SELECT id FROM symbols WHERE name = ? AND team_id IS ? LIMIT 1")
-      .get(c.calleeName, teamId) as { id: string } | undefined;
-    callStmt.run(c.callerId, c.calleeName, callee?.id ?? null, c.line, c.kind, teamId);
+    callStmt.run(
+      c.callerId,
+      c.calleeName,
+      null, // Will be resolved by resolveAllCalls() in indexDirectory
+      c.line,
+      c.kind,
+      (c as { callType?: string }).callType ?? "direct",
+      teamId,
+    );
   }
 
   // Insert imports
@@ -419,20 +576,17 @@ export async function indexDirectory(
     results.push(result);
   }
 
-  // Re-resolve callee IDs now that all symbols are indexed
-  const unresolved = db
-    .prepare("SELECT id, callee_name FROM calls WHERE callee_id IS NULL")
-    .all() as { id: number; callee_name: string }[];
-  if (unresolved.length > 0) {
-    const updateStmt = db.prepare("UPDATE calls SET callee_id = ? WHERE id = ?");
-    for (const u of unresolved) {
-      const callee = db
-        .prepare("SELECT id FROM symbols WHERE name = ? AND team_id IS ? LIMIT 1")
-        .get(u.callee_name, teamId) as { id: string } | undefined;
-      if (callee) {
-        updateStmt.run(callee.id, u.id);
-      }
-    }
+  // Resolve callee IDs using 6-strategy cascade (import-map, same-module, unique-name, suffix, fuzzy)
+  // Adapted from Codebase-Memory (arXiv:2603.27277)
+  const { resolveAllCalls } = await import("./resolver.js");
+  const stats = resolveAllCalls(db);
+  if (stats.total > 0) {
+    console.error(
+      `[remem-mcp] indexDirectory: resolved ${stats.resolved}/${stats.total} calls` +
+        (Object.keys(stats.byStrategy).length > 0
+          ? ` (${JSON.stringify(stats.byStrategy)})`
+          : ""),
+    );
   }
 
   return results;

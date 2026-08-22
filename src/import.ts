@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
+import { generateId } from "./utils/ulid.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -106,15 +107,15 @@ export function importData(dbPath: string, inputPath: string): void {
   const transaction = db.transaction(() => {
     for (const row of data.captures) {
       const result = insertStmt.run(
-        row.id,
-        row.session_key,
-        row.agent_id,
+        row.id ?? generateId(),
+        row.session_key ?? "import",
+        row.agent_id ?? "import",
         row.type,
         row.content,
         row.content_hash ?? null,
-        row.tags,
-        row.created_at,
-        row.metadata,
+        Array.isArray(row.tags) ? JSON.stringify(row.tags) : row.tags ?? null,
+        row.created_at ?? new Date().toISOString(),
+        row.metadata ?? null,
         row.team_id ?? null,
         row.user_id ?? null,
         row.task_id ?? null,

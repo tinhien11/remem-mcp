@@ -1,7 +1,7 @@
 {
   "name": "remem-mcp",
   "mcpName": "io.github.tinhien11/remem-mcp",
-  "version": "0.6.3",
+  "version": "0.6.8",
   "description": "Long-term memory for AI coding agents. Memory + CodeGraph + Wiki in one SQLite file. Auto-recall, auto-capture, no API key, no cloud.",
   "type": "module",
   "license": "MIT",
@@ -68,7 +68,6 @@
     "better-sqlite3": "^13.0.3",
     "gpt-tokenizer": "^3.4.0",
     "sqlite-vec": "^0.1.9",
-    "tree-sitter": "^0.25.1",
     "ulid": "^3.0.2"
   },
   "devDependencies": {

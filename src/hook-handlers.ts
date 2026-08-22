@@ -466,7 +466,7 @@ export function hookRecall(dbPath: string): void {
         WHERE type IN ('decision', 'learning', 'task') AND deleted_at IS NULL AND trust_state != 'rejected'
       `;
 
-      const globalRows: {
+      const rows: {
         id: string;
         type: string;
         content: string;
@@ -474,86 +474,63 @@ export function hookRecall(dbPath: string): void {
         created_at: number;
       }[] = [];
 
-      const projectRows: typeof globalRows = [];
-
-      // If REMEM_GLOBAL_SESSION_KEY is set, include ALL global memory.
-      // Global is supposed to be small (rules, conventions, lessons) — inject
-      // everything so the agent knows what cross-project knowledge exists.
+      // If REMEM_GLOBAL_SESSION_KEY is set, include global memory first
       const globalKey = process.env.REMEM_GLOBAL_SESSION_KEY;
       if (globalKey) {
         const globalErrors = db
-          .prepare(`${errorSql} AND session_key = ? ORDER BY created_at DESC LIMIT 5`)
-          .all(globalKey) as typeof globalRows;
-        globalRows.push(...globalErrors);
+          .prepare(`${errorSql} AND session_key = ? ORDER BY created_at DESC LIMIT 3`)
+          .all(globalKey) as typeof rows;
+        rows.push(...globalErrors);
         const globalOthers = db
-          .prepare(`${otherSql} AND session_key = ? ORDER BY created_at DESC LIMIT 15`)
-          .all(globalKey) as typeof globalRows;
-        globalRows.push(...globalOthers);
+          .prepare(`${otherSql} AND session_key = ? ORDER BY created_at DESC LIMIT 3`)
+          .all(globalKey) as typeof rows;
+        rows.push(...globalOthers);
       }
 
       if (sessionKey) {
         const sessionErrors = db
           .prepare(`${errorSql} AND session_key = ? ORDER BY created_at DESC LIMIT 5`)
-          .all(sessionKey) as typeof projectRows;
-        const seen = new Set(globalRows.map((r) => r.id));
-        projectRows.push(...sessionErrors.filter((r) => !seen.has(r.id)));
+          .all(sessionKey) as typeof rows;
+        const seen = new Set(rows.map((r) => r.id));
+        rows.push(...sessionErrors.filter((r) => !seen.has(r.id)));
         const sessionOthers = db
           .prepare(`${otherSql} AND session_key = ? ORDER BY created_at DESC LIMIT 5`)
-          .all(sessionKey) as typeof projectRows;
-        projectRows.push(...sessionOthers.filter((r) => !seen.has(r.id)));
+          .all(sessionKey) as typeof rows;
+        rows.push(...sessionOthers.filter((r) => !seen.has(r.id)));
         // Also query auto-captured transcripts keyed by session_id.slice(0,16)
         // (hookStop/hookPostToolUse error path) so they appear at session start.
         if (autoCaptureKey && autoCaptureKey !== sessionKey) {
           const autoErrors = db
             .prepare(`${errorSql} AND session_key = ? ORDER BY created_at DESC LIMIT 5`)
-            .all(autoCaptureKey) as typeof projectRows;
-          projectRows.push(...autoErrors.filter((r) => !seen.has(r.id)));
+            .all(autoCaptureKey) as typeof rows;
+          rows.push(...autoErrors.filter((r) => !seen.has(r.id)));
           const autoOthers = db
             .prepare(`${otherSql} AND session_key = ? ORDER BY created_at DESC LIMIT 5`)
-            .all(autoCaptureKey) as typeof projectRows;
-          projectRows.push(...autoOthers.filter((r) => !seen.has(r.id)));
+            .all(autoCaptureKey) as typeof rows;
+          rows.push(...autoOthers.filter((r) => !seen.has(r.id)));
         }
       }
 
       // No all-captures fallback — that would leak other projects' memory.
       // If no results, the session simply starts with no injected context.
 
-      db.close();
-
-      if (globalRows.length === 0 && projectRows.length === 0) {
+      if (rows.length === 0) {
         // No memory — output empty context
+        db.close();
         logToFile("SessionStart: no recent memory found");
         process.stdout.write(JSON.stringify({}));
         return;
       }
 
-      // Build context text — global and project in separate sections so the
-      // agent can distinguish cross-project rules from project-specific work.
-      const lines: string[] = [];
-      const allRows = [...globalRows, ...projectRows];
-
-      if (globalRows.length > 0) {
-        lines.push("[remem-mcp] Global memory (cross-project rules, conventions, lessons):");
-        for (const row of globalRows) {
-          const date = new Date(row.created_at).toISOString().split("T")[0];
-          const tags = safeParseTags(row.tags);
-          const tagStr = tags.length > 0 ? ` [${tags.join(", ")}]` : "";
-          const content = row.content.length > 200 ? `${row.content.slice(0, 200)}...` : row.content;
-          lines.push(`- (${row.type}${tagStr}) ${date}: ${content}`);
-        }
-        lines.push("");
-      }
-
-      if (projectRows.length > 0) {
-        lines.push("[remem-mcp] Recent project memory:");
-        for (const row of projectRows) {
-          const date = new Date(row.created_at).toISOString().split("T")[0];
-          const tags = safeParseTags(row.tags);
-          const tagStr = tags.length > 0 ? ` [${tags.join(", ")}]` : "";
-          const content = row.content.length > 200 ? `${row.content.slice(0, 200)}...` : row.content;
-          lines.push(`- (${row.type}${tagStr}) ${date}: ${content}`);
-        }
-        lines.push("");
+      // Build context text
+      const lines: string[] = ["[remem-mcp] Recent project memory:"];
+      for (const row of rows) {
+        const date = new Date(row.created_at).toISOString().split("T")[0];
+        const tags = safeParseTags(row.tags);
+        const tagStr = tags.length > 0 ? ` [${tags.join(", ")}]` : "";
+        // Truncate content to 200 chars for context injection
+        const content = row.content.length > 200 ? `${row.content.slice(0, 200)}...` : row.content;
+        lines.push(`- (${row.type}${tagStr}) ${date}: ${content}`);
       }
 
       // Inject L3 persona (user preferences, ~50 tokens)
@@ -570,6 +547,36 @@ export function hookRecall(dbPath: string): void {
         // persona table not available — skip
       }
 
+      // Inject L2 scenarios (high-signal summaries, ~100 tokens)
+      try {
+        const scenarios = db
+          .prepare("SELECT summary FROM scenarios ORDER BY created_at DESC LIMIT 3")
+          .all() as { summary: string }[];
+        if (scenarios.length > 0) {
+          lines.push("");
+          lines.push(`## Scenarios (L2)`);
+          for (const s of scenarios) lines.push(`- ${s.summary}`);
+        }
+      } catch {
+        // scenarios table not available — skip
+      }
+
+      // Inject skills (~100 tokens)
+      try {
+        const skills = db
+          .prepare("SELECT name, description FROM skills ORDER BY updated_at DESC LIMIT 3")
+          .all() as { name: string; description: string }[];
+        if (skills.length > 0) {
+          lines.push("");
+          lines.push(`## Skills`);
+          for (const s of skills) lines.push(`- ${s.name}: ${(s.description || "").slice(0, 80)}`);
+        }
+      } catch {
+        // skills table not available — skip
+      }
+
+      db.close();
+
       lines.push("");
       lines.push("Use these memories to inform your work. Call recall() for more details.");
       lines.push(
@@ -580,13 +587,12 @@ export function hookRecall(dbPath: string): void {
 
       // Append the summary to the log file so the user can inspect it
       // without the output interfering with the terminal prompt.
-      logToFile(`SessionStart: loaded ${allRows.length} capture(s) (${globalRows.length} global, ${projectRows.length} project)\n${context}`);
+      logToFile(`SessionStart: loaded ${rows.length} capture(s)\n${context}`);
 
       // Visible feedback so user sees memory was loaded
-      const errorCount = allRows.filter((r: any) => r.type === "error").length;
-      const otherCount = allRows.length - errorCount;
+      const errorCount = rows.filter((r: any) => r.type === "error").length;
+      const otherCount = rows.length - errorCount;
       const parts: string[] = [];
-      if (globalRows.length > 0) parts.push(`${globalRows.length} global`);
       if (errorCount > 0) parts.push(`${errorCount} past error(s)`);
       if (otherCount > 0) parts.push(`${otherCount} memorie(s)`);
       feedback("💡", `remem-mcp: loaded ${parts.join(" + ")} from previous sessions`);
@@ -878,6 +884,56 @@ export function hookUserPromptSubmit(dbPath: string): void {
         }
       }
 
+      // Inject L2 scenarios (high-signal summaries, ~100 tokens)
+      try {
+        const scenarios = db
+          .prepare("SELECT summary FROM scenarios ORDER BY created_at DESC LIMIT 3")
+          .all() as { summary: string }[];
+        if (scenarios.length > 0) {
+          const scenarioLines = scenarios.map((s) => `- ${s.summary}`);
+          if (recallContext) {
+            recallContext += `\n\n## Scenarios (L2 summaries)\n${scenarioLines.join("\n")}`;
+          } else {
+            recallContext = `[remem-mcp] Scenarios (L2 summaries):\n${scenarioLines.join("\n")}`;
+          }
+        }
+      } catch {
+        // scenarios table not available — skip
+      }
+
+      // Inject L3 persona (user preferences, ~50 tokens)
+      try {
+        const personaRow = db
+          .prepare("SELECT content FROM persona WHERE team_id = ? AND user_id = ? ORDER BY updated_at DESC LIMIT 1")
+          .get("default", "default") as { content: string } | undefined;
+        if (personaRow && personaRow.content) {
+          if (recallContext) {
+            recallContext += `\n\n## Persona (L3)\n${personaRow.content}`;
+          } else {
+            recallContext = `[remem-mcp] Persona (L3):\n${personaRow.content}`;
+          }
+        }
+      } catch {
+        // persona table not available — skip
+      }
+
+      // Inject matched skills (~100 tokens)
+      try {
+        const skills = db
+          .prepare("SELECT name, description FROM skills ORDER BY updated_at DESC LIMIT 3")
+          .all() as { name: string; description: string }[];
+        if (skills.length > 0) {
+          const skillLines = skills.map((s) => `- ${s.name}: ${(s.description || "").slice(0, 80)}`);
+          if (recallContext) {
+            recallContext += `\n\n## Skills\n${skillLines.join("\n")}`;
+          } else {
+            recallContext = `[remem-mcp] Skills:\n${skillLines.join("\n")}`;
+          }
+        }
+      } catch {
+        // skills table not available — skip
+      }
+
       db.close();
 
       // Build output — include recall context if any
@@ -988,6 +1044,16 @@ export function hookStop(dbPath?: string): void {
         child.unref();
         logToFile(`Stop: spawned background capture for session ${sid}`);
       }
+
+      // Spawn background pipeline worker (L0→L1→L2→L3 auto-distill, zero LLM cost)
+      const scriptPath = process.argv[1];
+      const workerChild = spawn(
+        process.execPath,
+        [scriptPath, "worker-run", dbPath],
+        { detached: true, stdio: "ignore" },
+      );
+      workerChild.unref();
+      logToFile(`Stop: spawned background pipeline worker for session ${sid}`);
     }
 
     // Second+ fire (stop_hook_active): agent already got the reminder, let it stop.
@@ -1101,9 +1167,21 @@ export function hookPostToolUse(dbPath: string): void {
 
       // [Moat 3: Pattern Learning] Capture code patterns from Write/Edit
       if (isWriteEdit) {
+        // Capture exclusions: drop events for files in ignored paths (node_modules, dist, etc.)
+        const writeEditCwd = input.cwd ?? toolInput.workdir ?? process.cwd();
+        const ignorePatterns = loadCaptureExclusions(writeEditCwd);
+        if (ignorePatterns.length > 0 && toolInput.file_path) {
+          if (shouldExcludePath(toolInput.file_path, ignorePatterns)) {
+            logToFile(
+              `PostToolUse: skipping Write/Edit — file_path "${toolInput.file_path}" matches capture exclusion`,
+            );
+            process.stdout.write(JSON.stringify({}));
+            return;
+          }
+        }
         try {
           const db = new Database(dbPath);
-          const sessionKey = hashPath(input.cwd ?? toolInput.workdir ?? process.cwd());
+          const sessionKey = hashPath(writeEditCwd);
           const pattern = detectPattern(toolName, toolInput);
           if (pattern) {
             const id = `pat-${createHash("sha256")
@@ -1297,6 +1375,16 @@ export function hookPostToolUse(dbPath: string): void {
       // Noise filter: skip error capture for obvious test/noise commands
       if (isNoiseCommand(command)) {
         logToFile(`PostToolUse: skipping noise command: ${command.slice(0, 80)}`);
+        process.stdout.write(JSON.stringify({}));
+        return;
+      }
+
+      // Capture exclusions: skip events for commands referencing ignored paths
+      const bashIgnorePatterns = loadCaptureExclusions(cwd);
+      if (bashIgnorePatterns.length > 0 && shouldExcludeCommand(command, bashIgnorePatterns)) {
+        logToFile(
+          `PostToolUse: skipping Bash — command matches capture exclusion: ${command.slice(0, 80)}`,
+        );
         process.stdout.write(JSON.stringify({}));
         return;
       }
@@ -2704,6 +2792,131 @@ export function hookPreToolUse(dbPath: string): void {
       process.stdout.write(JSON.stringify({}));
     }
   });
+}
+
+// ─── Capture Exclusions ─────────────────────────────────────────────
+// Per-repository capture exclusions via .remem.toml marker file.
+// A dropped event never enters the DB — filtered before any write.
+//
+// Format (simple TOML subset, no dependency needed):
+//   [capture]
+//   ignore_paths = ["node_modules", "dist", ".git", "*.min.js"]
+//
+// Patterns are matched as path segments (substring within a path component)
+// or glob-style suffixes (*.min.js). The marker file is searched from cwd
+// upward through ancestors, first match wins.
+
+/** Cache: cwd → ignore patterns (or empty array if no marker file). */
+const exclusionCache = new Map<string, string[]>();
+
+/** Maximum ancestors to walk when searching for .remem.toml. */
+const MAX_ANCESTORS = 20;
+
+/**
+ * Parse the [capture] ignore_paths from a .remem.toml file.
+ * Minimal parser — handles only the `ignore_paths = [...]` array syntax.
+ */
+function parseCaptureExclusions(content: string): string[] {
+  // Find the [capture] section
+  const sectionMatch = content.match(/^\[capture\]\s*$/m);
+  if (!sectionMatch) return [];
+
+  // Get text from [capture] to the next [section] or EOF
+  const sectionStart = sectionMatch.index! + sectionMatch[0].length;
+  const nextSection = content.slice(sectionStart).match(/^\[.+\]\s*$/m);
+  const sectionText = nextSection
+    ? content.slice(sectionStart, sectionStart + nextSection.index!)
+    : content.slice(sectionStart);
+
+  // Parse ignore_paths = ["a", "b", "c"]
+  const pathsMatch = sectionText.match(/ignore_paths\s*=\s*\[([^\]]*)\]/);
+  if (!pathsMatch) return [];
+
+  // Extract quoted strings from the array
+  const items = pathsMatch[1].match(/"([^"]+)"/g);
+  if (!items) return [];
+
+  return items.map((item) => item.replace(/"/g, ""));
+}
+
+/**
+ * Walk up from cwd to find a .remem.toml marker file and load capture exclusions.
+ * Results are cached per-cwd for the process lifetime (hooks are short-lived).
+ * Returns an array of ignore patterns (empty if no marker file or no [capture] section).
+ */
+export function loadCaptureExclusions(cwd: string): string[] {
+  const cached = exclusionCache.get(cwd);
+  if (cached !== undefined) return cached;
+
+  let patterns: string[] = [];
+  try {
+    let dir = cwd;
+    for (let i = 0; i < MAX_ANCESTORS; i++) {
+      const markerPath = join(dir, ".remem.toml");
+      if (existsSync(markerPath)) {
+        const content = readFileSync(markerPath, "utf-8");
+        patterns = parseCaptureExclusions(content);
+        break;
+      }
+      const parent = dirname(dir);
+      if (parent === dir) break; // reached filesystem root
+      dir = parent;
+    }
+  } catch {
+    // Best-effort — if we can't read the marker, capture everything
+  }
+
+  exclusionCache.set(cwd, patterns);
+  return patterns;
+}
+
+/**
+ * Check if a file path matches any ignore pattern.
+ * Patterns are matched as:
+ * - Glob suffix: "*.min.js" matches any path ending with ".min.js"
+ * - Path segment: "node_modules" matches if any path component equals "node_modules"
+ * - Simple substring: "dist" matches if "dist" appears as a path segment
+ */
+export function shouldExcludePath(filePath: string, ignorePatterns: string[]): boolean {
+  if (ignorePatterns.length === 0) return false;
+  const normalized = filePath.replace(/\\/g, "/");
+  const segments = normalized.split("/");
+
+  for (const pattern of ignorePatterns) {
+    // Glob suffix: *.ext
+    if (pattern.startsWith("*.")) {
+      if (normalized.endsWith(pattern.slice(1))) return true;
+      continue;
+    }
+    // Path segment match: "node_modules" matches /foo/node_modules/bar
+    if (segments.includes(pattern)) return true;
+  }
+  return false;
+}
+
+/**
+ * Check if a Bash command references files in ignored paths.
+ * Extracts file paths from common command patterns and checks them.
+ * Also checks if any ignore pattern appears as a path segment in the command.
+ */
+export function shouldExcludeCommand(command: string, ignorePatterns: string[]): boolean {
+  if (ignorePatterns.length === 0) return false;
+
+  for (const pattern of ignorePatterns) {
+    // Glob suffix — skip for command matching (commands rarely reference *.min.js directly)
+    if (pattern.startsWith("*.")) continue;
+
+    // Check if the pattern appears as a path segment in the command
+    // e.g. "node_modules" matches "cat node_modules/foo.js" or "ls ./node_modules"
+    const re = new RegExp(`(^|[\\s/])${escapeRegex(pattern)}([\\s/]|$)`);
+    if (re.test(command)) return true;
+  }
+  return false;
+}
+
+/** Escape special regex characters in a string. */
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**
