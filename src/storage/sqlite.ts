@@ -203,7 +203,7 @@ export class SQLiteBackend implements StorageBackend {
 
     // Pragmas that are safe for both read-write and read-only
     try {
-      this.db.pragma("busy_timeout = 5000");
+      this.db.pragma("busy_timeout = 10000");
     } catch {
       /* read-only */
     }

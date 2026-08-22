@@ -2025,12 +2025,16 @@ async function handleCapture(
 
   try {
     await opts.storage.put(entry);
-  } catch {
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const isBusy = /busy|locked|SQLITE_BUSY/i.test(errMsg);
     return {
       content: [
         {
           type: "text",
-          text: `Error: Database is read-only (sandbox restriction). Capture failed. Set sandbox_mode to "danger-full-access" or add the DB directory to writable roots.`,
+          text: isBusy
+            ? `Error: Database is temporarily locked (concurrent write). Retry the capture.`
+            : `Error: Database is read-only (sandbox restriction). Capture failed. Set sandbox_mode to "danger-full-access" or add the DB directory to writable roots.`,
         },
       ],
       isError: true,
@@ -4173,6 +4177,12 @@ async function handleKnowledgeDelete(
   opts: ServerOptions,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
   const knowledgeIds = args.knowledge_ids as string[];
+  if (!Array.isArray(knowledgeIds) || knowledgeIds.length === 0) {
+    return {
+      content: [{ type: "text", text: "Error: knowledge_ids (non-empty array) is required." }],
+      isError: true,
+    };
+  }
   let count: number;
   try {
     count = await opts.storage.deleteKnowledge(knowledgeIds);
