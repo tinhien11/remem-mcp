@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
@@ -621,22 +622,27 @@ export class SQLiteBackend implements StorageBackend {
       this.db.exec("ALTER TABLE symbols ADD COLUMN module_path TEXT");
       addedAny = true;
     } catch (err) {
-      if (!String(err).includes("duplicate column")) console.error(`[remem-mcp] migrateV8ToV9: ${err}`);
+      if (!String(err).includes("duplicate column"))
+        console.error(`[remem-mcp] migrateV8ToV9: ${err}`);
     }
     try {
       this.db.exec("ALTER TABLE calls ADD COLUMN confidence REAL");
       addedAny = true;
     } catch (err) {
-      if (!String(err).includes("duplicate column")) console.error(`[remem-mcp] migrateV8ToV9: ${err}`);
+      if (!String(err).includes("duplicate column"))
+        console.error(`[remem-mcp] migrateV8ToV9: ${err}`);
     }
     try {
       this.db.exec("ALTER TABLE calls ADD COLUMN call_type TEXT NOT NULL DEFAULT 'direct'");
       addedAny = true;
     } catch (err) {
-      if (!String(err).includes("duplicate column")) console.error(`[remem-mcp] migrateV8ToV9: ${err}`);
+      if (!String(err).includes("duplicate column"))
+        console.error(`[remem-mcp] migrateV8ToV9: ${err}`);
     }
     if (addedAny) {
-      console.error("[remem-mcp] Added CodeGraph call resolution columns (module_path, confidence, call_type)");
+      console.error(
+        "[remem-mcp] Added CodeGraph call resolution columns (module_path, confidence, call_type)",
+      );
     }
     console.error("[remem-mcp] Migrated schema v8 → v9 (CodeGraph call resolution)");
   }
@@ -831,7 +837,8 @@ export class SQLiteBackend implements StorageBackend {
     // agents, not just the one that rejected it. The content_hash is computed
     // from redacted content, so the same secret or wrong value produces the
     // same hash regardless of which session or agent captured it.
-    const sql = "SELECT * FROM captures WHERE content_hash = ? AND trust_state = 'rejected' LIMIT 1";
+    const sql =
+      "SELECT * FROM captures WHERE content_hash = ? AND trust_state = 'rejected' LIMIT 1";
     const rows = this.db.prepare(sql).all(contentHash) as DbRow[];
     return rows.map(rowToEntry);
   }
@@ -1850,6 +1857,89 @@ export class SQLiteBackend implements StorageBackend {
 
   close(): void {
     this.db.close();
+  }
+
+  // ─── Canvas + Refs (v9: symbolic short-term memory) ───────────────────
+  // These methods implement the StorageBackend interface for F1 (Mermaid canvas).
+
+  async appendCanvasNode(
+    sessionKey: string,
+    node: { id: string; label: string; captureId: string },
+    edges: Array<{ from: string; to: string; label?: string }>,
+    teamId?: string,
+  ): Promise<void> {
+    const now = Date.now();
+    let canvasRow = this.db
+      .prepare("SELECT id FROM canvases WHERE session_key = ? ORDER BY updated_at DESC LIMIT 1")
+      .get(sessionKey) as { id: string } | undefined;
+    if (!canvasRow) {
+      const canvasId = `01${now.toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
+      this.db.prepare(
+        "INSERT INTO canvases (id, session_key, mermaid_text, node_count, created_at, updated_at, team_id) VALUES (?, ?, NULL, 0, ?, ?, ?)",
+      ).run(canvasId, sessionKey, now, now, teamId ?? null);
+      canvasRow = { id: canvasId };
+    }
+    const maxSeq = this.db
+      .prepare("SELECT MAX(seq) as max_seq FROM canvas_nodes WHERE canvas_id = ?")
+      .get(canvasRow.id) as { max_seq: number | null };
+    const seq = (maxSeq.max_seq ?? 0) + 1;
+    this.db.prepare(
+      "INSERT INTO canvas_nodes (id, canvas_id, node_id, label, seq, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run(`01${now.toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 10).toUpperCase()}`, canvasRow.id, node.id, node.label, seq, now);
+    for (const edge of edges) {
+      this.db.prepare(
+        "INSERT INTO canvas_edges (id, canvas_id, source_node_id, target_node_id, label, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run(`01${now.toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 10).toUpperCase()}`, canvasRow.id, edge.from, edge.to, edge.label ?? null, now);
+    }
+    this.db.prepare("UPDATE canvases SET node_count = node_count + 1, updated_at = ? WHERE id = ?").run(now, canvasRow.id);
+  }
+
+  async getLatestCanvasNode(
+    sessionKey: string,
+  ): Promise<{ id: string; label: string; captureId: string } | null> {
+    const row = this.db
+      .prepare(
+        `SELECT cn.node_id as id, cn.label, cn.node_id as captureId
+         FROM canvas_nodes cn
+         JOIN canvases c ON cn.canvas_id = c.id
+         WHERE c.session_key = ?
+         ORDER BY cn.seq DESC LIMIT 1`,
+      )
+      .get(sessionKey) as { id: string; label: string; captureId: string } | undefined;
+    return row ?? null;
+  }
+
+  async getCanvasMermaidText(sessionKey: string): Promise<string | null> {
+    const row = this.db
+      .prepare("SELECT mermaid_text FROM canvases WHERE session_key = ? ORDER BY updated_at DESC LIMIT 1")
+      .get(sessionKey) as { mermaid_text: string | null } | undefined;
+    return row?.mermaid_text ?? null;
+  }
+
+  async writeRef(sessionKey: string, nodeId: string, content: string): Promise<void> {
+    const refsDir = join(homedir(), ".local", "share", "remem-mcp", "refs", sessionKey);
+    try {
+      mkdirSync(refsDir, { recursive: true });
+      writeFileSync(join(refsDir, `${nodeId}.md`), content, "utf-8");
+    } catch (err) {
+      console.error(`[remem-mcp] writeRef failed: ${err}`);
+    }
+  }
+
+  async readRef(nodeId: string): Promise<string | null> {
+    const refsBase = join(homedir(), ".local", "share", "remem-mcp", "refs");
+    try {
+      const sessions = readdirSync(refsBase);
+      for (const session of sessions) {
+        const refPath = join(refsBase, session, `${nodeId}.md`);
+        if (existsSync(refPath)) {
+          return readFileSync(refPath, "utf-8");
+        }
+      }
+    } catch {
+      // refs dir doesn't exist yet
+    }
+    return null;
   }
 }
 

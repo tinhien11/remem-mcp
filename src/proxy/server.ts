@@ -11,14 +11,18 @@
  * This enables zero-code integration with any agent that calls OpenAI/Anthropic APIs.
  */
 
-import { createServer, IncomingMessage, ServerResponse } from "node:http";
+import {
+  createServer,
+  request as httpRequestHttp,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
 import { request as httpRequest } from "node:https";
-import { request as httpRequestHttp } from "node:http";
 import { URL } from "node:url";
-import { SQLiteBackend } from "../storage/sqlite.js";
 import { LocalEmbedder } from "../embedding/local.js";
+import { SQLiteBackend } from "../storage/sqlite.js";
+import { captureConversation, captureConversationAnthropic } from "./capture.js";
 import { injectMemory } from "./inject.js";
-import { captureConversation } from "./capture.js";
 import { SessionStore } from "./session.js";
 
 export interface ProxyConfig {
@@ -123,7 +127,9 @@ async function handleOpenAIRequest(
   if (config.injectMemory) {
     const lastUserMessage = getLastUserMessage(parsed.messages ?? []);
     const sessionBinding = sessions.getFromHeaders(req.headers);
-    console.error(`[proxy] inject: userMsg="${lastUserMessage?.slice(0, 50)}" binding=${JSON.stringify(sessionBinding)}`);
+    console.error(
+      `[proxy] inject: userMsg="${lastUserMessage?.slice(0, 50)}" binding=${JSON.stringify(sessionBinding)}`,
+    );
     if (lastUserMessage) {
       try {
         const injected = await injectMemory(
@@ -133,7 +139,7 @@ async function handleOpenAIRequest(
           embedder,
           sessionBinding,
         );
-        const hasMemory = injected.some((m: Message) => m.content.includes("<remem-mcp>"));
+        const hasMemory = injected.some((m: { content: string }) => m.content.includes("<remem-mcp>"));
         console.error(`[proxy] inject result: hasMemory=${hasMemory}, messages=${injected.length}`);
         parsed.messages = injected;
       } catch (e) {
@@ -156,9 +162,12 @@ async function handleOpenAIRequest(
   if (config.autoCapture) {
     const responseText = extractOpenAIResponse(upstreamResp.body);
     if (responseText) {
-      captureConversation(parsed.messages ?? [], responseText, storage, sessions.getFromHeaders(req.headers)).catch(
-        (e) => console.error("[remem-mcp proxy] Capture error:", e),
-      );
+      captureConversation(
+        parsed.messages ?? [],
+        responseText,
+        storage,
+        sessions.getFromHeaders(req.headers),
+      ).catch((e: unknown) => console.error("[remem-mcp proxy] Capture error:", e));
     }
   }
 
@@ -215,7 +224,7 @@ async function handleAnthropicRequest(
         responseText,
         storage,
         sessions.getFromHeaders(req.headers),
-      ).catch((e) => console.error("[remem-mcp proxy] Capture error:", e));
+      ).catch((e: unknown) => console.error("[remem-mcp proxy] Capture error:", e));
     }
   }
 
@@ -224,7 +233,11 @@ async function handleAnthropicRequest(
 }
 
 /** Pass-through for unsupported endpoints. */
-async function passthrough(req: IncomingMessage, res: ServerResponse, config: ProxyConfig): Promise<void> {
+async function passthrough(
+  req: IncomingMessage,
+  res: ServerResponse,
+  config: ProxyConfig,
+): Promise<void> {
   const url = new URL(req.url ?? "/", `http://localhost:${config.port}`);
   const upstreamResp = await forwardRequest(
     config.upstreamUrl,
@@ -261,7 +274,9 @@ function getLastUserMessage(messages: Array<{ role: string; content: string }>):
 }
 
 /** Get the last user message from Anthropic-format messages. */
-function getLastUserMessageAnthropic(messages: Array<{ role: string; content: unknown }>): string | null {
+function getLastUserMessageAnthropic(
+  messages: Array<{ role: string; content: unknown }>,
+): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role === "user") {
       const content = messages[i].content;
@@ -343,26 +358,22 @@ async function forwardRequest(
   }
 
   return new Promise((resolve, reject) => {
-    const proxyReq = requestFn(
-      url,
-      { method, headers: forwardHeaders },
-      (proxyRes) => {
-        const chunks: Buffer[] = [];
-        proxyRes.on("data", (c) => chunks.push(c));
-        proxyRes.on("end", () => {
-          const respHeaders: Record<string, string> = {};
-          for (const [k, v] of Object.entries(proxyRes.headers)) {
-            if (typeof v === "string") respHeaders[k] = v;
-          }
-          resolve({
-            statusCode: proxyRes.statusCode ?? 200,
-            headers: respHeaders,
-            body: Buffer.concat(chunks).toString("utf-8"),
-          });
+    const proxyReq = requestFn(url, { method, headers: forwardHeaders }, (proxyRes) => {
+      const chunks: Buffer[] = [];
+      proxyRes.on("data", (c) => chunks.push(c));
+      proxyRes.on("end", () => {
+        const respHeaders: Record<string, string> = {};
+        for (const [k, v] of Object.entries(proxyRes.headers)) {
+          if (typeof v === "string") respHeaders[k] = v;
+        }
+        resolve({
+          statusCode: proxyRes.statusCode ?? 200,
+          headers: respHeaders,
+          body: Buffer.concat(chunks).toString("utf-8"),
         });
-        proxyRes.on("error", reject);
-      },
-    );
+      });
+      proxyRes.on("error", reject);
+    });
     proxyReq.on("error", reject);
     proxyReq.write(body);
     proxyReq.end();

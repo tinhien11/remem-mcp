@@ -709,7 +709,8 @@ const TOOLS: Tool[] = [
         },
         value: {
           type: "string",
-          description: "The trait value (e.g., 'Vietnamese', 'concise', 'AZR', 'Asia/Ho_Chi_Minh').",
+          description:
+            "The trait value (e.g., 'Vietnamese', 'concise', 'AZR', 'Asia/Ho_Chi_Minh').",
         },
         ...TENANT_PARAMS,
       },
@@ -1263,7 +1264,8 @@ const TOOLS: Tool[] = [
           type: "string",
           enum: ["mermaid", "json"],
           default: "mermaid",
-          description: "Output format. 'mermaid' returns the Mermaid graph text. 'json' returns structured nodes/edges.",
+          description:
+            "Output format. 'mermaid' returns the Mermaid graph text. 'json' returns structured nodes/edges.",
         },
       },
     },
@@ -1309,7 +1311,8 @@ const TOOLS: Tool[] = [
         trigger_conditions: {
           type: "array",
           items: { type: "string" },
-          description: "Keywords or patterns that trigger this skill (e.g., ['deploy', 'vercel', 'production']).",
+          description:
+            "Keywords or patterns that trigger this skill (e.g., ['deploy', 'vercel', 'production']).",
         },
         steps: {
           type: "array",
@@ -1319,7 +1322,8 @@ const TOOLS: Tool[] = [
         validation_rules: {
           type: "array",
           items: { type: "string" },
-          description: "How to verify the skill succeeded (e.g., ['curl returns 200', 'no errors in logs']).",
+          description:
+            "How to verify the skill succeeded (e.g., ['curl returns 200', 'no errors in logs']).",
         },
         source_capture_ids: {
           type: "array",
@@ -1738,7 +1742,10 @@ async function handleRecall(
     const jsonText = JSON.stringify(
       vectorDegraded
         ? { results: jsonResults, _meta: { vector_degraded: true, channels_run: ["keyword"] } }
-        : { results: jsonResults, _meta: { channels_run: mode === "vector" ? ["vector"] : ["keyword", "vector"] } },
+        : {
+            results: jsonResults,
+            _meta: { channels_run: mode === "vector" ? ["vector"] : ["keyword", "vector"] },
+          },
     );
     opts.audit.log({
       tool: "recall",
@@ -1787,9 +1794,7 @@ async function handleRecall(
       limit: 3,
     });
     if (scenarios.length > 0) {
-      const scenarioLines = scenarios.map(
-        (s) => `  ${s.summary}`,
-      );
+      const scenarioLines = scenarios.map((s) => `  ${s.summary}`);
       text += `\n\n## Scenarios (L2 summaries)\n${scenarioLines.join("\n")}`;
     }
   } catch {
@@ -1933,7 +1938,15 @@ async function handleCapture(
     // Log the override to audit so there's a traceable record
     opts.audit.log({
       tool: "capture",
-      argsHash: AuditLogger.hashArgs({ type, tags, sessionKey, overrideReason, teamId, userId, taskId }),
+      argsHash: AuditLogger.hashArgs({
+        type,
+        tags,
+        sessionKey,
+        overrideReason,
+        teamId,
+        userId,
+        taskId,
+      }),
       resultLen: 0,
       quotaHit: false,
       redacted: wasRedacted,
@@ -2293,7 +2306,10 @@ async function handleSearch(
     const jsonText = JSON.stringify(
       vectorDegraded
         ? { results: jsonResults, _meta: { vector_degraded: true, channels_run: ["keyword"] } }
-        : { results: jsonResults, _meta: { channels_run: mode === "vector" ? ["vector"] : ["keyword", "vector"] } },
+        : {
+            results: jsonResults,
+            _meta: { channels_run: mode === "vector" ? ["vector"] : ["keyword", "vector"] },
+          },
     );
     opts.audit.log({
       tool: "search",
@@ -4188,10 +4204,16 @@ async function handleScenarioConsolidate(
     return { content: [{ type: "text", text: "Error: atom_ids is required." }], isError: true };
   }
   if (!summary || summary.trim().length < 10) {
-    return { content: [{ type: "text", text: "Error: summary must be at least 10 characters." }], isError: true };
+    return {
+      content: [{ type: "text", text: "Error: summary must be at least 10 characters." }],
+      isError: true,
+    };
   }
   if (atomIds.length > 20) {
-    return { content: [{ type: "text", text: "Error: Maximum 20 atom_ids per consolidation." }], isError: true };
+    return {
+      content: [{ type: "text", text: "Error: Maximum 20 atom_ids per consolidation." }],
+      isError: true,
+    };
   }
 
   const id = generateId();
@@ -4242,14 +4264,17 @@ async function handlePersonaUpdate(
   const agentId = (args.agent_id as string) ?? detectAgentId();
 
   if (!trait || !value) {
-    return { content: [{ type: "text", text: "Error: trait and value are required." }], isError: true };
+    return {
+      content: [{ type: "text", text: "Error: trait and value are required." }],
+      isError: true,
+    };
   }
 
   const tid = teamId ?? "default";
   const uid = userId ?? "default";
 
   // Read existing persona, append/update trait
-  let existing = await opts.storage.readPersona(tid, agentId, uid);
+  const existing = await opts.storage.readPersona(tid, agentId, uid);
   let content: string;
   if (existing) {
     // Parse existing content as "trait: value" lines, update or append
@@ -4675,7 +4700,8 @@ function handleCodegraphDetectChanges(
   }
 
   // Trace callers for blast radius
-  const { impactAnalysis } = require("./codegraph/engine.js") as typeof import("./codegraph/engine.js");
+  const { impactAnalysis } =
+    require("./codegraph/engine.js") as typeof import("./codegraph/engine.js");
   const results: Array<{
     symbol: { name: string; kind: string; file: string; line: number };
     callers: Array<{ name: string; depth: number; path: string }>;
@@ -4686,8 +4712,7 @@ function handleCodegraphDetectChanges(
     try {
       const impact = impactAnalysis(db, sym.id, { maxDepth });
       const callerCount = impact.affected.length;
-      const risk =
-        callerCount >= 10 ? "high" : callerCount >= 3 ? "medium" : "low";
+      const risk = callerCount >= 10 ? "high" : callerCount >= 3 ? "medium" : "low";
       results.push({
         symbol: {
           name: sym.name,
@@ -4707,9 +4732,15 @@ function handleCodegraphDetectChanges(
     }
   }
 
-  const lines: string[] = [`Changed files: ${changedFiles.length}`, `Affected symbols: ${changedSymbols.length}`, ""];
+  const lines: string[] = [
+    `Changed files: ${changedFiles.length}`,
+    `Affected symbols: ${changedSymbols.length}`,
+    "",
+  ];
   for (const r of results) {
-    lines.push(`[${r.risk.toUpperCase()}] ${r.symbol.kind} ${r.symbol.name} (${r.symbol.file}:${r.symbol.line})`);
+    lines.push(
+      `[${r.risk.toUpperCase()}] ${r.symbol.kind} ${r.symbol.name} (${r.symbol.file}:${r.symbol.line})`,
+    );
     if (r.callers.length > 0) {
       lines.push(`  Callers (${r.callers.length} shown):`);
       for (const c of r.callers) {
@@ -4896,7 +4927,15 @@ async function handleCanvasGet(
         content: [
           {
             type: "text",
-            text: JSON.stringify({ sessionKey, mermaid: mermaidText, tokenEstimate: Math.ceil(mermaidText.length / 4) }, null, 2),
+            text: JSON.stringify(
+              {
+                sessionKey,
+                mermaid: mermaidText,
+                tokenEstimate: Math.ceil(mermaidText.length / 4),
+              },
+              null,
+              2,
+            ),
           },
         ],
       };

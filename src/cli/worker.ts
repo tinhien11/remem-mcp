@@ -12,10 +12,7 @@ import { runPipelineWorker } from "../pipeline/worker.js";
  *
  * Intended to be called from Stop hook or manually after a session.
  */
-export async function workerCommand(
-  dbPath: string,
-  flags: Record<string, string>,
-): Promise<void> {
+export async function workerCommand(dbPath: string, flags: Record<string, string>): Promise<void> {
   const embedder = new LocalEmbedder();
   const result = await runPipelineWorker(
     {

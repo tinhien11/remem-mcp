@@ -4,10 +4,29 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
+import { writeRef } from "./storage/refs.js";
+import { generateId as generateUlid } from "./utils/ulid.js";
 
 /** Whether to show visible feedback on stderr when memory is injected.
  * Set REMEM_QUIET=1 to suppress. Default: show feedback. */
 const SHOW_FEEDBACK = process.env.REMEM_QUIET !== "1";
+
+/** Check if offload (F1) is enabled — either directly or via REMEM_FLOW=full. */
+function isOffloadEnabled(): boolean {
+  return (
+    process.env.REMEM_OFFLOAD_ENABLED === "true" ||
+    process.env.REMEM_OFFLOAD_ENABLED === "1" ||
+    process.env.REMEM_FLOW === "full"
+  );
+}
+
+/** Check if skill pipeline (F3) is enabled — either directly or via REMEM_FLOW=full. */
+function isSkillPipelineEnabled(): boolean {
+  return (
+    process.env.REMEM_PIPELINE === "skill" ||
+    process.env.REMEM_FLOW === "full"
+  );
+}
 
 /** Print a short visible feedback line to stderr so the user can see
  *  that memory was injected. Does NOT interfere with stdout JSON. */
@@ -536,7 +555,9 @@ export function hookRecall(dbPath: string): void {
       // Inject L3 persona (user preferences, ~50 tokens)
       try {
         const personaRow = db
-          .prepare("SELECT content FROM persona WHERE team_id = ? AND user_id = ? ORDER BY updated_at DESC LIMIT 1")
+          .prepare(
+            "SELECT content FROM persona WHERE team_id = ? AND user_id = ? ORDER BY updated_at DESC LIMIT 1",
+          )
           .get("default", "default") as { content: string } | undefined;
         if (personaRow && personaRow.content) {
           lines.push("");
@@ -638,9 +659,7 @@ function isAckPrompt(prompt: string): boolean {
  * - Skip questions (those go to recall, not capture)
  * - Skip if too short or no clear fact after the signal phrase
  */
-function extractUpdateFact(
-  prompt: string,
-): { fact: string; type: "decision" | "learning" } | null {
+function extractUpdateFact(prompt: string): { fact: string; type: "decision" | "learning" } | null {
   const p = prompt.trim();
   if (p.length < 15) return null;
 
@@ -648,11 +667,20 @@ function extractUpdateFact(
   // Each pattern strips the signal prefix to extract the actual fact.
   const updatePatterns: Array<{ re: RegExp; type: "decision" | "learning" }> = [
     // "remember that ..." / "nhớ là ..." / "đừng quên ..."
-    { re: /^(?:remember that|remember|don't forget|dont forget|note that|for future reference)\s*:?\s*(.+)/i, type: "learning" },
+    {
+      re: /^(?:remember that|remember|don't forget|dont forget|note that|for future reference)\s*:?\s*(.+)/i,
+      type: "learning",
+    },
     { re: /^(?:nhớ là|nhớ rằng|đừng quên|ghi nhớ)\s*:?\s*(.+)/i, type: "learning" },
     // "we use/chose/decided ..." / "mình dùng/chọn/quyết định ..."
-    { re: /^(?:we use|we chose|we decided|we prefer|we always|our convention|our standard)\s*:?\s*(.+)/i, type: "decision" },
-    { re: /^(?:mình dùng|mình chọn|mình quyết định|chúng ta dùng|chúng ta chọn)\s*:?\s*(.+)/i, type: "decision" },
+    {
+      re: /^(?:we use|we chose|we decided|we prefer|we always|our convention|our standard)\s*:?\s*(.+)/i,
+      type: "decision",
+    },
+    {
+      re: /^(?:mình dùng|mình chọn|mình quyết định|chúng ta dùng|chúng ta chọn)\s*:?\s*(.+)/i,
+      type: "decision",
+    },
     // "update X to Y" / "change X to Y" / "sửa X thành Y"
     { re: /^(?:update|change|set|configure)\s+.+\s+(?:to|as|=\s*)\s*(.+)/i, type: "decision" },
     { re: /^(?:sửa|đổi|cập nhật)\s+.+\s+(?:thành|sang|=\s*)\s*(.+)/i, type: "decision" },
@@ -761,9 +789,7 @@ export function hookUserPromptSubmit(dbPath: string): void {
       if (updateFact) {
         try {
           const content =
-            updateFact.type === "decision"
-              ? `Decision: ${updateFact.fact}`
-              : updateFact.fact;
+            updateFact.type === "decision" ? `Decision: ${updateFact.fact}` : updateFact.fact;
           const contentHash = createHash("sha256").update(content).digest("hex").slice(0, 16);
 
           // Dedup: skip if identical capture already exists
@@ -851,9 +877,7 @@ export function hookUserPromptSubmit(dbPath: string): void {
           const globalKey = process.env.REMEM_GLOBAL_SESSION_KEY;
           if (globalKey && globalKey !== sessionKey) {
             try {
-              const globalRows = db
-                .prepare(sql)
-                .all(ftsQuery, globalKey) as typeof rows;
+              const globalRows = db.prepare(sql).all(ftsQuery, globalKey) as typeof rows;
               const seen = new Set(rows.map((r) => r.id));
               rows.push(...globalRows.filter((r) => !seen.has(r.id)).slice(0, 2));
             } catch {
@@ -904,7 +928,9 @@ export function hookUserPromptSubmit(dbPath: string): void {
       // Inject L3 persona (user preferences, ~50 tokens)
       try {
         const personaRow = db
-          .prepare("SELECT content FROM persona WHERE team_id = ? AND user_id = ? ORDER BY updated_at DESC LIMIT 1")
+          .prepare(
+            "SELECT content FROM persona WHERE team_id = ? AND user_id = ? ORDER BY updated_at DESC LIMIT 1",
+          )
           .get("default", "default") as { content: string } | undefined;
         if (personaRow && personaRow.content) {
           if (recallContext) {
@@ -923,7 +949,9 @@ export function hookUserPromptSubmit(dbPath: string): void {
           .prepare("SELECT name, description FROM skills ORDER BY updated_at DESC LIMIT 3")
           .all() as { name: string; description: string }[];
         if (skills.length > 0) {
-          const skillLines = skills.map((s) => `- ${s.name}: ${(s.description || "").slice(0, 80)}`);
+          const skillLines = skills.map(
+            (s) => `- ${s.name}: ${(s.description || "").slice(0, 80)}`,
+          );
           if (recallContext) {
             recallContext += `\n\n## Skills\n${skillLines.join("\n")}`;
           } else {
@@ -1029,6 +1057,12 @@ export function hookStop(dbPath?: string): void {
         void captureSessionTranscript(dbPath, sid, tpath, input.cwd)
           .then((capId) => {
             logToFile(`Stop: direct capture for session ${sid}, id=${capId ?? "skipped"}`);
+            // F3: Extract skill from capture if pipeline enabled
+            if (capId && isSkillPipelineEnabled()) {
+              void extractSkillFromCapture(dbPath, capId)
+                .then(() => logToFile(`Stop: skill extraction done for ${capId}`))
+                .catch((err) => logToFile(`Stop: skill extraction error - ${err}`));
+            }
           })
           .catch((err) => {
             logToFile(`Stop: capture error - ${err}`);
@@ -1047,11 +1081,10 @@ export function hookStop(dbPath?: string): void {
 
       // Spawn background pipeline worker (L0→L1→L2→L3 auto-distill, zero LLM cost)
       const scriptPath = process.argv[1];
-      const workerChild = spawn(
-        process.execPath,
-        [scriptPath, "worker-run", dbPath],
-        { detached: true, stdio: "ignore" },
-      );
+      const workerChild = spawn(process.execPath, [scriptPath, "worker-run", dbPath], {
+        detached: true,
+        stdio: "ignore",
+      });
       workerChild.unref();
       logToFile(`Stop: spawned background pipeline worker for session ${sid}`);
     }
@@ -1161,8 +1194,25 @@ export function hookPostToolUse(dbPath: string): void {
       const isWriteEdit = toolName === "Write" || toolName === "Edit" || toolName === "MultiEdit";
 
       if (!isBash && !isWriteEdit) {
+        // F1: Offload even non-Bash/Write tools (e.g. Read, Search) to canvas
+        if (isOffloadEnabled()) {
+          try {
+            offloadToolOutput(dbPath, toolName, toolInput, toolResponse, input.cwd);
+          } catch (e) {
+            logToFile(`PostToolUse: offload failed: ${e}`);
+          }
+        }
         process.stdout.write(JSON.stringify({}));
         return;
+      }
+
+      // F1: Offload tool output to refs + canvas (before error/pattern capture)
+      if (isOffloadEnabled()) {
+        try {
+          offloadToolOutput(dbPath, toolName, toolInput, toolResponse, input.cwd);
+        } catch (e) {
+          logToFile(`PostToolUse: offload failed: ${e}`);
+        }
       }
 
       // [Moat 3: Pattern Learning] Capture code patterns from Write/Edit
@@ -2033,6 +2083,7 @@ export function hookPreToolUse(dbPath: string): void {
 
   process.stdin.on("end", () => {
     clearTimeout(stdinTimeout);
+    const contextBlocks: string[] = [];
     try {
       const raw = Buffer.concat(chunks).toString("utf-8");
       if (!raw.trim()) {
@@ -2045,19 +2096,34 @@ export function hookPreToolUse(dbPath: string): void {
       const toolInput = input.tool_input ?? {};
       const command = toolInput.command ?? "";
 
+      // F1: Canvas injection (Mermaid graph for current session)
+      if (isOffloadEnabled()) {
+        try {
+          const canvasContext = getCanvasContext(dbPath, input.cwd ?? process.cwd());
+          if (canvasContext) {
+            contextBlocks.push(canvasContext);
+          }
+        } catch (e) {
+          logToFile(`PreToolUse: canvas injection failed: ${e}`);
+        }
+      }
+
+      // F3: Skill injection (archived + matched by trigger)
+      try {
+        const skillContext = getSkillContext(dbPath, command || toolName);
+        if (skillContext) {
+          contextBlocks.push(skillContext);
+        }
+      } catch (e) {
+        logToFile(`PreToolUse: skill injection failed: ${e}`);
+      }
+
       // [Pre-action matchers] Warn before dangerous commands
       // (AgentRecall pattern: check_action before publish/push/deploy/DROP TABLE)
       const dangerWarning = checkDangerousCommand(command);
       if (dangerWarning) {
-        const output = {
-          hookSpecificOutput: {
-            hookEventName: "PreToolUse",
-            additionalContext: dangerWarning,
-          },
-        };
+        contextBlocks.push(dangerWarning);
         logToFile(`PreToolUse: DANGER warning for: ${command.slice(0, 80)}`);
-        process.stdout.write(JSON.stringify(output));
-        return;
       }
 
       // [Error Prediction] When editing a file, check if that file has error history.
@@ -2253,7 +2319,16 @@ export function hookPreToolUse(dbPath: string): void {
         }
 
         // For Write/Edit without patterns or predictive errors, just return
-        process.stdout.write(JSON.stringify({}));
+        if (contextBlocks.length > 0) {
+          process.stdout.write(JSON.stringify({
+            hookSpecificOutput: {
+              hookEventName: "PreToolUse",
+              additionalContext: contextBlocks.join("\n\n"),
+            },
+          }));
+        } else {
+          process.stdout.write(JSON.stringify({}));
+        }
         return;
       }
 
@@ -2263,7 +2338,17 @@ export function hookPreToolUse(dbPath: string): void {
         /\b(lint|test|build|typecheck|check|format)\b/.test(command);
 
       if (!isRelevantCommand) {
-        process.stdout.write(JSON.stringify({}));
+        // Still output F1/F3/danger context blocks even for non-relevant commands
+        if (contextBlocks.length > 0) {
+          process.stdout.write(JSON.stringify({
+            hookSpecificOutput: {
+              hookEventName: "PreToolUse",
+              additionalContext: contextBlocks.join("\n\n"),
+            },
+          }));
+        } else {
+          process.stdout.write(JSON.stringify({}));
+        }
         return;
       }
 
@@ -2274,7 +2359,17 @@ export function hookPreToolUse(dbPath: string): void {
       try {
         db = new Database(dbPath, { readonly: true });
       } catch {
-        process.stdout.write(JSON.stringify({}));
+        // DB doesn't exist — still output F1/F3/danger context blocks
+        if (contextBlocks.length > 0) {
+          process.stdout.write(JSON.stringify({
+            hookSpecificOutput: {
+              hookEventName: "PreToolUse",
+              additionalContext: contextBlocks.join("\n\n"),
+            },
+          }));
+        } else {
+          process.stdout.write(JSON.stringify({}));
+        }
         return;
       }
 
@@ -2757,7 +2852,7 @@ export function hookPreToolUse(dbPath: string): void {
         // non-fatal
       }
 
-      const context = lines.join("\n");
+      let context = lines.join("\n");
       const k = decayed.length;
       logToFile(
         `PreToolUse: injected ${k} past error(s) (k=${k}, decayed confidence, ${resolvedFixes.length} fixes) before: ${command.slice(0, 60)}`,
@@ -2778,6 +2873,11 @@ export function hookPreToolUse(dbPath: string): void {
         }
       }
 
+      // Merge F1/F3 context blocks (canvas + skills + danger) with error context
+      if (contextBlocks.length > 0) {
+        context = contextBlocks.join("\n\n") + (context ? "\n\n" + context : "");
+      }
+
       const output = {
         hookSpecificOutput: {
           hookEventName: "PreToolUse",
@@ -2789,7 +2889,17 @@ export function hookPreToolUse(dbPath: string): void {
     } catch (err) {
       process.stderr.write(`[remem-mcp hook-pre-tool-use] Error: ${err}\n`);
       logToFile(`PreToolUse: error - ${err}`);
-      process.stdout.write(JSON.stringify({}));
+      // Still output context blocks on error
+      if (contextBlocks.length > 0) {
+        process.stdout.write(JSON.stringify({
+          hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            additionalContext: contextBlocks.join("\n\n"),
+          },
+        }));
+      } else {
+        process.stdout.write(JSON.stringify({}));
+      }
     }
   });
 }
@@ -3620,9 +3730,14 @@ function defaultTranscriptDir(): string {
 
 /** Generate a ULID-like ID (timestamp + random). */
 function generateId(): string {
-  const ts = Date.now().toString(36).toUpperCase();
-  const rand = Math.random().toString(36).slice(2, 12).toUpperCase();
-  return `01${ts}${rand}`;
+  // Use the imported ULID generator, fall back to local impl if it throws
+  try {
+    return generateUlid();
+  } catch {
+    const ts = Date.now().toString(36).toUpperCase();
+    const rand = Math.random().toString(36).slice(2, 12).toUpperCase();
+    return `01${ts}${rand}`;
+  }
 }
 
 /**
@@ -4306,4 +4421,374 @@ export function hookPostCompaction(dbPath: string): void {
       process.stdout.write(JSON.stringify({}));
     }
   });
+}
+function offloadToolOutput(
+  dbPath: string,
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  toolResponse: unknown,
+  cwd?: string,
+): void {
+  const sessionKey = hashPath(cwd ?? process.cwd());
+  const nodeId = generateId();
+
+  // Build a concise label for the Mermaid node (max 40 chars)
+  const label = buildToolLabel(toolName, toolInput);
+
+  // Build raw content for the ref file
+  const rawContent = buildRawRefContent(toolName, toolInput, toolResponse);
+
+  // Write raw content to refs/*.md (bottom layer)
+  writeRef(sessionKey, nodeId, rawContent);
+
+  // Append node to canvas in SQLite (top layer)
+  const db = new Database(dbPath);
+  try {
+    const now = Date.now();
+
+    // Get or create canvas
+    let canvasRow = db
+      .prepare("SELECT id FROM canvases WHERE session_key = ? ORDER BY updated_at DESC LIMIT 1")
+      .get(sessionKey) as { id: string } | undefined;
+
+    if (!canvasRow) {
+      const canvasId = generateId();
+      db.prepare(
+        "INSERT INTO canvases (id, session_key, mermaid_text, node_count, created_at, updated_at, team_id) VALUES (?, ?, NULL, 0, ?, ?, NULL)",
+      ).run(canvasId, sessionKey, now, now);
+      canvasRow = { id: canvasId };
+    }
+
+    // Get next seq
+    const maxSeq = db
+      .prepare("SELECT MAX(seq) as max_seq FROM canvas_nodes WHERE canvas_id = ?")
+      .get(canvasRow.id) as { max_seq: number | null } | undefined;
+    const seq = (maxSeq?.max_seq ?? -1) + 1;
+
+    // Insert node
+    db.prepare(
+      "INSERT INTO canvas_nodes (id, canvas_id, node_id, label, capture_id, seq, created_at) VALUES (?, ?, ?, ?, NULL, ?, ?)",
+    ).run(generateId(), canvasRow.id, nodeId, label, seq, now);
+
+    // Insert edge from previous node
+    if (seq > 0) {
+      const prevNode = db
+        .prepare("SELECT node_id FROM canvas_nodes WHERE canvas_id = ? ORDER BY seq DESC LIMIT 1 OFFSET 1")
+        .get(canvasRow.id) as { node_id: string } | undefined;
+      if (prevNode) {
+        db.prepare(
+          "INSERT INTO canvas_edges (id, canvas_id, from_node_id, to_node_id, label, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        ).run(generateId(), canvasRow.id, prevNode.node_id, nodeId, inferEdgeLabel(toolName), now);
+      }
+    }
+
+    // Update node count + regenerate mermaid_text
+    const nodeCount = db
+      .prepare("SELECT COUNT(*) as count FROM canvas_nodes WHERE canvas_id = ?")
+      .get(canvasRow.id) as { count: number };
+    const mermaidText = renderCanvasMermaid(db, canvasRow.id);
+    db.prepare("UPDATE canvases SET node_count = ?, updated_at = ?, mermaid_text = ? WHERE id = ?").run(
+      nodeCount.count,
+      now,
+      mermaidText,
+      canvasRow.id,
+    );
+  } finally {
+    db.close();
+  }
+}
+
+/** Build a concise Mermaid node label from the tool name + input. */
+function buildToolLabel(toolName: string, toolInput: Record<string, unknown>): string {
+  // For Bash/exec: use the command (first 40 chars)
+  if (toolName === "Bash" || toolName === "exec") {
+    const cmd = (toolInput.command as string) ?? "";
+    return truncateLabel(cmd.replace(/\n/g, " ").trim(), 40);
+  }
+  // For Write/Edit: use the file path
+  if (toolName === "Write" || toolName === "Edit" || toolName === "MultiEdit") {
+    const fp = (toolInput.file_path as string) ?? "";
+    return truncateLabel(fp, 40);
+  }
+  // For Read: use the file path
+  if (toolName === "Read") {
+    const fp = (toolInput.file_path as string) ?? "";
+    return truncateLabel(`read ${fp}`, 40);
+  }
+  // For grep/search: use the pattern
+  if (toolName === "grep" || toolName === "search") {
+    const pattern = (toolInput.pattern as string) ?? (toolInput.query as string) ?? "";
+    return truncateLabel(`search: ${pattern}`, 40);
+  }
+  // Default: just the tool name
+  return truncateLabel(toolName, 40);
+}
+
+/** Build the raw content for a ref file from the tool call. */
+function buildRawRefContent(
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  toolResponse: unknown,
+): string {
+  const lines: string[] = [
+    `# Tool: ${toolName}`,
+    `## Input`,
+    "```json",
+    JSON.stringify(toolInput, null, 2),
+    "```",
+    `## Output`,
+  ];
+
+  if (typeof toolResponse === "string") {
+    lines.push("```", toolResponse, "```");
+  } else if (toolResponse && typeof toolResponse === "object") {
+    const resp = toolResponse as Record<string, unknown>;
+    if (resp.content && Array.isArray(resp.content)) {
+      for (const c of resp.content as Array<{ type: string; text?: string }>) {
+        if (c.type === "text" && c.text) {
+          lines.push("```", c.text, "```");
+        }
+      }
+    } else {
+      lines.push("```json", JSON.stringify(toolResponse, null, 2), "```");
+    }
+  } else {
+    lines.push("(no output)");
+  }
+
+  return lines.join("\n");
+}
+
+/** Infer an edge label based on the tool type. */
+function inferEdgeLabel(toolName: string): string {
+  if (toolName === "Bash" || toolName === "exec") return "ran";
+  if (toolName === "Write" || toolName === "Edit" || toolName === "MultiEdit") return "edited";
+  if (toolName === "Read") return "read";
+  if (toolName === "grep" || toolName === "search") return "searched";
+  return "next";
+}
+
+/** Truncate a label to maxLen characters. */
+function truncateLabel(s: string, maxLen: number): string {
+  if (s.length <= maxLen) return s;
+  return s.slice(0, maxLen - 3) + "...";
+}
+
+/**
+ * [F3: Skill extraction] Extract a skill from a captured transcript.
+ * Runs the SkillExtractionPipeline on the capture content.
+ */
+async function extractSkillFromCapture(dbPath: string, captureId: string): Promise<void> {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    const row = db
+      .prepare("SELECT id, content, type, tags, team_id, agent_id FROM captures WHERE id = ? AND deleted_at IS NULL")
+      .get(captureId) as {
+        id: string;
+        content: string;
+        type: string;
+        tags: string | null;
+        team_id: string | null;
+        agent_id: string | null;
+      } | undefined;
+    if (!row || row.type !== "task") return;
+
+    const tags = row.tags ? JSON.parse(row.tags) as string[] : [];
+    const steps = extractStepsFromContent(row.content);
+    if (steps.length < 2) return; // Not enough steps to form a skill
+
+    const triggers = extractTriggersFromContent(row.content, tags);
+    const skillName = extractSkillNameFromContent(row.content) ?? `skill-${captureId.slice(-8)}`;
+    const description = row.content.split(/[.!]\s/)[0].slice(0, 120);
+
+    // Check for existing skill with same name (versioning)
+    const existing = db
+      .prepare("SELECT id, version, created_at FROM skills WHERE name = ? ORDER BY version DESC LIMIT 1")
+      .get(skillName) as { id: string; version: number; created_at: number } | undefined;
+
+    const skillId = existing?.id ?? generateId();
+    const version = (existing?.version ?? 0) + 1;
+    const now = Date.now();
+
+    db.close();
+    const writeDb = new Database(dbPath);
+    try {
+      writeDb
+        .prepare(
+          `INSERT INTO skills (id, team_id, agent_id, name, description, content, version, created_at, updated_at, trigger_conditions, steps, validation_rules, source_capture_ids, archived)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+           ON CONFLICT(id) DO UPDATE SET
+             version = excluded.version, updated_at = excluded.updated_at,
+             trigger_conditions = excluded.trigger_conditions, steps = excluded.steps,
+             source_capture_ids = excluded.source_capture_ids`,
+        )
+        .run(
+          skillId,
+          row.team_id ?? "default",
+          row.agent_id ?? "pipeline",
+          skillName,
+          description,
+          row.content,
+          version,
+          existing?.created_at ?? now,
+          now,
+          JSON.stringify(triggers),
+          JSON.stringify(steps),
+          null,
+          JSON.stringify([captureId]),
+        );
+      logToFile(`Stop: extracted skill "${skillName}" v${version} from capture ${captureId}`);
+    } finally {
+      writeDb.close();
+    }
+  } finally {
+    if (db.open) db.close();
+  }
+}
+
+/** Extract ordered steps from content (shared logic with SkillExtractionPipeline). */
+function extractStepsFromContent(content: string): string[] {
+  const steps: string[] = [];
+  const numberedMatch = content.match(/(?:^|\n)\s*(\d+)[.)]\s+(.+)/g);
+  if (numberedMatch) {
+    for (const match of numberedMatch) {
+      const step = match.replace(/(?:^|\n)\s*\d+[.)]\s+/, "").trim();
+      if (step.length > 5 && step.length < 200) steps.push(step);
+    }
+  }
+  if (steps.length === 0) {
+    const bulletMatch = content.match(/(?:^|\n)\s*[-*]\s+(.+)/g);
+    if (bulletMatch) {
+      for (const match of bulletMatch) {
+        const step = match.replace(/(?:^|\n)\s*[-*]\s+/, "").trim();
+        if (step.length > 5 && step.length < 200) steps.push(step);
+      }
+    }
+  }
+  return steps.slice(0, 10);
+}
+
+/** Extract trigger conditions from content + tags. */
+function extractTriggersFromContent(content: string, tags: string[]): string[] {
+  const triggers = new Set<string>();
+  for (const tag of tags) {
+    if (tag.length > 2 && tag !== "task") triggers.add(tag);
+  }
+  const firstWords = content.slice(0, 200).split(/\s+/).filter((w) => w.length > 4);
+  for (const word of firstWords.slice(0, 5)) {
+    triggers.add(word.toLowerCase().replace(/[^a-z0-9]/g, ""));
+  }
+  return Array.from(triggers).slice(0, 8);
+}
+
+/** Extract a skill name from content. */
+function extractSkillNameFromContent(content: string): string | null {
+  const firstLine = content.split("\n")[0].trim();
+  if (firstLine.length > 5 && firstLine.length < 60) {
+    return firstLine.replace(/[^a-zA-Z0-9\s-]/g, "").trim().toLowerCase().replace(/\s+/g, "-");
+  }
+  return null;
+}
+
+/**
+ * Get the Mermaid canvas context for PreToolUse injection.
+ * Returns a formatted string with the Mermaid graph, or null if no canvas exists.
+ */
+function getCanvasContext(dbPath: string, cwd: string): string | null {
+  const sessionKey = hashPath(cwd);
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    const row = db
+      .prepare("SELECT mermaid_text, node_count FROM canvases WHERE session_key = ? ORDER BY updated_at DESC LIMIT 1")
+      .get(sessionKey) as { mermaid_text: string | null; node_count: number } | undefined;
+
+    if (!row || !row.mermaid_text || row.node_count === 0) return null;
+
+    return `## Task Canvas (${row.node_count} steps)\n\n\`\`\`mermaid\n${row.mermaid_text}\n\`\`\`\n\nDrill down: call ref_read(node_id) to get raw output for any node.`;
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Get skill context for PreToolUse injection.
+ * Injects archived skills (always) + skills whose trigger_conditions match the command.
+ */
+function getSkillContext(dbPath: string, query: string): string | null {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    // Archived skills — always inject
+    const archived = db
+      .prepare(
+        "SELECT name, description, steps FROM skills WHERE archived = 1 ORDER BY updated_at DESC LIMIT 3",
+      )
+      .all() as Array<{ name: string; description: string | null; steps: string | null }>;
+
+    // Matched skills — trigger_conditions overlap with query
+    const allSkills = db
+      .prepare(
+        "SELECT name, description, steps, trigger_conditions FROM skills WHERE archived = 0 ORDER BY updated_at DESC LIMIT 20",
+      )
+      .all() as Array<{ name: string; description: string | null; steps: string | null; trigger_conditions: string | null }>;
+
+    const matched: Array<{ name: string; description: string | null; steps: string | null }> = [];
+    const queryLower = query.toLowerCase();
+    for (const skill of allSkills) {
+      if (!skill.trigger_conditions) continue;
+      const triggers = JSON.parse(skill.trigger_conditions) as string[];
+      if (triggers.some((t) => queryLower.includes(t.toLowerCase()))) {
+        matched.push(skill);
+      }
+    }
+
+    if (archived.length === 0 && matched.length === 0) return null;
+
+    const lines: string[] = [];
+    if (archived.length > 0) {
+      lines.push("## Archived Skills (always available)");
+      for (const s of archived) {
+        const steps = s.steps ? JSON.parse(s.steps) as string[] : [];
+        const stepStr = steps.length > 0 ? `\n  Steps: ${steps.slice(0, 3).join(" → ")}` : "";
+        lines.push(`- **${s.name}**: ${s.description ?? ""}${stepStr}`);
+      }
+    }
+    if (matched.length > 0) {
+      lines.push("## Matched Skills");
+      for (const s of matched.slice(0, 2)) {
+        const steps = s.steps ? JSON.parse(s.steps) as string[] : [];
+        const stepStr = steps.length > 0 ? `\n  Steps: ${steps.slice(0, 3).join(" → ")}` : "";
+        lines.push(`- **${s.name}**: ${s.description ?? ""}${stepStr}`);
+      }
+    }
+
+    return lines.join("\n");
+  } finally {
+    db.close();
+  }
+}
+
+/** Render the Mermaid graph for a canvas by its ID. */
+function renderCanvasMermaid(db: Database.Database, canvasId: string): string {
+  const nodeRows = db
+    .prepare("SELECT * FROM canvas_nodes WHERE canvas_id = ? ORDER BY seq ASC")
+    .all(canvasId) as Array<{ node_id: string; label: string }>;
+
+  const edgeRows = db
+    .prepare("SELECT * FROM canvas_edges WHERE canvas_id = ? ORDER BY created_at ASC")
+    .all(canvasId) as Array<{ from_node_id: string; to_node_id: string; label: string | null }>;
+
+  const lines: string[] = ["graph LR"];
+  for (const node of nodeRows) {
+    const safeLabel = node.label.replace(/"/g, "'");
+    lines.push(`  ${node.node_id}["${safeLabel}"]`);
+  }
+  for (const edge of edgeRows) {
+    if (edge.label) {
+      const safeLabel = edge.label.replace(/"/g, "'");
+      lines.push(`  ${edge.from_node_id} -->|${safeLabel}| ${edge.to_node_id}`);
+    } else {
+      lines.push(`  ${edge.from_node_id} --> ${edge.to_node_id}`);
+    }
+  }
+  return lines.join("\n");
 }

@@ -1,5 +1,5 @@
-import { generateId } from "../utils/ulid.js";
 import { SQLiteBackend } from "../storage/sqlite.js";
+import { generateId } from "../utils/ulid.js";
 
 /**
  * consolidate CLI command: create an L2 scenario from atom IDs.
@@ -47,7 +47,10 @@ export async function consolidateCommand(
       // Group by first significant word in fact
       const groups = new Map<string, typeof atoms>();
       for (const a of atoms) {
-        const words = a.fact.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
+        const words = a.fact
+          .toLowerCase()
+          .split(/\s+/)
+          .filter((w) => w.length > 3);
         const key = words[0] ?? "misc";
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key)!.push(a);
@@ -79,11 +82,14 @@ export async function consolidateCommand(
     const atomIdsStr = flags["atom-ids"];
     const summary = flags.summary;
     if (!atomIdsStr || !summary) {
-      console.error("Usage: remem-mcp consolidate --atom-ids <id1,id2,...> --summary \"...\"");
+      console.error('Usage: remem-mcp consolidate --atom-ids <id1,id2,...> --summary "..."');
       process.exit(1);
     }
 
-    const atomIds = atomIdsStr.split(",").map((s) => s.trim()).filter(Boolean);
+    const atomIds = atomIdsStr
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
     if (atomIds.length === 0) {
       console.error("Error: No atom IDs provided.");
       process.exit(1);

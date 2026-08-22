@@ -188,14 +188,14 @@ export function resolveCall(
   const sameModuleQualified = `${callerModule}/${calleeName}`;
   const symSame = registry.exactLookup(sameModuleQualified);
   if (symSame) {
-    return { calleeId: symSame.id, confidence: 0.90, strategy: "same-module" };
+    return { calleeId: symSame.id, confidence: 0.9, strategy: "same-module" };
   }
   // Also try just the simple name in same module
-  const sameModuleSimple = registry.reverseLookup(calleeName).find(
-    (s) => registry.getModuleForFile(s.file_path) === callerModule,
-  );
+  const sameModuleSimple = registry
+    .reverseLookup(calleeName)
+    .find((s) => registry.getModuleForFile(s.file_path) === callerModule);
   if (sameModuleSimple) {
-    return { calleeId: sameModuleSimple.id, confidence: 0.90, strategy: "same-module" };
+    return { calleeId: sameModuleSimple.id, confidence: 0.9, strategy: "same-module" };
   }
 
   // Strategy 4: Unique name (0.75)
@@ -247,10 +247,44 @@ export function resolveCall(
 
 /** Names too short or builtin to bother resolving. */
 const SKIP_NAMES = new Set([
-  "T", "L", "R", "S", "P", "C", "D", "E", "F", "M", "N", "V", "X", "Y",
-  "String", "Array", "Object", "Number", "Boolean", "Map", "Set", "Date",
-  "Error", "RegExp", "Promise", "Symbol", "Buffer", "Vec", "Box", "Option",
-  "Result", "Some", "None", "Ok", "Err", "List", "Dict", "Tuple",
+  "T",
+  "L",
+  "R",
+  "S",
+  "P",
+  "C",
+  "D",
+  "E",
+  "F",
+  "M",
+  "N",
+  "V",
+  "X",
+  "Y",
+  "String",
+  "Array",
+  "Object",
+  "Number",
+  "Boolean",
+  "Map",
+  "Set",
+  "Date",
+  "Error",
+  "RegExp",
+  "Promise",
+  "Symbol",
+  "Buffer",
+  "Vec",
+  "Box",
+  "Option",
+  "Result",
+  "Some",
+  "None",
+  "Ok",
+  "Err",
+  "List",
+  "Dict",
+  "Tuple",
 ]);
 
 /** Check if a callee name should be skipped (too short or builtin type). */
@@ -293,7 +327,9 @@ export function resolveAllCalls(db: Database): {
 
   // Get all unresolved calls — skip short/builtin names to save resolution time
   const calls = db
-    .prepare("SELECT id, caller_id, callee_name, callee_id, line, call_type FROM calls WHERE callee_id IS NULL")
+    .prepare(
+      "SELECT id, caller_id, callee_name, callee_id, line, call_type FROM calls WHERE callee_id IS NULL",
+    )
     .all() as CallRow[];
 
   const stats = { total: calls.length, resolved: 0, byStrategy: {} as Record<string, number> };
@@ -317,9 +353,7 @@ export function resolveAllCalls(db: Database): {
   }
 
   // Resolve each call — skip short/builtin names
-  const updateStmt = db.prepare(
-    "UPDATE calls SET callee_id = ?, confidence = ? WHERE id = ?",
-  );
+  const updateStmt = db.prepare("UPDATE calls SET callee_id = ?, confidence = ? WHERE id = ?");
   const batch = db.transaction(() => {
     for (const call of calls) {
       if (shouldSkipResolution(call.callee_name)) {

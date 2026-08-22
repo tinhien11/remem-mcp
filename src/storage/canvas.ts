@@ -13,8 +13,8 @@
  */
 
 import type { Database } from "better-sqlite3";
-import { generateId } from "../utils/ulid.js";
 import type { MermaidCanvas, MermaidEdge, MermaidNode } from "../pipeline/types.js";
+import { generateId } from "../utils/ulid.js";
 
 /** Canvas row in the canvases table. */
 interface CanvasRow {
@@ -191,7 +191,9 @@ export class CanvasStorage {
    */
   getMermaidText(sessionKey: string): string | null {
     const row = this.db
-      .prepare("SELECT mermaid_text FROM canvases WHERE session_key = ? ORDER BY updated_at DESC LIMIT 1")
+      .prepare(
+        "SELECT mermaid_text FROM canvases WHERE session_key = ? ORDER BY updated_at DESC LIMIT 1",
+      )
       .get(sessionKey) as { mermaid_text: string | null } | undefined;
 
     return row?.mermaid_text ?? null;
@@ -246,7 +248,9 @@ export class CanvasStorage {
   /**
    * Get canvas stats for a session.
    */
-  getStats(sessionKey: string): { nodeCount: number; edgeCount: number; tokenEstimate: number } | null {
+  getStats(
+    sessionKey: string,
+  ): { nodeCount: number; edgeCount: number; tokenEstimate: number } | null {
     const canvas = this.getCanvas(sessionKey);
     if (!canvas) return null;
 

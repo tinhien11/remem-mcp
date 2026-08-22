@@ -49,8 +49,9 @@ export async function extractCommand(dbPath: string, flags: Record<string, strin
     } else {
       // Fetch captures directly (not via FTS search, which fails on empty query)
       const allCaptures = await storage.listAll(limit, 0);
-      captures = allCaptures
-        .filter((e) => ["decision", "learning", "error", "conversation"].includes(e.type));
+      captures = allCaptures.filter((e) =>
+        ["decision", "learning", "error", "conversation"].includes(e.type),
+      );
     }
 
     if (captures.length === 0) {
@@ -108,7 +109,9 @@ export async function extractCommand(dbPath: string, flags: Record<string, strin
       }
     }
 
-    console.log(`\nDone. Extracted ${totalAtoms} atom(s) from ${captures.length - skipped} capture(s).`);
+    console.log(
+      `\nDone. Extracted ${totalAtoms} atom(s) from ${captures.length - skipped} capture(s).`,
+    );
     if (skipped > 0) console.log(`${skipped} capture(s) already had atoms (skipped).`);
     if (errors > 0) console.log(`${errors} capture(s) failed.`);
   } finally {

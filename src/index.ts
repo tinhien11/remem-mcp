@@ -77,11 +77,11 @@ import { importData } from "./import.js";
 import { installMcpServer } from "./install-mcp.js";
 import { installSkill } from "./install-skill.js";
 import { AtomPipeline, RuleBasedAtomPipeline } from "./pipeline/atom.js";
-import { LLMMermaidPipeline, MermaidPipeline } from "./pipeline/mermaid.js";
-import { SkillExtractionPipeline } from "./pipeline/skill.js";
 import { OpenAILLMClient } from "./pipeline/llm.js";
+import { LLMMermaidPipeline, MermaidPipeline } from "./pipeline/mermaid.js";
 import { NoopPipeline } from "./pipeline/noop.js";
-import type { PipelineStage, CaptureInput, PipelineContext } from "./pipeline/types.js";
+import { SkillExtractionPipeline } from "./pipeline/skill.js";
+import type { CaptureInput, PipelineContext, PipelineStage } from "./pipeline/types.js";
 import { AuditLogger } from "./security/audit.js";
 import { createServer } from "./server.js";
 import { stats } from "./stats.js";
@@ -651,7 +651,13 @@ After that, the agent follows the rules automatically.`);
   }
   if (arg === "recent" || arg === "list") {
     const limit = parseInt(process.argv[3] ?? "20", 10);
-    const db = new Database(defaultDbPath(), { readonly: true });
+    let db: Database.Database;
+    try {
+      db = new Database(defaultDbPath(), { readonly: true });
+    } catch {
+      console.log("No captures found.");
+      return;
+    }
     const rows = db
       .prepare(
         `SELECT id, type, content, tags, created_at FROM captures WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ?`,
@@ -1051,21 +1057,31 @@ After that, the agent follows the rules automatically.`);
     const storage = new SQLiteBackend(dbPath);
     const pipeline = new SkillExtractionPipeline();
     const taskCaptures = db
-      .prepare("SELECT id, content, type, tags, team_id, agent_id FROM captures WHERE type = 'task' AND deleted_at IS NULL")
-      .all() as Array<{ id: string; content: string; type: string; tags: string | null; team_id: string | null; agent_id: string | null }>;
+      .prepare(
+        "SELECT id, content, type, tags, team_id, agent_id FROM captures WHERE type = 'task' AND deleted_at IS NULL",
+      )
+      .all() as Array<{
+      id: string;
+      content: string;
+      type: string;
+      tags: string | null;
+      team_id: string | null;
+      agent_id: string | null;
+    }>;
     console.log(`Found ${taskCaptures.length} task capture(s) to extract skills from.`);
     let extracted = 0;
     for (const row of taskCaptures) {
-      const tags = row.tags ? JSON.parse(row.tags) as string[] : [];
+      const tags = row.tags ? (JSON.parse(row.tags) as string[]) : [];
       const input: CaptureInput = {
         id: row.id,
         content: row.content,
         type: row.type,
         tags,
+        sessionKey: "default",
         teamId: row.team_id ?? "default",
         agentId: row.agent_id ?? "default",
       };
-      const ctx: PipelineContext = { storage };
+      const ctx: PipelineContext = { storage, embedder: new LocalEmbedder(), sessionKey: "default" };
       const result = await pipeline.process(input, ctx);
       if (Object.keys(result).length > 0) extracted++;
     }

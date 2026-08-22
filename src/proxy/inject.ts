@@ -5,8 +5,8 @@
  * Reuses the same recall logic as the hook-recall handler.
  */
 
-import type { SQLiteBackend } from "../storage/sqlite.js";
 import type { LocalEmbedder } from "../embedding/local.js";
+import type { SQLiteBackend } from "../storage/sqlite.js";
 
 interface SessionBinding {
   teamId?: string;
@@ -42,7 +42,13 @@ export async function injectMemory(
   }
 
   // Query recall (hybrid search)
-  let results: Array<{ id: string; content: string; type: string; tags: string | null; score: number }> = [];
+  let results: Array<{
+    id: string;
+    content: string;
+    type: string;
+    tags: string[];
+    score: number;
+  }> = [];
   try {
     const searchResults = await storage.search(userMessage, queryEmbedding, {
       sessionKey: "",
@@ -59,7 +65,7 @@ export async function injectMemory(
       id: r.entry.id,
       content: r.entry.content,
       type: r.entry.type,
-      tags: r.entry.tags ?? null,
+      tags: r.entry.tags,
       score: r.score,
     }));
     console.error(`[proxy inject] search: ${results.length} results`);
@@ -110,7 +116,12 @@ export async function injectMemory(
   let skills: string[] = [];
   if (binding.teamId && binding.agentId) {
     try {
-      const matchedSkills = await storage.searchSkills(binding.teamId, binding.agentId, userMessage, 2);
+      const matchedSkills = await storage.searchSkills(
+        binding.teamId,
+        binding.agentId,
+        userMessage,
+        2,
+      );
       skills = matchedSkills.map((s) => `**${s.name}**: ${s.description ?? ""}`);
     } catch {
       // best-effort
@@ -128,7 +139,9 @@ export async function injectMemory(
       // For proxy mode, use team_id as session key (no cwd available)
       const sessionKey = `proxy-${binding.teamId ?? "default"}`;
       const canvasRow = (storage as any).db
-        .prepare("SELECT mermaid_text, node_count FROM canvases WHERE session_key = ? ORDER BY updated_at DESC LIMIT 1")
+        .prepare(
+          "SELECT mermaid_text, node_count FROM canvases WHERE session_key = ? ORDER BY updated_at DESC LIMIT 1",
+        )
         .get(sessionKey) as { mermaid_text: string | null; node_count: number } | undefined;
       if (canvasRow && canvasRow.mermaid_text && canvasRow.node_count > 0) {
         canvasBlock = `### Task Canvas (${canvasRow.node_count} steps)\n\`\`\`mermaid\n${canvasRow.mermaid_text}\n\`\`\``;
@@ -158,7 +171,7 @@ export async function injectMemory(
 
 /** Build the <remem-mcp> memory block for injection. */
 function buildMemoryBlock(
-  results: Array<{ content: string; type: string; tags: string | null }>,
+  results: Array<{ content: string; type: string; tags: string[] }>,
   atoms: string[],
   scenarios: string[],
   persona: string | null,

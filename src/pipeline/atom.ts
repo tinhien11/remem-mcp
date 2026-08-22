@@ -144,7 +144,7 @@ function extractRuleBasedFacts(content: string, type: string): ParsedFact[] {
     }
     // "Use X for Y" → keep as-is
     const useMatch = text.match(/use\s+\S+\s+for\s+\S+/i);
-    if (useMatch && facts.length < 3) {
+    if (useMatch && useMatch.index !== undefined && facts.length < 3) {
       const fact = text.slice(useMatch.index, useMatch.index + useMatch[0].length);
       if (fact.length > 10) facts.push({ text: fact, confidence: 0.8 });
     }

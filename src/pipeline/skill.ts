@@ -117,7 +117,10 @@ function extractTriggers(content: string, tags: string[]): string[] {
   }
 
   // Extract keywords from first 200 chars
-  const firstWords = content.slice(0, 200).split(/\s+/).filter((w) => w.length > 4);
+  const firstWords = content
+    .slice(0, 200)
+    .split(/\s+/)
+    .filter((w) => w.length > 4);
   for (const word of firstWords.slice(0, 5)) {
     triggers.add(word.toLowerCase().replace(/[^a-z0-9]/g, ""));
   }
@@ -156,7 +159,11 @@ function extractSkillName(content: string): string | null {
   // Use first line if it's short and descriptive
   const firstLine = content.split("\n")[0].trim();
   if (firstLine.length > 5 && firstLine.length < 60) {
-    return firstLine.replace(/[^a-zA-Z0-9\s-]/g, "").trim().toLowerCase().replace(/\s+/g, "-");
+    return firstLine
+      .replace(/[^a-zA-Z0-9\s-]/g, "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "-");
   }
   return null;
 }

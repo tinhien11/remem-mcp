@@ -10,11 +10,11 @@
  * L3 auto-persona detects repeated tags in captures (2+ same tag → persona trait).
  */
 
-import { generateId } from "../utils/ulid.js";
+import type { Embedder } from "../embedding/types.js";
 import { SQLiteBackend } from "../storage/sqlite.js";
+import { generateId } from "../utils/ulid.js";
 import { RuleBasedAtomPipeline } from "./atom.js";
 import type { CaptureInput, PipelineContext } from "./types.js";
-import type { Embedder } from "../embedding/types.js";
 
 export interface WorkerOptions {
   dbPath: string;
@@ -82,14 +82,14 @@ export async function runPipelineWorker(
          LIMIT ?`,
       )
       .all(teamId, batchSize) as Array<{
-        id: string;
-        content: string;
-        type: string;
-        tags: string | null;
-        session_key: string;
-        team_id: string | null;
-        user_id: string | null;
-      }>;
+      id: string;
+      content: string;
+      type: string;
+      tags: string | null;
+      session_key: string;
+      team_id: string | null;
+      user_id: string | null;
+    }>;
 
     for (const cap of captures) {
       try {
@@ -99,7 +99,7 @@ export async function runPipelineWorker(
           type: cap.type,
           tags: cap.tags ? JSON.parse(cap.tags) : [],
           sessionKey: cap.session_key,
-          teamId: cap.team_id,
+          teamId: cap.team_id ?? undefined,
           userId: cap.user_id ?? undefined,
         };
         const output = await pipeline.process(input, ctx);
@@ -118,7 +118,10 @@ export async function runPipelineWorker(
     const groups = new Map<string, typeof atoms>();
     for (const a of atoms) {
       // Group by significant keywords in fact (not just first word)
-      const words = a.fact.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 3);
+      const words = a.fact
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((w) => w.length > 3);
       // Use first 2 significant words as key — more stable grouping
       const key = words.slice(0, 2).join("-") || "misc";
       if (!groups.has(key)) groups.set(key, []);
@@ -127,9 +130,7 @@ export async function runPipelineWorker(
 
     // Check existing scenarios to avoid duplicates
     const existingScenarios = await storage.listScenarios({ limit: 100 });
-    const existingTopics = new Set(
-      existingScenarios.flatMap((s) => s.personaTags ?? []),
-    );
+    const existingTopics = new Set(existingScenarios.flatMap((s) => s.personaTags ?? []));
 
     for (const [topic, groupAtoms] of groups) {
       if (groupAtoms.length < consolidateThreshold) continue;

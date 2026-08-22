@@ -13,7 +13,15 @@
  * it calls ref_read(node_id) which reads the corresponding refs/*.md file.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -66,7 +74,10 @@ export function writeRef(sessionKey: string, nodeId: string, content: string): s
  * @returns The raw content, or null if the file doesn't exist.
  */
 export function readRef(sessionKey: string, nodeId: string): string | null {
-  const filePath = join(getSessionRefsDir(sanitizeSessionKey(sessionKey)), `${sanitizeNodeId(nodeId)}.md`);
+  const filePath = join(
+    getSessionRefsDir(sanitizeSessionKey(sessionKey)),
+    `${sanitizeNodeId(nodeId)}.md`,
+  );
   if (!existsSync(filePath)) return null;
   return readFileSync(filePath, "utf-8");
 }
@@ -104,7 +115,9 @@ export function readRefByNodeId(nodeId: string): { content: string; sessionKey: 
  *
  * @returns Array of { nodeId, filePath, sizeBytes }.
  */
-export function listRefs(sessionKey: string): Array<{ nodeId: string; filePath: string; sizeBytes: number }> {
+export function listRefs(
+  sessionKey: string,
+): Array<{ nodeId: string; filePath: string; sizeBytes: number }> {
   const dir = getSessionRefsDir(sanitizeSessionKey(sessionKey));
   if (!existsSync(dir)) return [];
 

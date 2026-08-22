@@ -332,7 +332,9 @@ export interface StorageBackend {
   ): Promise<void>;
 
   /** Get the latest node in a session's canvas (for linking new nodes). */
-  getLatestCanvasNode(sessionKey: string): Promise<{ id: string; label: string; captureId: string } | null>;
+  getLatestCanvasNode(
+    sessionKey: string,
+  ): Promise<{ id: string; label: string; captureId: string } | null>;
 
   /** Get the cached Mermaid text for a session (fast path). */
   getCanvasMermaidText(sessionKey: string): Promise<string | null>;

@@ -17,6 +17,7 @@ export interface CaptureInput {
   sessionKey: string;
   /** Multi-tenant isolation. */
   teamId?: string;
+  agentId?: string;
   userId?: string;
   taskId?: string;
 }

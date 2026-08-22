@@ -4,8 +4,8 @@
  * Reuses the same capture logic as the session transcript capture in hook-handlers.ts.
  */
 
-import { generateId } from "../utils/ulid.js";
 import type { SQLiteBackend } from "../storage/sqlite.js";
+import { generateId } from "../utils/ulid.js";
 
 interface SessionBinding {
   teamId?: string;
@@ -44,16 +44,15 @@ export async function captureConversation(
     agentId: binding.agentId ?? "proxy",
     type: "conversation",
     content,
-    contentHash: null,
-    tags: JSON.stringify(["proxy", "conversation"]),
+    tags: ["proxy", "conversation"],
     createdAt: now,
-    metadata: JSON.stringify({
+    metadata: {
       source: "proxy",
       teamId: binding.teamId,
       agentId: binding.agentId,
       userId: binding.userId,
       taskId: binding.taskId,
-    }),
+    },
     teamId: binding.teamId,
     userId: binding.userId,
     taskId: binding.taskId,
@@ -72,14 +71,15 @@ export async function captureConversationAnthropic(
   // Convert Anthropic format to simple messages
   const simpleMessages: Message[] = messages.map((m) => ({
     role: m.role,
-    content: typeof m.content === "string"
-      ? m.content
-      : Array.isArray(m.content)
+    content:
+      typeof m.content === "string"
         ? m.content
-            .filter((b: { type: string; text?: string }) => b.type === "text" && b.text)
-            .map((b: { text: string }) => b.text)
-            .join("\n")
-        : "",
+        : Array.isArray(m.content)
+          ? m.content
+              .filter((b: { type: string; text?: string }) => b.type === "text" && b.text)
+              .map((b: { text: string }) => b.text)
+              .join("\n")
+          : "",
   }));
 
   await captureConversation(simpleMessages, assistantResponse, storage, binding);

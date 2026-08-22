@@ -19,7 +19,7 @@ export function errors(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 
@@ -182,7 +182,7 @@ export function errorsRetro(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 
@@ -646,7 +646,7 @@ export function errorsDrift(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 
@@ -800,7 +800,7 @@ export function errorsLineage(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 
@@ -1031,7 +1031,7 @@ export function errorsByGoal(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 
@@ -1112,7 +1112,7 @@ export function errorsActions(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 
@@ -1271,7 +1271,7 @@ export function errorsSeverity(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 
@@ -1412,7 +1412,7 @@ export function errorsTemplates(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 
@@ -1513,7 +1513,7 @@ export function errorsCorrelations(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 
@@ -1628,7 +1628,7 @@ export function errorsPlaybooks(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 
@@ -1722,7 +1722,7 @@ export function errorsStale(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 
@@ -1829,7 +1829,7 @@ export function errorsEscalations(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 
@@ -1952,7 +1952,7 @@ export function errorsContext(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 
@@ -2053,7 +2053,7 @@ export function errorsInherited(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 
@@ -2153,7 +2153,7 @@ export function errorsProvenance(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 
@@ -2250,7 +2250,7 @@ export function errorsPersona(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 
@@ -2418,7 +2418,7 @@ export function decisionsDashboard(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 
@@ -2510,7 +2510,7 @@ export function decisionsRetro(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 
@@ -2603,7 +2603,7 @@ export function patternsDashboard(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 
@@ -2704,7 +2704,7 @@ export function patternsRetro(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 
@@ -2785,7 +2785,7 @@ export function decisionsConflicts(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 
@@ -2845,7 +2845,7 @@ export function decisionsInherited(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 
@@ -2902,7 +2902,7 @@ export function patternsConflicts(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 
@@ -2963,7 +2963,7 @@ export function patternsTemplates(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 
@@ -3031,7 +3031,7 @@ export function patternsInherited(dbPath: string = defaultDbPath()): void {
   try {
     db = new Database(dbPath, { readonly: true });
   } catch {
-    console.error("Error: Could not open database at", dbPath);
+    console.log("No database found. Run `remem-mcp setup` to get started.");
     process.exit(1);
   }
 

@@ -9,10 +9,7 @@ import { SQLiteBackend } from "../storage/sqlite.js";
  *   remem-mcp persona --set "trait: value"     Set a trait
  *   remem-mcp persona --clear                  Clear persona
  */
-export async function personaCommand(
-  dbPath: string,
-  flags: Record<string, string>,
-): Promise<void> {
+export async function personaCommand(dbPath: string, flags: Record<string, string>): Promise<void> {
   const storage = new SQLiteBackend(dbPath);
   try {
     const teamId = flags["team-id"] ?? "default";
@@ -56,10 +53,12 @@ export async function personaCommand(
     const db = new Database(dbPath, { readonly: true });
     try {
       const row = db
-        .prepare("SELECT content FROM persona WHERE team_id = ? AND user_id = ? ORDER BY updated_at DESC LIMIT 1")
+        .prepare(
+          "SELECT content FROM persona WHERE team_id = ? AND user_id = ? ORDER BY updated_at DESC LIMIT 1",
+        )
         .get(teamId, userId) as { content: string } | undefined;
       if (!row || !row.content) {
-        console.log("No persona set. Use --set \"trait: value\" to add one.");
+        console.log('No persona set. Use --set "trait: value" to add one.');
         return;
       }
       console.log("Persona (L3):");

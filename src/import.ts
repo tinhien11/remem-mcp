@@ -113,7 +113,7 @@ export function importData(dbPath: string, inputPath: string): void {
         row.type,
         row.content,
         row.content_hash ?? null,
-        Array.isArray(row.tags) ? JSON.stringify(row.tags) : row.tags ?? null,
+        Array.isArray(row.tags) ? JSON.stringify(row.tags) : (row.tags ?? null),
         row.created_at ?? new Date().toISOString(),
         row.metadata ?? null,
         row.team_id ?? null,
