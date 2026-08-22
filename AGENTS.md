@@ -25,7 +25,39 @@ You have a long-term memory server (`remem-mcp` MCP). Always prefer it over grep
 ### Session lifecycle
 - SessionStart hook auto-injects recent memory — read it before responding
 - UserPromptSubmit hook auto-injects memory matching your prompt + auto-captures facts
-- Stop hook auto-captures the session — but still call `capture` for key decisions during the session
+- PreToolUse hook injects canvas (F1) + skills (F3) + danger warnings + error predictions
+- PostToolUse hook offloads tool output to refs (F1) + captures errors/patterns/decisions
+- Stop hook auto-captures the session + extracts skills (F3) — but still call `capture` for key decisions during the session
+
+## Unified Flow (F1 + F2 + F3)
+
+Enable with `REMEM_FLOW=full`. Three features integrated into one continuous flow.
+
+### F1 — Symbolic Short-Term Memory (Mermaid Canvas)
+
+PostToolUse offloads verbose tool output to `refs/*.md` files and appends a node to a Mermaid canvas. PreToolUse injects the canvas (~100 tokens for 5 steps) so the agent reasons over symbols, not raw logs. **92% token reduction.**
+
+- `canvas_get({ "format": "mermaid" })` — get the Mermaid graph for the current session
+- `ref_read({ "node_id": "01MT..." })` — drill down to raw tool output for a specific node
+- Enable: `REMEM_FLOW=full` or `REMEM_OFFLOAD_ENABLED=true` + `REMEM_PIPELINE=mermaid`
+
+### F2 — Memory Proxy (HTTP)
+
+For agents without MCP hook support. Start with `remem-mcp proxy` (port 8765). Point your agent's base URL to `http://localhost:8765`. The proxy injects memory into the system prompt and auto-captures conversations. Supports OpenAI (`/v1/chat/completions`) and Anthropic (`/v1/messages`) protocols.
+
+Session binding via headers: `x-remem-team`, `x-remem-agent`, `x-remem-task`, `x-remem-user`. Or `POST /session/init`.
+
+### F3 — Skill Auto-Extraction
+
+Stop hook detects step-by-step task captures (numbered lists, bullet lists, "Step N:" patterns) and auto-creates reusable Skills with trigger conditions, steps, and validation rules. Skills are injected into PreToolUse when triggers match the current command. Archived skills are always injected.
+
+- `skill_create({ "name", "description", "steps", "trigger_conditions", "validation_rules" })` — manual skill creation
+- `skill_archive({ "id" })` — force always-inject into recall
+- `skill_search({ "query" })` — search skills by keyword
+- CLI: `remem-mcp skill-extract` — batch extract from existing task captures
+- Enable: `REMEM_FLOW=full` or `REMEM_PIPELINE=skill`
+
+See [docs/unified-flow.md](docs/unified-flow.md) for full architecture.
 
 ## Capture Exclusions
 

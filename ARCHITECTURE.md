@@ -15,13 +15,17 @@ High-level system design. Last updated Aug 2026.
 │   MCP Server         │          │  Hook Handlers       │
 │   (src/server.ts)    │          │  (src/hook-handlers)  │
 │                      │          │                      │
-│  15 tools:           │          │  SessionStart        │
+│  45 tools:           │          │  SessionStart        │
 │  • recall            │          │  UserPromptSubmit    │
-│  • capture           │          │  Stop                │
-│  • search            │          │  PostCompact         │
-│  • codegraph_*       │          │                      │
-│  • wiki_*            │          │  Inject: L2/L3/skills│
+│  • capture           │          │  PreToolUse          │
+│  • search            │          │  PostToolUse         │
+│  • codegraph_*       │          │  Stop                │
+│  • wiki_*            │          │  PostCompact         │
+│  • canvas_get        │          │                      │
+│  • ref_read          │          │  Inject: L2/L3/skills│
+│  • skill_*           │          │  +canvas+skills      │
 │  • handoff/adr       │          │  Auto-capture: facts │
+│  • proxy (HTTP)      │          │  Offload: refs+canvas│
 └──────────┬───────────┘          └─────────┬────────────┘
            │                                 │
            │                                 │ spawn
@@ -47,12 +51,17 @@ High-level system design. Last updated Aug 2026.
 │                                                              │
 │  ┌─────────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐ │
 │  │  Symbols    │  │  Calls   │  │  Imports  │  │  Skills  │ │
-│  │  (CodeGraph)│  │(CodeGraph)│  │(CodeGraph)│  │          │ │
+│  │  (CodeGraph)│  │(CodeGraph)│  │(CodeGraph)│  │  (F3)    │ │
 │  └─────────────┘  └──────────┘  └──────────┘  └──────────┘ │
 │                                                              │
-│  ┌─────────────┐  ┌──────────┐                               │
-│  │ Wiki Pages  │  │   ADRs   │                               │
-│  └─────────────┘  └──────────┘                               │
+│  ┌─────────────┐  ┌──────────┐  ┌──────────┐               │
+│  │ Wiki Pages  │  │   ADRs   │  │  Canvas  │               │
+│  └─────────────┘  └──────────┘  │ (F1:     │               │
+│                                 │  Mermaid)│               │
+│  ┌─────────────┐                └──────────┘               │
+│  │  Refs       │  ┌──────────┐                              │
+│  │  (F1: *.md) │  │ Persona  │                              │
+│  └─────────────┘  └──────────┘                              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -149,7 +158,7 @@ Session start
 │ SessionStart │     • L2 scenarios (recent)
 │ hook         │     • L3 persona (language, style, prefs)
 └──────┬───────┘     • Skills (matched by query)
-       │
+       │             • Canvas from last session (F1)
        ▼
   Agent receives prompt
        │
@@ -160,23 +169,90 @@ Session start
 └──────┬───────────┘
        │
        ▼
-  Agent works (calls MCP tools: recall, capture, codegraph_*)
+  Agent calls a tool (Bash, Write, Edit, etc.)
+       │
+       ▼
+┌──────────────────┐   Inject into agent context:
+│ PreToolUse       │   • Canvas (F1: Mermaid graph, ~100 tokens)
+│ hook             │   • Skills (F3: archived + matched by trigger)
+└──────┬───────────┘   • Danger warning (npm publish, docker prune...)
+       │             • Error prediction (file error history)
+       ▼             • Past errors (lint/build/test, decayed)
+  Tool executes
+       │
+       ▼
+┌──────────────────┐   1. Offload tool output to refs/*.md (F1)
+│ PostToolUse      │   2. Append node to Mermaid canvas (F1)
+│ hook             │   3. Capture errors/patterns/decisions (L0)
+└──────┬───────────┘   4. Skill extraction if task capture (F3)
        │
        ▼
 ┌──────────┐   1. Capture session transcript (L0)
 │ Stop     │   2. Spawn background worker
 │ hook     │   3. Worker: L0 → L1 atoms → L2 scenarios → L3 persona
-└──────────┘
+└──────────┘   4. Auto-extract skills from task captures (F3)
 ```
+
+## Unified Flow (F1 + F2 + F3)
+
+Three features integrated into one continuous flow. Enable with `REMEM_FLOW=full`.
+
+### F1 — Symbolic Short-Term Memory (Mermaid Canvas)
+
+Replaces verbose tool logs with a compact Mermaid graph. PostToolUse offloads raw output to `refs/{sessionKey}/{nodeId}.md` and appends a node to the canvas. PreToolUse injects the Mermaid graph (~100 tokens for 5 steps). Drill down via `ref_read(node_id)`.
+
+**92% token reduction** vs. raw tool logs.
+
+```
+PostToolUse                    PreToolUse
+  │                              │
+  ├─ writeRef(nodeId, raw)       └─ getCanvasContext()
+  │   → refs/{sessionKey}/*.md       → SELECT mermaid_text FROM canvases
+  ├─ appendCanvasNode()              → inject as additionalContext
+  └─ renderCanvasMermaid()
+      → update canvases.mermaid_text
+```
+
+Tools: `canvas_get`, `ref_read`. Files: `src/pipeline/mermaid.ts`, `src/storage/refs.ts`, `src/storage/canvas.ts`.
+
+### F2 — Memory Proxy (HTTP)
+
+For agents without MCP hook support. Intercepts OpenAI/Anthropic API calls, injects memory into system prompt, auto-captures conversations.
+
+```
+Agent → POST :8765/v1/chat/completions
+         ├─ injectMemory() → <remem-mcp> block (recall + skills + canvas)
+         ├─ forwardRequest() → upstream LLM
+         └─ captureConversation() → storage.put()
+```
+
+Endpoints: `POST /v1/chat/completions` (OpenAI), `POST /v1/messages` (Anthropic), `POST /session/init`, `GET /health`. Files: `src/proxy/server.ts`, `src/proxy/inject.ts`, `src/proxy/session.ts`, `src/proxy/capture.ts`.
+
+### F3 — Skill Auto-Extraction
+
+Stop hook detects step-by-step task captures and auto-creates reusable Skills with trigger conditions, steps, and validation rules. Skills are injected into PreToolUse when triggers match the current command.
+
+```
+Task capture (type="task")
+  └─ extractSkillFromCapture()
+       ├─ extractSteps() — numbered/bullet/"Step N:" patterns
+       ├─ extractTriggers() — from tags + content keywords
+       ├─ extractValidationRules() — verify/check/validate patterns
+       └─ putSkill() with auto-versioning
+```
+
+Tools: `skill_create`, `skill_archive`, `skill_get`, `skill_list`, `skill_search`. CLI: `remem-mcp skill-extract`. Files: `src/pipeline/skill.ts`.
+
+See [docs/unified-flow.md](docs/unified-flow.md) for full architecture.
 
 ## File Layout
 
 ```
 src/
-├── index.ts              # Entry: CLI + MCP server
-├── server.ts             # MCP tool dispatcher (15 tools)
+├── index.ts              # Entry: CLI + MCP server + proxy CLI
+├── server.ts             # MCP tool dispatcher (45 tools)
 ├── hooks.ts              # Hook entry point (stdin → handler)
-├── hook-handlers.ts      # SessionStart/UserPromptSubmit/Stop logic
+├── hook-handlers.ts      # SessionStart/UserPromptSubmit/PreToolUse/PostToolUse/Stop logic
 ├── install-skill.ts      # Auto-install SKILL.md to agent config
 │
 ├── codegraph/
@@ -185,11 +261,21 @@ src/
 │
 ├── pipeline/
 │   ├── atom.ts           # L0 → L1 atom extraction
-│   └── worker.ts         # Background: L1 → L2 → L3 auto-consolidation
+│   ├── worker.ts         # Background: L1 → L2 → L3 auto-consolidation
+│   ├── mermaid.ts        # F1: MermaidPipeline + LLMMermaidPipeline
+│   └── skill.ts          # F3: SkillExtractionPipeline (rule-based)
+│
+├── proxy/                # F2: Memory Proxy (HTTP)
+│   ├── server.ts         # HTTP server, routing, upstream forwarding
+│   ├── inject.ts         # Memory query + <remem-mcp> block builder
+│   ├── session.ts        # SessionStore (team/agent/task binding)
+│   └── capture.ts        # Auto-capture conversation
 │
 ├── storage/
 │   ├── sqlite.ts         # DB wrapper + schema migrations (v1→v9)
-│   ├── schema.sql        # DDL: captures, atoms, symbols, calls...
+│   ├── schema.sql        # DDL: captures, atoms, symbols, calls, canvases, skills...
+│   ├── canvas.ts         # F1: CanvasStorage (Mermaid nodes + edges)
+│   ├── refs.ts           # F1: Context offloading (write/read refs/*.md)
 │   └── types.ts          # TypeScript interfaces
 │
 └── cli/
@@ -212,24 +298,41 @@ captures (L0)          atoms (L1)           scenarios (L2)
 │ team_id      │       │ team_id      │     │ team_id      │
 │ trust_state  │       └──────────────┘     └──────────────┘
 │ access_count │
-│ ...          │       persona (L3)        skills
+│ ...          │       persona (L3)        skills (F3)
 └──────────────┘       ┌──────────────┐     ┌──────────────┐
                        │ key          │     │ id           │
 symbols (CodeGraph)    │ value        │     │ name         │
-┌──────────────┐       │ team_id      │     │ trigger      │
-│ id           │       │ user_id      │     │ instructions │
-│ name         │       └──────────────┘     │ team_id      │
-│ kind         │                            └──────────────┘
-│ file_path    │       calls (CodeGraph)
-│ line_start   │       ┌──────────────┐
-│ line_end     │       │ caller_id    │──▶ symbols.id
+┌──────────────┐       │ team_id      │     │ trigger_cond │
+│ id           │       │ user_id      │     │ steps (JSON) │
+│ name         │       └──────────────┘     │ validation   │
+│ kind         │                            │ source_ids   │
+│ file_path    │       calls (CodeGraph)     │ archived     │
+│ line_start   │       ┌──────────────┐     │ team_id      │
+│ line_end     │       │ caller_id    │──▶ symbols.id     └──────────────┘
 │ language     │       │ callee_name  │
 │ module_path  │       │ callee_id    │──▶ symbols.id (resolved)
 │ content_hash │       │ confidence   │    (0.0-1.0)
 │ team_id      │       │ call_type    │    (direct/method/jsx)
 └──────────────┘       │ line         │
-                       │ team_id      │
-                       └──────────────┘
+                       │ team_id      │     canvases (F1)
+                       └──────────────┘     ┌──────────────┐
+                                            │ id           │
+                                            │ session_key  │
+                                            │ mermaid_text │ (cached graph)
+                                            │ node_count   │
+                                            │ team_id      │
+                                            └──────┬───────┘
+                                                   │
+                                            canvas_nodes        canvas_edges
+                                            ┌──────────────┐    ┌──────────────┐
+                                            │ id           │    │ id           │
+                                            │ canvas_id    │──▶ │ canvas_id    │
+                                            │ node_id      │    │ from_node    │
+                                            │ label        │    │ to_node      │
+                                            │ seq          │    │ label        │
+                                            │ ref_path     │    └──────────────┘
+                                            │ tool_name    │
+                                            └──────────────┘
 ```
 
 ## Performance (Aug 2026 dogfood)

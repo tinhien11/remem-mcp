@@ -403,7 +403,7 @@ POST /v1/chat/completions
 | `src/index.ts` | `proxy` CLI command, `skill-extract` CLI command, pipeline wiring |
 | `src/server.ts` | `canvas_get`, `ref_read`, `skill_create`, `skill_archive` MCP tools |
 | `src/hook-handlers.ts` | PreToolUse contextBlocks merge, SessionStart canvas+skill injection, Stop hook skill extraction, PostToolUse offload, `getCanvasContext`, `getSkillContext`, `extractSkillFromCapture` |
-| `tests/smoke.test.ts` | Updated tool count (40 → 44) |
+| `tests/smoke.test.ts` | Updated tool count (40 → 45) |
 
 ---
 

@@ -10,6 +10,8 @@ You have a long-term memory server via MCP. Use the tools automatically — do n
 **Core:** `recall` `capture` `search` `forget` `resolve` `handoff` `adr` `update` `consolidate` `scenario_create` `persona_update`
 **CodeGraph:** `codegraph_search` (auto-indexes on first use) `codegraph_callers` `codegraph_callees` `codegraph_impact` `codegraph_list` `codegraph_detect_changes` (git diff → affected symbols)
 **Wiki:** `wiki_ingest` `wiki_search` `wiki_get` `wiki_outdated`
+**Canvas (F1):** `canvas_get` (Mermaid graph for session) `ref_read` (drill down to raw tool output by node_id)
+**Skills (F3):** `skill_create` (manual skill with auto-versioning) `skill_archive` (force always-inject) `skill_get` `skill_list` `skill_search`
 
 ## Rule 1: Recall before answering
 
@@ -92,3 +94,34 @@ Use grep only for: string literals, config values, file names.
 ## Global + project memory
 
 Set `REMEM_GLOBAL_SESSION_KEY=global` to enable cross-project memory. `recall`/`search` search both. Pass `auto_global=true` to `capture` for auto-classification (generic → global, file paths → project).
+
+## Unified Flow (F1 + F2 + F3)
+
+Enable with `REMEM_FLOW=full`. Three features work as one continuous flow:
+
+### F1 — Symbolic Short-Term Memory (Mermaid Canvas)
+
+PostToolUse offloads verbose tool output to `refs/*.md` files and appends a node to a Mermaid canvas. PreToolUse injects the canvas (~100 tokens for 5 steps) so you reason over symbols, not raw logs. **92% token reduction.**
+
+- `canvas_get({ "format": "mermaid" })` — get the Mermaid graph for the current session
+- `canvas_get({ "format": "json" })` — get structured nodes/edges
+- `ref_read({ "node_id": "01MT..." })` — drill down to raw tool output for a specific node
+
+Enable: `REMEM_FLOW=full` or `REMEM_OFFLOAD_ENABLED=true` + `REMEM_PIPELINE=mermaid`.
+
+### F2 — Memory Proxy (HTTP)
+
+For agents without MCP hook support. Start with `remem-mcp proxy` (port 8765). Point your agent's base URL to `http://localhost:8765`. The proxy injects memory into the system prompt and auto-captures conversations. Supports OpenAI (`/v1/chat/completions`) and Anthropic (`/v1/messages`) protocols.
+
+Session binding via headers: `x-remem-team`, `x-remem-agent`, `x-remem-task`, `x-remem-user`. Or `POST /session/init`.
+
+### F3 — Skill Auto-Extraction
+
+Stop hook detects step-by-step task captures (numbered lists, bullet lists, "Step N:" patterns) and auto-creates reusable Skills with trigger conditions, steps, and validation rules. Skills are injected into PreToolUse when triggers match the current command. Archived skills are always injected.
+
+- `skill_create({ "name", "description", "steps", "trigger_conditions", "validation_rules" })` — manual skill creation
+- `skill_archive({ "id" })` — force always-inject into recall
+- `skill_search({ "query" })` — search skills by keyword
+- CLI: `remem-mcp skill-extract` — batch extract from existing task captures
+
+Enable: `REMEM_FLOW=full` or `REMEM_PIPELINE=skill`.
