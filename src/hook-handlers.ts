@@ -2637,7 +2637,7 @@ export function hookPreToolUse(dbPath: string): void {
 
       // [Feature 6] Stale detection: check if file paths in error still exist
       const validErrors = errors.filter((err) => {
-        const meta = JSON.parse(err.metadata);
+        const meta = err.metadata ? JSON.parse(err.metadata) : {};
         const filesInError = extractFilePaths(err.content);
         if (filesInError.length === 0) return true; // No file refs = still valid
         // Valid if at least one referenced file still exists
@@ -2654,7 +2654,7 @@ export function hookPreToolUse(dbPath: string): void {
       // Re-rank by decayed confidence, then take top 2 (k=2 optimal per ReasoningBank)
       const decayed = validErrors
         .map((err) => {
-          const meta = JSON.parse(err.metadata);
+          const meta = err.metadata ? JSON.parse(err.metadata) : {};
           const base = meta.confidence ?? 2;
           const decayed = applyConfidenceDecay(base, err.created_at, meta.last_recurred);
           return { err, meta, decayedConfidence: decayed };
