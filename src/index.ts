@@ -994,7 +994,7 @@ After that, the agent follows the rules automatically.`);
     }
     return;
   }
-  if (arg === "hook-recall") {
+  if (arg === "hook-recall" || arg === "hook-session-start") {
     hookRecall(defaultDbPath());
     return;
   }

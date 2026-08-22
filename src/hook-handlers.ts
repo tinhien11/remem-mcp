@@ -774,6 +774,7 @@ export function hookUserPromptSubmit(dbPath: string): void {
       let db: Database.Database;
       try {
         db = new Database(dbPath);
+        ensureSchema(db);
       } catch {
         // If read-write fails (e.g. lock), fall back to read-only (recall only).
         try {
@@ -1231,6 +1232,7 @@ export function hookPostToolUse(dbPath: string): void {
         }
         try {
           const db = new Database(dbPath);
+          ensureSchema(db);
           const sessionKey = hashPath(writeEditCwd);
           const pattern = detectPattern(toolName, toolInput);
           if (pattern) {
@@ -1356,6 +1358,7 @@ export function hookPostToolUse(dbPath: string): void {
             const driftRecords = checkAllDriftInjections(sessionKey);
             if (driftRecords.length > 0 && pattern) {
               const driftDb = new Database(dbPath);
+              ensureSchema(driftDb);
               for (const dr of driftRecords) {
                 if (dr.type === "pattern") {
                   const injectedPat = driftDb
@@ -1442,6 +1445,7 @@ export function hookPostToolUse(dbPath: string): void {
       let db: Database.Database;
       try {
         db = new Database(dbPath);
+        ensureSchema(db);
       } catch {
         process.stdout.write(JSON.stringify({}));
         return;
@@ -1975,6 +1979,7 @@ export function hookPostToolUse(dbPath: string): void {
       // (SRE pattern: incident correlation / cascading failure detection)
       try {
         const corrDb = new Database(dbPath);
+        ensureSchema(corrDb);
         const recentErrors = corrDb
           .prepare(
             `SELECT id, json_extract(metadata, '$.error_type') as etype, json_extract(metadata, '$.title') as title
@@ -2993,13 +2998,15 @@ export function shouldExcludePath(filePath: string, ignorePatterns: string[]): b
   const segments = normalized.split("/");
 
   for (const pattern of ignorePatterns) {
-    // Glob suffix: *.ext
+    // Glob suffix: *.ext — check BEFORE stripping wildcards
     if (pattern.startsWith("*.")) {
       if (normalized.endsWith(pattern.slice(1))) return true;
       continue;
     }
+    // Strip glob wildcards: "node_modules/**" → "node_modules", "dist/**" → "dist"
+    const stripped = pattern.replace(/\/\*.*$/, "").replace(/\*.*$/, "");
     // Path segment match: "node_modules" matches /foo/node_modules/bar
-    if (segments.includes(pattern)) return true;
+    if (stripped && segments.includes(stripped)) return true;
   }
   return false;
 }
@@ -3719,6 +3726,97 @@ export function hashPath(path: string): string {
 }
 
 /**
+ * Ensure the database has the minimum required tables for hooks.
+ * Hooks open the DB directly via better-sqlite3, bypassing SQLiteBackend's
+ * constructor which runs schema migration. This creates the core tables
+ * if they don't exist, so hooks work on a fresh DB without any MCP tool
+ * call having happened first.
+ */
+function ensureSchema(db: Database.Database): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS captures (
+    id TEXT PRIMARY KEY,
+    session_key TEXT NOT NULL,
+    team_id TEXT,
+    agent_id TEXT,
+    user_id TEXT,
+    type TEXT NOT NULL,
+    content TEXT NOT NULL,
+    tags TEXT,
+    metadata TEXT,
+    content_hash TEXT,
+    created_at INTEGER NOT NULL,
+    deleted_at INTEGER,
+    trust_state TEXT DEFAULT 'trusted',
+    rejection_reason TEXT,
+    superseded_by TEXT,
+    access_count INTEGER DEFAULT 0,
+    last_accessed_at INTEGER,
+    bayesian_alpha REAL DEFAULT 1.0,
+    bayesian_beta REAL DEFAULT 1.0,
+    fix_validated INTEGER,
+    fix_validated_at INTEGER,
+    escalation_level INTEGER DEFAULT 0
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS error_patterns (
+    id TEXT PRIMARY KEY,
+    session_key TEXT NOT NULL,
+    command TEXT NOT NULL,
+    error_type TEXT,
+    error_message TEXT,
+    content_hash TEXT,
+    confidence REAL DEFAULT 2.0,
+    occurrences INTEGER DEFAULT 1,
+    first_seen INTEGER NOT NULL,
+    last_seen INTEGER NOT NULL,
+    resolved_at INTEGER,
+    fix_command TEXT,
+    fix_approach TEXT,
+    fix_validated INTEGER,
+    fix_recorded_at INTEGER,
+    escalation_level INTEGER DEFAULT 0,
+    root_cause TEXT,
+    auto_notes TEXT,
+    deleted_at INTEGER
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS decisions (
+    id TEXT PRIMARY KEY,
+    session_key TEXT NOT NULL,
+    title TEXT NOT NULL,
+    choice TEXT NOT NULL,
+    rationale TEXT,
+    context TEXT,
+    created_at INTEGER NOT NULL
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS persona (
+    team_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    content TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (team_id, user_id)
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS skills (
+    id TEXT PRIMARY KEY,
+    team_id TEXT NOT NULL,
+    agent_id TEXT,
+    name TEXT NOT NULL,
+    description TEXT,
+    content TEXT,
+    version INTEGER DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    trigger_conditions TEXT,
+    steps TEXT,
+    validation_rules TEXT,
+    source_capture_ids TEXT,
+    archived INTEGER DEFAULT 0
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_captures_session ON captures(session_key)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_captures_type ON captures(type)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_errors_session ON error_patterns(session_key)`);
+}
+
+/**
  * Default transcript directory: ~/.local/share/devin/cli/transcripts/
  */
 function defaultTranscriptDir(): string {
@@ -3871,6 +3969,7 @@ async function captureSessionTranscript(
   const contentHash = createHash("sha256").update(content).digest("hex");
 
   const db = new Database(dbPath);
+  ensureSchema(db);
   // Load sqlite-vec extension before any captures_vec operations (DELETE, INSERT).
   // Without this, preparing statements against captures_vec fails with
   // "SqliteError: no such module: vec0" because the vec0 virtual table module
@@ -4102,6 +4201,7 @@ export async function hookPostCommit(dbPath: string): Promise<void> {
     const { indexFile } = await import("./codegraph/engine.js");
 
     const db = new Database(dbPath);
+    ensureSchema(db);
     try {
       db.pragma("journal_mode = WAL");
       sqliteVec.load(db);
@@ -4200,6 +4300,7 @@ export function hookPreCompact(dbPath: string): void {
 
       // Capture a compaction checkpoint
       const db = new Database(dbPath);
+      ensureSchema(db);
       let transcriptNote = "";
       try {
         db.pragma("journal_mode = WAL");
@@ -4443,6 +4544,7 @@ function offloadToolOutput(
 
   // Append node to canvas in SQLite (top layer)
   const db = new Database(dbPath);
+  ensureSchema(db);
   try {
     // Ensure canvas tables exist (hook may run before any MCP tool call)
     db.exec(`CREATE TABLE IF NOT EXISTS canvases (
@@ -4644,6 +4746,7 @@ async function extractSkillFromCapture(dbPath: string, captureId: string): Promi
 
     db.close();
     const writeDb = new Database(dbPath);
+    ensureSchema(writeDb);
     try {
       writeDb
         .prepare(
