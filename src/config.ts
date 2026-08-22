@@ -11,7 +11,7 @@ export interface Config {
   storage: "sqlite" | "pgvector" | "file" | "remem-gateway";
 
   /** Pipeline stage. Default: "noop". */
-  pipeline: "noop" | "atom" | "scenario" | "mermaid";
+  pipeline: "noop" | "atom" | "scenario" | "mermaid" | "skill";
 
   /** SQLite database file path. */
   dbPath: string;
@@ -24,6 +24,9 @@ export interface Config {
 
   /** Security configuration. */
   security: SecurityConfig;
+
+  /** Symbolic short-term memory (Mermaid canvas + context offloading). Default: false. */
+  offloadEnabled: boolean;
 }
 
 export interface LlmConfig {
@@ -50,7 +53,7 @@ export interface SecurityConfig {
 }
 
 /** Current schema version. Increment when the schema changes. */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 9;
 
 /** Default data directory. */
 function defaultDataDir(): string {
@@ -124,7 +127,7 @@ export function loadConfig(): Config {
 
   const fileSecurity = (file?.security as Record<string, unknown>) ?? {};
 
-  return {
+  const cfg: Config = {
     storage: (env.REMEM_STORAGE ?? (file?.storage as string) ?? "sqlite") as Config["storage"],
     pipeline: (env.REMEM_PIPELINE ?? (file?.pipeline as string) ?? "noop") as Config["pipeline"],
     dbPath: env.REMEM_DB_PATH ?? (file?.dbPath as string) ?? defaultDbPath,
@@ -149,5 +152,21 @@ export function loadConfig(): Config {
       ),
       auditLog: parseBool(env.REMEM_AUDIT_LOG, (fileSecurity.auditLog as boolean) ?? true),
     },
+    offloadEnabled: parseBool(env.REMEM_OFFLOAD_ENABLED, false),
   };
+
+  // [Unified Flow] REMEM_FLOW=full enables F1 (offload) + F3 (skill pipeline) together.
+  // This is a convenience flag — individual flags still work and take precedence.
+  if (env.REMEM_FLOW === "full") {
+    if (!env.REMEM_OFFLOAD_ENABLED) {
+      process.env.REMEM_OFFLOAD_ENABLED = "true";
+      cfg.offloadEnabled = true;
+    }
+    if (!env.REMEM_PIPELINE) {
+      process.env.REMEM_PIPELINE = "skill";
+      cfg.pipeline = "skill";
+    }
+  }
+
+  return cfg;
 }

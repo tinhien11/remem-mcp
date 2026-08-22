@@ -1243,6 +1243,110 @@ const TOOLS: Tool[] = [
       properties: {},
     },
   },
+  {
+    name: "canvas_get",
+    description:
+      "Get the Mermaid task canvas for the current session. " +
+      "The canvas is a symbolic graph of tool calls and state transitions — " +
+      "it replaces verbose tool logs in your context with a compact Mermaid diagram. " +
+      "Use this to see the task structure without re-reading full tool outputs. " +
+      "Requires REMEM_OFFLOAD_ENABLED=true and pipeline=mermaid.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_key: {
+          type: "string",
+          description:
+            "The session key. Defaults to hash(cwd). Use this to get the canvas from a different session.",
+        },
+        format: {
+          type: "string",
+          enum: ["mermaid", "json"],
+          default: "mermaid",
+          description: "Output format. 'mermaid' returns the Mermaid graph text. 'json' returns structured nodes/edges.",
+        },
+      },
+    },
+  },
+  {
+    name: "ref_read",
+    description:
+      "Read the raw tool output for a specific canvas node by node_id. " +
+      "Use this to drill down from the Mermaid canvas to the full output when you need details. " +
+      "Requires REMEM_OFFLOAD_ENABLED=true and pipeline=mermaid.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        node_id: {
+          type: "string",
+          description: "The node_id from the Mermaid canvas (e.g., '01M0FFZKQT540SVZPAZ4EZVE4G').",
+        },
+      },
+      required: ["node_id"],
+    },
+  },
+  {
+    name: "skill_create",
+    description:
+      "Create a reusable skill (SOP) from a successful task or conversation. " +
+      "Skills are injected into recall when matching trigger conditions are met. " +
+      "Use this after completing a non-trivial task to capture the workflow for reuse.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Short name for the skill (e.g., 'deploy-to-vercel').",
+        },
+        description: {
+          type: "string",
+          description: "One-line description of what the skill does.",
+        },
+        content: {
+          type: "string",
+          description: "Full SOP content in markdown. Include steps, commands, and validation.",
+        },
+        trigger_conditions: {
+          type: "array",
+          items: { type: "string" },
+          description: "Keywords or patterns that trigger this skill (e.g., ['deploy', 'vercel', 'production']).",
+        },
+        steps: {
+          type: "array",
+          items: { type: "string" },
+          description: "Ordered execution steps.",
+        },
+        validation_rules: {
+          type: "array",
+          items: { type: "string" },
+          description: "How to verify the skill succeeded (e.g., ['curl returns 200', 'no errors in logs']).",
+        },
+        source_capture_ids: {
+          type: "array",
+          items: { type: "string" },
+          description: "Capture IDs that this skill was extracted from (for traceability).",
+        },
+        ...TENANT_PARAMS,
+      },
+      required: ["name", "content"],
+    },
+  },
+  {
+    name: "skill_archive",
+    description:
+      "Archive a skill — forces it to always be injected into recall, even when the query " +
+      "doesn't strongly match. Use this for critical SOPs that must always be available.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: {
+          type: "string",
+          description: "The skill ID to archive.",
+        },
+      },
+      required: ["id"],
+    },
+  },
 ];
 
 /**
@@ -1475,6 +1579,14 @@ export function createServer(opts: ServerOptions): Server {
         return handleSessionCheckpoint(args, opts);
       case "health":
         return handleHealth(args, opts);
+      case "canvas_get":
+        return handleCanvasGet(args, opts);
+      case "ref_read":
+        return handleRefRead(args, opts);
+      case "skill_create":
+        return handleSkillCreate(args, opts);
+      case "skill_archive":
+        return handleSkillArchive(args, opts);
       default:
         return {
           content: [{ type: "text", text: `Error: Unknown tool "${name}".` }],
@@ -4750,6 +4862,181 @@ async function handleWikiOutdated(
   return {
     content: [
       { type: "text", text: `Found ${outdated.length} outdated page(s):\n${lines.join("\n")}` },
+    ],
+  };
+}
+
+// ─── Canvas + Ref handlers (v9: symbolic short-term memory) ───────
+
+/** Handle canvas_get — returns the Mermaid task canvas for the current session. */
+async function handleCanvasGet(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+  const sessionKey = (args.session_key as string) ?? defaultSessionKey();
+  const format = (args.format as "mermaid" | "json") ?? "mermaid";
+
+  try {
+    const mermaidText = await opts.storage.getCanvasMermaidText(sessionKey);
+    if (!mermaidText) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "No canvas found for this session. Enable REMEM_OFFLOAD_ENABLED=true and pipeline=mermaid to start building a task canvas.",
+          },
+        ],
+      };
+    }
+
+    if (format === "json") {
+      // Return structured nodes/edges
+      // For now, return the cached mermaid_text as JSON metadata
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ sessionKey, mermaid: mermaidText, tokenEstimate: Math.ceil(mermaidText.length / 4) }, null, 2),
+          },
+        ],
+      };
+    }
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: `## Task Canvas (Mermaid)\n\n\`\`\`mermaid\n${mermaidText}\n\`\`\`\n\nDrill down: call ref_read(node_id) to get the raw output for any node.`,
+        },
+      ],
+    };
+  } catch (err) {
+    return {
+      content: [{ type: "text", text: `Error reading canvas: ${err}` }],
+    };
+  }
+}
+
+/** Handle ref_read — reads raw tool output for a canvas node by node_id. */
+async function handleRefRead(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+  const nodeId = args.node_id as string;
+  if (!nodeId) {
+    return {
+      content: [{ type: "text", text: "Error: node_id is required." }],
+    };
+  }
+
+  try {
+    const content = await opts.storage.readRef(nodeId);
+    if (!content) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `No ref found for node_id "${nodeId}". The ref file may have been cleaned up (REMEM_REFS_RETENTION_HOURS) or offloading is not enabled.`,
+          },
+        ],
+      };
+    }
+
+    return {
+      content: [{ type: "text", text: content }],
+    };
+  } catch (err) {
+    return {
+      content: [{ type: "text", text: `Error reading ref: ${err}` }],
+    };
+  }
+}
+
+/** Handle skill_create — creates a reusable skill (SOP) from a task. */
+async function handleSkillCreate(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+  const name = args.name as string;
+  const content = args.content as string;
+  if (!name || !content) {
+    return {
+      content: [{ type: "text", text: "Error: name and content are required." }],
+    };
+  }
+
+  const tenant = extractTenant(args);
+  const teamId = tenant.teamId ?? "default";
+  const agentId = tenant.agentId ?? "default";
+
+  // Check for existing skill with same name (versioning)
+  const existing = await opts.storage.searchSkills(teamId, agentId, name, 1);
+  let version = 1;
+  let skillId = generateId();
+  if (existing.length > 0 && existing[0].name === name) {
+    version = existing[0].version + 1;
+    skillId = existing[0].id;
+  }
+
+  const now = Date.now();
+  await opts.storage.putSkill({
+    id: skillId,
+    teamId,
+    agentId,
+    name,
+    description: args.description as string | undefined,
+    content,
+    version,
+    createdAt: existing.length > 0 ? existing[0].createdAt : now,
+    updatedAt: now,
+    triggerConditions: args.trigger_conditions as string[] | undefined,
+    steps: args.steps as string[] | undefined,
+    validationRules: args.validation_rules as string[] | undefined,
+    sourceCaptureIds: args.source_capture_ids as string[] | undefined,
+    archived: false,
+  });
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: `Skill "${name}" created (v${version}, id: ${skillId}). It will be injected into recall when trigger conditions match.`,
+      },
+    ],
+  };
+}
+
+/** Handle skill_archive — forces a skill to always be injected. */
+async function handleSkillArchive(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+  const id = args.id as string;
+  if (!id) {
+    return {
+      content: [{ type: "text", text: "Error: id is required." }],
+    };
+  }
+
+  const skill = await opts.storage.getSkill(id);
+  if (!skill) {
+    return {
+      content: [{ type: "text", text: `Error: Skill "${id}" not found.` }],
+    };
+  }
+
+  await opts.storage.putSkill({
+    ...skill,
+    archived: true,
+    updatedAt: Date.now(),
+  });
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: `Skill "${skill.name}" archived. It will now always be injected into recall.`,
+      },
     ],
   };
 }

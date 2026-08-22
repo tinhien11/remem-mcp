@@ -77,9 +77,11 @@ import { importData } from "./import.js";
 import { installMcpServer } from "./install-mcp.js";
 import { installSkill } from "./install-skill.js";
 import { AtomPipeline, RuleBasedAtomPipeline } from "./pipeline/atom.js";
+import { LLMMermaidPipeline, MermaidPipeline } from "./pipeline/mermaid.js";
+import { SkillExtractionPipeline } from "./pipeline/skill.js";
 import { OpenAILLMClient } from "./pipeline/llm.js";
 import { NoopPipeline } from "./pipeline/noop.js";
-import type { PipelineStage } from "./pipeline/types.js";
+import type { PipelineStage, CaptureInput, PipelineContext } from "./pipeline/types.js";
 import { AuditLogger } from "./security/audit.js";
 import { createServer } from "./server.js";
 import { stats } from "./stats.js";
@@ -497,6 +499,12 @@ async function main(): Promise<void> {
     return;
   }
   if (arg === "init") {
+    // Initialize the DB schema (creates file + runs migrations if needed)
+    try {
+      new SQLiteBackend(defaultDbPath());
+    } catch {
+      // Schema init is best-effort here — the help text is the main payload
+    }
     console.log(`remem-mcp init
 
 This command tells your agent to activate long-term memory for this session.
@@ -1025,6 +1033,46 @@ After that, the agent follows the rules automatically.`);
     hookPostCompaction(defaultDbPath());
     return;
   }
+  if (arg === "proxy") {
+    const { loadProxyConfig, startProxyServer } = await import("./proxy/server.js");
+    const proxyConfig = loadProxyConfig();
+    // Override dbPath with default if not set
+    if (!proxyConfig.dbPath) {
+      proxyConfig.dbPath = defaultDbPath();
+    }
+    await startProxyServer(proxyConfig);
+    return;
+  }
+  if (arg === "skill-extract") {
+    // Extract skills from existing task captures
+    const dbPath = defaultDbPath();
+    const db = new Database(dbPath);
+    sqliteVec.load(db);
+    const storage = new SQLiteBackend(dbPath);
+    const pipeline = new SkillExtractionPipeline();
+    const taskCaptures = db
+      .prepare("SELECT id, content, type, tags, team_id, agent_id FROM captures WHERE type = 'task' AND deleted_at IS NULL")
+      .all() as Array<{ id: string; content: string; type: string; tags: string | null; team_id: string | null; agent_id: string | null }>;
+    console.log(`Found ${taskCaptures.length} task capture(s) to extract skills from.`);
+    let extracted = 0;
+    for (const row of taskCaptures) {
+      const tags = row.tags ? JSON.parse(row.tags) as string[] : [];
+      const input: CaptureInput = {
+        id: row.id,
+        content: row.content,
+        type: row.type,
+        tags,
+        teamId: row.team_id ?? "default",
+        agentId: row.agent_id ?? "default",
+      };
+      const ctx: PipelineContext = { storage };
+      const result = await pipeline.process(input, ctx);
+      if (Object.keys(result).length > 0) extracted++;
+    }
+    console.log(`Extracted ${extracted} skill(s) from ${taskCaptures.length} task capture(s).`);
+    db.close();
+    return;
+  }
 
   // ─── CodeGraph CLI commands ──────────────────────────────────
   if (arg === "index") {
@@ -1453,6 +1501,19 @@ To install the skill (Devin CLI only):
     });
     pipeline = new AtomPipeline();
     (pipeline as unknown as { _llmClient: unknown })._llmClient = llmClient;
+  } else if (config.pipeline === "mermaid" && config.llm) {
+    const llmClient = new OpenAILLMClient({
+      apiKey: config.llm.apiKey,
+      baseUrl: config.llm.baseUrl,
+      model: config.llm.model,
+    });
+    pipeline = new LLMMermaidPipeline(llmClient);
+  } else if (config.pipeline === "mermaid") {
+    // Rule-based Mermaid pipeline (no LLM needed)
+    pipeline = new MermaidPipeline();
+  } else if (config.pipeline === "skill") {
+    // Skill extraction pipeline — extracts SOPs from task captures
+    pipeline = new SkillExtractionPipeline();
   } else {
     // Default: rule-based atom extraction (no LLM needed).
     // Extracts facts from decision/learning/error/conversation captures

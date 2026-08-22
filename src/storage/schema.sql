@@ -12,6 +12,42 @@ CREATE TABLE IF NOT EXISTS schema_version (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_schema_version_unique ON schema_version(version);
 
+-- ─────────────────────────────────────────────
+-- v9: Mermaid canvas (symbolic short-term memory)
+-- ─────────────────────────────────────────────
+
+-- Canvas: one per session, stores the Mermaid graph
+CREATE TABLE IF NOT EXISTS canvases (
+  id           TEXT PRIMARY KEY,
+  session_key  TEXT NOT NULL,
+  mermaid_text TEXT,                   -- cached rendered Mermaid graph
+  node_count   INTEGER NOT NULL DEFAULT 0,
+  created_at   INTEGER NOT NULL,
+  updated_at   INTEGER NOT NULL,
+  team_id      TEXT
+);
+
+-- Canvas nodes: each tool call / capture = one node
+CREATE TABLE IF NOT EXISTS canvas_nodes (
+  id          TEXT PRIMARY KEY,
+  canvas_id   TEXT NOT NULL REFERENCES canvases(id) ON DELETE CASCADE,
+  node_id     TEXT NOT NULL,           -- the node_id used in Mermaid graph
+  label       TEXT NOT NULL,           -- concise label (max 40 chars)
+  capture_id  TEXT REFERENCES captures(id) ON DELETE SET NULL,
+  seq         INTEGER NOT NULL,        -- order in the canvas
+  created_at  INTEGER NOT NULL
+);
+
+-- Canvas edges: state transitions between nodes
+CREATE TABLE IF NOT EXISTS canvas_edges (
+  id            TEXT PRIMARY KEY,
+  canvas_id     TEXT NOT NULL REFERENCES canvases(id) ON DELETE CASCADE,
+  from_node_id  TEXT NOT NULL,
+  to_node_id    TEXT NOT NULL,
+  label         TEXT,                  -- edge label (e.g., "failed", "executed")
+  created_at    INTEGER NOT NULL
+);
+
 -- L0: Raw captures (always populated)
 CREATE TABLE IF NOT EXISTS captures (
   id           TEXT PRIMARY KEY,
@@ -111,7 +147,13 @@ CREATE TABLE IF NOT EXISTS skills (
   content     TEXT,
   version     INTEGER NOT NULL DEFAULT 1,
   created_at  INTEGER NOT NULL,
-  updated_at  INTEGER NOT NULL
+  updated_at  INTEGER NOT NULL,
+  -- v9: Skill auto-extraction fields (adapted from TencentDB Agent Memory)
+  trigger_conditions  TEXT,    -- JSON array of trigger patterns
+  steps               TEXT,    -- JSON array of execution steps
+  validation_rules    TEXT,    -- JSON array of validation rules
+  source_capture_ids  TEXT,    -- JSON array of source capture IDs
+  archived            INTEGER NOT NULL DEFAULT 0  -- forced archiving (always inject)
 );
 
 -- Audit log
@@ -305,3 +347,9 @@ CREATE INDEX IF NOT EXISTS idx_wiki_pages_hash ON wiki_pages (content_hash);
 CREATE INDEX IF NOT EXISTS idx_wiki_links_from ON wiki_links (from_page_id);
 CREATE INDEX IF NOT EXISTS idx_wiki_links_to ON wiki_links (to_page_id);
 CREATE INDEX IF NOT EXISTS idx_wiki_links_title ON wiki_links (to_title);
+
+-- Canvas indexes (v9)
+CREATE INDEX IF NOT EXISTS idx_canvases_session ON canvases (session_key, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_canvas_nodes_canvas ON canvas_nodes (canvas_id, seq);
+CREATE INDEX IF NOT EXISTS idx_canvas_nodes_node_id ON canvas_nodes (node_id);
+CREATE INDEX IF NOT EXISTS idx_canvas_edges_canvas ON canvas_edges (canvas_id);

@@ -175,6 +175,12 @@ export interface SkillEntry {
   version: number;
   createdAt: number;
   updatedAt: number;
+  /** v9: Skill auto-extraction fields */
+  triggerConditions?: string[];
+  steps?: string[];
+  validationRules?: string[];
+  sourceCaptureIds?: string[];
+  archived?: boolean;
 }
 
 export interface StorageBackend {
@@ -315,6 +321,27 @@ export interface StorageBackend {
     query: string,
     topK?: number,
   ): Promise<SkillEntry[]>;
+
+  // Canvas (v9: symbolic short-term memory)
+  /** Append a node + edges to a session's Mermaid canvas. */
+  appendCanvasNode(
+    sessionKey: string,
+    node: { id: string; label: string; captureId: string },
+    edges: Array<{ from: string; to: string; label?: string }>,
+    teamId?: string,
+  ): Promise<void>;
+
+  /** Get the latest node in a session's canvas (for linking new nodes). */
+  getLatestCanvasNode(sessionKey: string): Promise<{ id: string; label: string; captureId: string } | null>;
+
+  /** Get the cached Mermaid text for a session (fast path). */
+  getCanvasMermaidText(sessionKey: string): Promise<string | null>;
+
+  /** Write raw content to a ref file (context offloading). */
+  writeRef(sessionKey: string, nodeId: string, content: string): Promise<void>;
+
+  /** Read raw content from a ref file by node_id. */
+  readRef(nodeId: string): Promise<string | null>;
 
   /** Close the database connection. */
   close(): void;
