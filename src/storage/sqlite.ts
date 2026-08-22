@@ -149,7 +149,7 @@ export function stripQueryProperNouns(query: string): string {
 }
 
 /** Current schema version. */
-const CURRENT_SCHEMA_VERSION = 8;
+const CURRENT_SCHEMA_VERSION = 9;
 
 /**
  * Evergreen tags: captures with any of these tags are exempt from temporal
@@ -620,15 +620,21 @@ export class SQLiteBackend implements StorageBackend {
     try {
       this.db.exec("ALTER TABLE symbols ADD COLUMN module_path TEXT");
       addedAny = true;
-    } catch {}
+    } catch (err) {
+      if (!String(err).includes("duplicate column")) console.error(`[remem-mcp] migrateV8ToV9: ${err}`);
+    }
     try {
       this.db.exec("ALTER TABLE calls ADD COLUMN confidence REAL");
       addedAny = true;
-    } catch {}
+    } catch (err) {
+      if (!String(err).includes("duplicate column")) console.error(`[remem-mcp] migrateV8ToV9: ${err}`);
+    }
     try {
       this.db.exec("ALTER TABLE calls ADD COLUMN call_type TEXT NOT NULL DEFAULT 'direct'");
       addedAny = true;
-    } catch {}
+    } catch (err) {
+      if (!String(err).includes("duplicate column")) console.error(`[remem-mcp] migrateV8ToV9: ${err}`);
+    }
     if (addedAny) {
       console.error("[remem-mcp] Added CodeGraph call resolution columns (module_path, confidence, call_type)");
     }
