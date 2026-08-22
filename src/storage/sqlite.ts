@@ -895,7 +895,7 @@ export class SQLiteBackend implements StorageBackend {
   async listAll(limit = 50, offset = 0): Promise<CaptureEntry[]> {
     const rows = this.db
       .prepare(
-        "SELECT * FROM captures WHERE deleted_at IS NULL AND trust_state != 'rejected' AND superseded_by IS NULL ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        "SELECT * FROM captures WHERE deleted_at IS NULL AND trust_state != 'rejected' AND superseded_by IS NULL AND id IS NOT NULL ORDER BY created_at DESC LIMIT ? OFFSET ?",
       )
       .all(limit, offset) as DbRow[];
     return rows.map(rowToEntry);

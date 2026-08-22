@@ -3810,10 +3810,28 @@ function ensureSchema(db: Database.Database): void {
     source_capture_ids TEXT,
     archived INTEGER DEFAULT 0
   )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS atoms (
+    id TEXT PRIMARY KEY,
+    capture_id TEXT NOT NULL,
+    fact TEXT NOT NULL,
+    confidence REAL NOT NULL DEFAULT 1.0,
+    created_at INTEGER NOT NULL,
+    team_id TEXT,
+    agent_id TEXT,
+    user_id TEXT
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS scenarios (
+    id TEXT PRIMARY KEY,
+    atom_ids TEXT NOT NULL,
+    summary TEXT,
+    created_at INTEGER NOT NULL,
+    team_id TEXT
+  )`);
   db.exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_captures_session ON captures(session_key)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_captures_type ON captures(type)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_errors_session ON error_patterns(session_key)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_atoms_capture ON atoms(capture_id)`);
 }
 
 /**

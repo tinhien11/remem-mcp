@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
+import { generateId } from "./utils/ulid.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -194,8 +195,8 @@ export function importArtifact(dbPath: string, projectRoot: string): number {
   const transaction = db.transaction(() => {
     for (const row of rows) {
       const result = insertStmt.run(
-        row.id,
-        row.session_key,
+        row.id ?? generateId(),
+        row.session_key ?? "import",
         row.agent_id,
         row.type,
         row.content,
