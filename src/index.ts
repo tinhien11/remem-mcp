@@ -967,7 +967,7 @@ After that, the agent follows the rules automatically.`);
     return;
   }
   if (arg === "viewer") {
-    const port = Number(process.argv[4] ?? process.env.REMEM_VIEWER_PORT ?? 7331);
+    const port = Number(process.argv[3] ?? process.env.REMEM_VIEWER_PORT ?? 7331);
     startViewer(defaultDbPath(), port);
     return;
   }
