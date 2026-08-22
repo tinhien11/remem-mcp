@@ -462,6 +462,11 @@ export async function demoCodegraph(): Promise<void> {
 
   // Clear old codegraph data for a clean demo
   const cleanDb = new Database(dbPath);
+  // Ensure codegraph tables exist (schema.sql needs sqlite-vec loaded, so
+  // just create the 3 tables we need directly)
+  cleanDb.exec(`CREATE TABLE IF NOT EXISTS symbols (id TEXT PRIMARY KEY, repo_path TEXT NOT NULL, file_path TEXT NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL, line INTEGER, end_line INTEGER, created_at INTEGER NOT NULL)`);
+  cleanDb.exec(`CREATE TABLE IF NOT EXISTS calls (id TEXT PRIMARY KEY, repo_path TEXT NOT NULL, caller_id TEXT NOT NULL, callee_name TEXT NOT NULL, callee_id TEXT, call_line INTEGER, created_at INTEGER NOT NULL)`);
+  cleanDb.exec(`CREATE TABLE IF NOT EXISTS imports (id TEXT PRIMARY KEY, repo_path TEXT NOT NULL, file_path TEXT NOT NULL, module_path TEXT NOT NULL, imported_names TEXT, created_at INTEGER NOT NULL)`);
   cleanDb.exec("DELETE FROM calls");
   cleanDb.exec("DELETE FROM symbols");
   cleanDb.exec("DELETE FROM imports");

@@ -1893,10 +1893,30 @@ export class SQLiteBackend implements StorageBackend {
     ).run(`01${now.toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 10).toUpperCase()}`, canvasRow.id, node.id, node.label, seq, now);
     for (const edge of edges) {
       this.db.prepare(
-        "INSERT INTO canvas_edges (id, canvas_id, source_node_id, target_node_id, label, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO canvas_edges (id, canvas_id, from_node_id, to_node_id, label, created_at) VALUES (?, ?, ?, ?, ?, ?)",
       ).run(`01${now.toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 10).toUpperCase()}`, canvasRow.id, edge.from, edge.to, edge.label ?? null, now);
     }
     this.db.prepare("UPDATE canvases SET node_count = node_count + 1, updated_at = ? WHERE id = ?").run(now, canvasRow.id);
+
+    // Regenerate mermaid_text from all nodes + edges so canvas_get can read it.
+    const allNodes = this.db
+      .prepare("SELECT node_id, label FROM canvas_nodes WHERE canvas_id = ? ORDER BY seq ASC")
+      .all(canvasRow.id) as { node_id: string; label: string }[];
+    const allEdges = this.db
+      .prepare("SELECT from_node_id, to_node_id, label FROM canvas_edges WHERE canvas_id = ?")
+      .all(canvasRow.id) as { from_node_id: string; to_node_id: string; label: string | null }[];
+    const mermaidLines: string[] = ["graph LR"];
+    for (const n of allNodes) {
+      mermaidLines.push(`  ${n.node_id}["${n.label.replace(/"/g, "'")}"]`);
+    }
+    for (const e of allEdges) {
+      if (e.label) {
+        mermaidLines.push(`  ${e.from_node_id} -->|${e.label.replace(/"/g, "'")}| ${e.to_node_id}`);
+      } else {
+        mermaidLines.push(`  ${e.from_node_id} --> ${e.to_node_id}`);
+      }
+    }
+    this.db.prepare("UPDATE canvases SET mermaid_text = ? WHERE id = ?").run(mermaidLines.join("\n"), canvasRow.id);
   }
 
   async getLatestCanvasNode(
