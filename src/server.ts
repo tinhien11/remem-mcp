@@ -47,6 +47,17 @@ import {
   searchWiki as wikiSearch,
 } from "./wiki/engine.js";
 
+/** Background indexing status tracker — prevents blocking MCP calls on large repos. */
+interface IndexingStatus {
+  state: "indexing" | "done" | "error";
+  startedAt: number;
+  finishedAt?: number;
+  fileCount?: number;
+  symbolCount?: number;
+  error?: string;
+}
+const indexingStatus = new Map<string, IndexingStatus>();
+
 /** Default session key: hash of the current working directory. */
 function defaultSessionKey(): string {
   // REMEM_SESSION_KEY overrides the default hash(cwd) — use for single global session
@@ -801,7 +812,8 @@ const TOOLS: Tool[] = [
     description:
       "Search for code symbols by name. Returns matching functions, classes, methods, etc. " +
       "with file paths and line numbers. Use this INSTEAD of grep when looking for function/class/method definitions. " +
-      "If the codebase hasn't been indexed yet, this auto-indexes src/ (or cwd) on first use — no manual setup needed.",
+      "If the codebase hasn't been indexed yet, this starts background indexing and asks you to retry in a few seconds — " +
+      "non-blocking, so you can continue working while indexing runs.",
     inputSchema: {
       type: "object",
       properties: {
@@ -4468,9 +4480,8 @@ async function handleCodegraphSearch(
   const repoPath = customPath || undefined;
   let symbols = cgSearchSymbols(db, query, { teamId, kind, language, limit, repoPath });
 
-  // Auto-index: if no symbols found, try indexing the specified path
-  // or the current directory, then retry the search.
-  // This makes CodeGraph work with zero setup.
+  // Auto-index: if no symbols found, kick off background indexing (non-blocking).
+  // This makes CodeGraph work with zero setup without blocking MCP calls on large repos.
   if (symbols.length === 0) {
     const cwd = process.cwd();
     const { existsSync } = await import("node:fs");
@@ -4484,32 +4495,81 @@ async function handleCodegraphSearch(
       indexPath = existsSync(`${cwd}/src`) ? `${cwd}/src` : cwd;
       repoRoot = cwd;
     }
-    try {
-      const results = await cgIndexDirectory(db, indexPath, repoRoot, teamId, 500);
-      const indexed = results.filter((r) => !r.skipped);
-      if (indexed.length > 0) {
-        // Retry search after indexing, scoped to the repo
-        symbols = cgSearchSymbols(db, query, { teamId, kind, language, limit, repoPath: repoRoot });
-      }
+
+    const statusKey = `${repoRoot}:${teamId ?? "default"}`;
+    const status = indexingStatus.get(statusKey);
+
+    if (!status || status.state === "error") {
+      // Start background indexing — don't block the MCP call
+      indexingStatus.set(statusKey, {
+        state: "indexing",
+        startedAt: Date.now(),
+      });
+      // Fire-and-forget background index
+      cgIndexDirectory(db, indexPath, repoRoot, teamId, 10000)
+        .then((results) => {
+          const indexed = results.filter((r) => !r.skipped);
+          const totalSymbols = indexed.reduce((s, r) => s + r.symbols, 0);
+          indexingStatus.set(statusKey, {
+            state: "done",
+            startedAt: status?.startedAt ?? Date.now(),
+            finishedAt: Date.now(),
+            fileCount: indexed.length,
+            symbolCount: totalSymbols,
+          });
+          console.error(
+            `[remem-mcp] background index complete: ${indexed.length} files, ${totalSymbols} symbols from ${indexPath}`,
+          );
+        })
+        .catch((err) => {
+          indexingStatus.set(statusKey, {
+            state: "error",
+            startedAt: status?.startedAt ?? Date.now(),
+            finishedAt: Date.now(),
+            error: String(err),
+          });
+          console.error(`[remem-mcp] background index failed: ${err}`);
+        });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              `No symbols found yet. Background indexing started for ${indexPath}.\n` +
+              `Retry codegraph_search in ~10-30s (large repos may take longer).\n` +
+              `You can continue working — indexing runs in the background.`,
+          },
+        ],
+      };
+    } else if (status.state === "indexing") {
+      const elapsed = Math.round((Date.now() - status.startedAt) / 1000);
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              `No symbols found yet. Indexing in progress (${elapsed}s elapsed).\n` +
+              `Retry codegraph_search in a few seconds.\n` +
+              `Meanwhile, use grep/glob for immediate code navigation.`,
+          },
+        ],
+      };
+    } else if (status.state === "done") {
+      // Indexing completed — retry search now
+      symbols = cgSearchSymbols(db, query, { teamId, kind, language, limit, repoPath: repoRoot });
       if (symbols.length === 0) {
         return {
           content: [
             {
               type: "text",
-              text: `No symbols found. Auto-indexed ${indexed.length} files from ${indexPath} — try a different search term, or call codegraph_index with a specific path.`,
+              text:
+                `No symbols found for "${query}". Indexing completed: ${status.fileCount} files, ${status.symbolCount} symbols.\n` +
+                `Try a different search term, or call codegraph_index with a specific path.`,
             },
           ],
         };
       }
-    } catch {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "No symbols found. Call codegraph_index with a path to index your codebase first.",
-          },
-        ],
-      };
     }
   }
 
