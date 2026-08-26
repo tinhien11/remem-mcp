@@ -872,15 +872,33 @@ export async function indexDirectory(
 
   walk(dirPath);
 
+  const indexedSymbolIds = new Set<string>();
   for (const file of files) {
     const result = await indexFile(db, file, repoPath, teamId);
     results.push(result);
   }
 
+  // Collect symbol IDs from the just-indexed files — resolveAllCalls will only
+  // resolve calls whose caller_id is in this set, avoiding re-processing 25K+
+  // historical calls (fuzzy strategy is O(n²)).
+  if (results.length > 0) {
+    const indexedFiles = results.filter((r) => !r.skipped).map((r) => r.file);
+    for (let i = 0; i < indexedFiles.length; i += 500) {
+      const chunk = indexedFiles.slice(i, i + 500);
+      const placeholders = chunk.map(() => "?").join(",");
+      const rows = db
+        .prepare(`SELECT id FROM symbols WHERE file_path IN (${placeholders})`)
+        .all(...chunk) as { id: string }[];
+      for (const r of rows) {
+        indexedSymbolIds.add(r.id);
+      }
+    }
+  }
+
   // Resolve callee IDs using 6-strategy cascade (import-map, same-module, unique-name, suffix, fuzzy)
   // Adapted from Codebase-Memory (arXiv:2603.27277)
   const { resolveAllCalls } = await import("./resolver.js");
-  const stats = resolveAllCalls(db);
+  const stats = resolveAllCalls(db, indexedSymbolIds);
   if (stats.total > 0) {
     console.error(
       `[remem-mcp] indexDirectory: resolved ${stats.resolved}/${stats.total} calls` +

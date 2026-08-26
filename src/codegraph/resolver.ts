@@ -298,10 +298,18 @@ function shouldSkipResolution(calleeName: string): boolean {
 }
 
 /**
- * Run call resolution on all unresolved calls in the database.
+ * Run call resolution on unresolved calls in the database.
  * Called after indexDirectory() completes.
+ *
+ * If callerIds is provided, only resolve calls whose caller_id is in the set
+ * (i.e., calls from the just-indexed batch). This avoids re-resolving 25K+
+ * historical calls on every index run — the O(n²) fuzzy strategy would hang.
+ * If callerIds is omitted, resolve all unresolved calls (legacy behavior).
  */
-export function resolveAllCalls(db: Database): {
+export function resolveAllCalls(
+  db: Database,
+  callerIds?: Set<string>,
+): {
   total: number;
   resolved: number;
   byStrategy: Record<string, number>;
@@ -325,23 +333,42 @@ export function resolveAllCalls(db: Database): {
     .all() as ImportRow[];
   const importMap = new ImportMap(imports);
 
-  // Get all unresolved calls — skip short/builtin names to save resolution time
-  const calls = db
-    .prepare(
-      "SELECT id, caller_id, callee_name, callee_id, line, call_type FROM calls WHERE callee_id IS NULL",
-    )
-    .all() as CallRow[];
+  // Get unresolved calls — skip short/builtin names to save resolution time.
+  // If callerIds is provided, only resolve calls from the just-indexed batch
+  // (avoids re-resolving 25K+ historical calls — fuzzy is O(n²)).
+  let calls: CallRow[];
+  if (callerIds && callerIds.size > 0) {
+    const idList = [...callerIds];
+    calls = [];
+    // Batch in chunks of 500 to avoid SQLite param limit
+    for (let i = 0; i < idList.length; i += 500) {
+      const chunk = idList.slice(i, i + 500);
+      const placeholders = chunk.map(() => "?").join(",");
+      const rows = db
+        .prepare(
+          `SELECT id, caller_id, callee_name, callee_id, line, call_type FROM calls WHERE callee_id IS NULL AND caller_id IN (${placeholders})`,
+        )
+        .all(...chunk) as CallRow[];
+      calls.push(...rows);
+    }
+  } else {
+    calls = db
+      .prepare(
+        "SELECT id, caller_id, callee_name, callee_id, line, call_type FROM calls WHERE callee_id IS NULL",
+      )
+      .all() as CallRow[];
+  }
 
   const stats = { total: calls.length, resolved: 0, byStrategy: {} as Record<string, number> };
   let skipped = 0;
 
   // Get caller file paths — batch query
   const callerFiles = new Map<string, string>();
-  const callerIds = [...new Set(calls.map((c) => c.caller_id))];
-  if (callerIds.length > 0) {
+  const callerIdsFromCalls = [...new Set(calls.map((c) => c.caller_id))];
+  if (callerIdsFromCalls.length > 0) {
     // Batch in chunks of 500 to avoid SQLite param limit
-    for (let i = 0; i < callerIds.length; i += 500) {
-      const chunk = callerIds.slice(i, i + 500);
+    for (let i = 0; i < callerIdsFromCalls.length; i += 500) {
+      const chunk = callerIdsFromCalls.slice(i, i + 500);
       const placeholders = chunk.map(() => "?").join(",");
       const rows = db
         .prepare(`SELECT id, file_path FROM symbols WHERE id IN (${placeholders})`)

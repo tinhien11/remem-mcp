@@ -1,5 +1,4 @@
 node_modules
-dist
 *.tgz
 .git
 .gitignore
@@ -7,4 +6,3 @@ dist
 !README.md
 tests
 docs
-skills

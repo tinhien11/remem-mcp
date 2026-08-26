@@ -1,40 +1,31 @@
 FROM node:22-slim
 
-LABEL org.opencontainers.image.source=https://github.com/tinhien11/remem-mcp
-LABEL org.opencontainers.image.description="remem-mcp — long-term memory for coding agents"
-LABEL org.opencontainers.image.licenses=MIT
+# Install system deps for better-sqlite3 + onnxruntime
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 make g++ libc6 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install build dependencies for native modules (better-sqlite3, sqlite-vec)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 make g++ \
-    && rm -rf /var/lib/apt/lists/*
+# Copy package files + postinstall script (needed by npm ci)
+COPY package.json package-lock.json* ./
+COPY scripts/postinstall.js ./scripts/postinstall.js
 
-# Copy package files
-COPY package.json package-lock.json ./
+# Install deps
+RUN npm ci --omit=dev || npm install --omit=dev
 
-# Install all dependencies (including dev for build)
-# --ignore-scripts: skip postinstall (auto-setup) since no agent configs exist in Docker
-RUN npm ci --ignore-scripts || npm install --ignore-scripts
+# Copy source + dist
+COPY dist/ ./dist/
+COPY src/storage/schema.sql ./src/storage/schema.sql
+COPY skills/ ./skills/
 
-# Copy source and build
-COPY . .
-RUN npm run build
+# Volume for persistent memory
+VOLUME ["/data"]
 
-# Prune dev dependencies
-RUN npm prune --omit=dev
-
-# Remove build dependencies to keep image small
-RUN apt-get purge -y python3 make g++ && apt-get autoremove -y
-
-# Default data directory
 ENV REMEM_DB_PATH=/data/memory.db
-ENV REMEM_AUDIT_LOG_PATH=/data/audit.jsonl
-VOLUME /data
+ENV NODE_ENV=production
 
-# Expose viewer port
 EXPOSE 7331
 
-# Default command: start MCP server
-ENTRYPOINT ["node", "dist/index.js"]
+# Smoke test on startup
+CMD ["node", "dist/index.js", "version"]
