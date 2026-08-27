@@ -126,6 +126,8 @@ export interface ServerOptions {
   maxContentLength: number;
   maxTokensRecall: number;
   maxTokensSearch: number;
+  /** Detected agent ID for feedback attribution. Defaults to detectAgentId(). */
+  agentId?: string;
 }
 
 /** Multi-tenant isolation parameters shared across tools. */
@@ -1670,6 +1672,21 @@ function extractTenant(args: Record<string, unknown>): {
   };
 }
 
+/** Build a successful text tool result. */
+function textResult(text: string): {
+  content: Array<{ type: "text"; text: string }>;
+} {
+  return { content: [{ type: "text", text }] };
+}
+
+/** Build an error tool result (isError=true). */
+function errorResult(text: string): {
+  content: Array<{ type: "text"; text: string }>;
+  isError: true;
+} {
+  return { content: [{ type: "text", text }], isError: true };
+}
+
 /** Handle the recall tool. */
 async function handleRecall(
   args: Record<string, unknown>,
@@ -1874,7 +1891,7 @@ async function handleRecall(
 async function handleFeedback(
   args: Record<string, unknown>,
   opts: ServerOptions,
-): Promise<ToolResult> {
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
   const captureId = String(args.capture_id ?? "");
   const signal = String(args.signal ?? "") as "helpful" | "not_helpful" | "stale" | "wrong";
   const reason = args.reason ? String(args.reason) : undefined;
@@ -1894,7 +1911,7 @@ async function handleFeedback(
     return errorResult(`capture not found: ${captureId}`);
   }
 
-  storage.recordFeedback(captureId, signal, reason, opts.agentId);
+  storage.recordFeedback(captureId, signal, reason, opts.agentId ?? detectAgentId());
 
   return textResult(
     `Recorded feedback: ${signal} for capture ${captureId.slice(-8)}. ` +
@@ -3404,7 +3421,7 @@ async function handleConfirm(
   try {
     db.prepare("UPDATE captures SET confirmations = confirmations + 1 WHERE id = ?").run(captureId);
     // v13: Auto-feedback — confirm implies the capture was helpful
-    opts.storage.recordFeedback(captureId, "helpful", "auto: confirmed by agent", opts.agentId);
+    opts.storage.recordFeedback(captureId, "helpful", "auto: confirmed by agent", opts.agentId ?? detectAgentId());
   } catch (err) {
     return { content: [{ type: "text", text: `Error: ${err}` }], isError: true };
   }
@@ -3452,7 +3469,7 @@ async function handleCorrect(
       db.prepare("UPDATE captures SET rejection_reason = ? WHERE id = ?").run(reason, captureId);
     }
     // v13: Auto-feedback — correct implies the capture was wrong
-    opts.storage.recordFeedback(captureId, "wrong", reason ? `auto: ${reason}` : "auto: corrected by agent", opts.agentId);
+    opts.storage.recordFeedback(captureId, "wrong", reason ? `auto: ${reason}` : "auto: corrected by agent", opts.agentId ?? detectAgentId());
   } catch (err) {
     return { content: [{ type: "text", text: `Error: ${err}` }], isError: true };
   }

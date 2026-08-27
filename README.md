@@ -7,9 +7,9 @@
 
 > Your coding agent stops repeating the same mistakes.
 
-Local memory that survives context compaction — learns from every error, injects fixes before the next attempt, and syncs to your git repo so your whole team shares it.
+Local-first memory that survives context compaction. Learns from every error, injects fixes before the next attempt, and syncs to your git repo so your whole team shares it.
 
-**One command setup. No API key. No cloud. No database server. Just a SQLite file.**
+**No API key. No cloud. No database server. Just a SQLite file.**
 
 ---
 
@@ -21,22 +21,7 @@ npx remem-mcp setup
 
 Auto-detects Claude Code, Cursor, Devin, Codex. Registers MCP server + hooks. Restart your agent.
 
-```bash
-npx remem-mcp demo              # Live demo: real build, real errors, real hooks
-npx remem-mcp demo-codegraph    # Live CodeGraph demo on facebook/react
-npx remem-mcp status            # One dashboard: everything at a glance
-```
-
----
-
-## Quick start (after install)
-
-**Nothing.** Just use your agent normally. No commands, no setup, no init.
-
-Memory works automatically:
-- **Session start** → past errors, decisions, and persona injected into agent context
-- **Each prompt** → matching memory injected (you'll see `[remem-mcp]` at the top)
-- **Session end** → worker auto-extracts facts, consolidates summaries, updates persona
+That's it. Use your agent normally — memory works automatically.
 
 ```bash
 npx remem-mcp status    # verify: hooks ✓, DB ✓, CodeGraph ✓
@@ -44,61 +29,61 @@ npx remem-mcp status    # verify: hooks ✓, DB ✓, CodeGraph ✓
 
 ---
 
-## What it does
+## What happens automatically
+
+| When | What |
+|---|---|
+| Session start | Past errors, decisions, and persona injected into agent context |
+| Each prompt | Matching memory injected (you'll see `[remem-mcp]` at the top) |
+| Tool calls | Verbose output offloaded to refs, Mermaid canvas injected (92% token cut) |
+| Session end | Worker auto-extracts facts, consolidates summaries, updates persona |
+
+You don't run any commands. The agent calls `recall()` before answering and `capture()` after work — the skill tells it to.
+
+---
+
+## How it works
 
 ```
-┌─────────────────────────────────────────────────┐
-│                  AI Agent                         │
-│         (Claude Code / Devin / Cursor)            │
-└────────┬──────────────────────────┬──────────────┘
-         │ MCP tools (15)           │ Hooks (auto)
-         ▼                          ▼
-┌──────────────────┐     ┌────────────────────┐
-│  recall()        │     │  SessionStart      │──▶ inject L2/L3 + skills
-│  capture()       │     │  UserPromptSubmit  │──▶ inject BM25 match
-│  codegraph_*     │     │  Stop              │──▶ spawn worker
-│  wiki_*          │     │  PostCompact       │──▶ save checkpoint
-└────────┬─────────┘     └─────────┬──────────┘
-         │                          │
-         ▼                          ▼
-┌─────────────────────────────────────────────────┐
-│              SQLite (memory.db)                   │
-│                                                   │
-│  L0 captures ──▶ L1 atoms ──▶ L2 scenarios ──▶ L3 persona
-│  (raw)          (facts)       (summaries)       (preferences)
-│                                                   │
-│  CodeGraph: symbols + calls + imports             │
-│  Wiki: markdown docs + ADRs                       │
-└───────────────────────────────────────────────────┘
+AI Agent (Claude Code / Devin / Cursor / Codex)
+    │
+    ├── MCP tools ──▶ recall, capture, codegraph_*, wiki_*, feedback
+    │
+    └── Hooks ──▶ SessionStart, UserPromptSubmit, PreToolUse,
+                  PostToolUse, Stop, PostCompact
+                        │
+                        ▼
+              SQLite (memory.db)
+
+  L0 captures → L1 atoms → L2 scenarios → L3 persona
+  (raw)        (facts)      (summaries)    (preferences)
+
+  CodeGraph: symbols + calls + imports (tree-sitter, 9 languages)
+  Memory links: Hebbian co-retrieval (frequently co-retrieved = stronger)
 ```
 
-### Memory pipeline (L0 → L3)
+**No LLM API key needed** — rule-based extraction + keyword grouping.
 
-- **L0 captures** — raw content from agent sessions (errors, decisions, patterns)
-- **L1 atoms** — distilled facts with confidence scores (agent writes or worker extracts)
-- **L2 scenarios** — auto-consolidated summaries when 5+ atoms share a topic
-- **L3 persona** — user preferences auto-detected from repeated tags (2+ occurrences)
+---
 
-All runs **without LLM API key** — rule-based extraction + keyword grouping.
+## CodeGraph
 
-### Recall boost (v10/v11)
+Structural code indexing via tree-sitter. The agent uses `codegraph_search` instead of grep to find symbols.
 
-Adapted from `akitaonrails/ai-memory` research:
+```bash
+npx remem-mcp index --path src              # index a directory
+npx remem-mcp search-code --query "parseTar"  # find symbols
+npx remem-mcp callers <id>                  # who calls this?
+npx remem-mcp impact <id>                   # blast radius
+```
 
-- **Decay/forget sweep** — salience formula soft-deletes old low-value captures (exempt: rules, decisions, evergreen)
-- **Authority-aware ranking** — tier-based boost (rule +0.2, decision +0.15) + tag boosts (canonical/pinned), clamped 0.5x–1.5x
-- **Entity-assisted recall** — extracts nouns per capture, third RRF stream in hybrid search
-- **Memory-to-memory links** — auto-links captures by shared tags/entities/proximity, 1-hop expansion in search
-- **Raw observation fallback** — when search returns 0, broader FTS includes stale/rejected (excludes deleted/superseded)
+9 languages: TS/JS/Python/Go/Rust/Java/C/C++/C#. 6-strategy call resolution (import-map → same-module → unique-name → suffix → fuzzy). Stdlib calls filtered out.
 
-### CodeGraph
-
-Structural code indexing via tree-sitter (9 languages: TS/JS/Python/Go/Rust/Java/C/C++/C#).
-
-- **6-strategy call resolution**: import-map (0.95) → same-module (0.90) → unique-name (0.75) → suffix (0.55) → fuzzy (0.35)
-- **Call types**: direct (`foo()`), method (`obj.method()`), JSX (`<Component/>`)
-- **Stdlib filter**: skips `fmt.Printf`, `console.log`, `print()` — reduces noise
-- **Tools**: `codegraph_search`, `codegraph_callers`, `codegraph_callees`, `codegraph_impact`, `codegraph_detect_changes`
+| Repo | Files | Symbols | Calls | Time |
+|---|---|---|---|---|
+| remem-mcp | 79 | 301 | 6,456 | 3s |
+| AZR Go | 455 | 3,417 | 41,603 | 111s |
+| Orca TS | 3,000 | 7,632 | 78,981 | 705s |
 
 ---
 
@@ -106,15 +91,14 @@ Structural code indexing via tree-sitter (9 languages: TS/JS/Python/Go/Rust/Java
 
 | | remem-mcp | Mem0 | Claude MEMORY.md | Mneme |
 |---|---|---|---|---|
-| **Survives compaction** | Yes — PreCompact hook | Yes — cloud | No — 200-line cap | Yes — PreCompact hook |
-| **Learns from errors** | Yes — auto-capture + inject | No | No | No |
-| **Semantic search** | Hybrid BM25 + sqlite-vec + entities | Vector only | No | Vector + graph |
-| **Memory links** | Yes — auto-link + 1-hop expansion | No | No | Graph |
-| **Decay/forget** | Yes — salience formula | No | No | No |
-| **Authority tiers** | Yes — rule/decision boost | No | No | No |
+| **Survives compaction** | Yes | Yes — cloud | No — 200-line cap | Yes |
+| **Learns from errors** | Yes — auto | No | No | No |
+| **Search** | Hybrid BM25 + vector + entities | Vector only | No | Vector + graph |
+| **Memory links** | Hebbian co-retrieval | No | No | Graph |
+| **Decay/forget** | Yes | No | No | No |
 | **CodeGraph** | Yes — 6-strategy call resolution | No | No | No |
+| **Token offload** | Yes — Mermaid canvas | No | No | No |
 | **Setup** | 1 command | API key + cloud | Built-in | Build from source |
-| **API key** | No | Yes | No | No |
 | **Cost** | Free | $19–249/mo | Free | Free |
 
 ---
@@ -168,17 +152,14 @@ Then run `npx remem-mcp install-hooks`.
 
 ---
 
-## Daily commands
+## Useful commands
 
 ```bash
-npx remem-mcp status           # Everything at a glance
-npx remem-mcp viewer           # Web UI at localhost:7331
-npx remem-mcp errors           # Error dashboard
-npx remem-mcp recent [N]       # Recent captures
-npx remem-mcp search-code --query "parseTar"   # CodeGraph search
-npx remem-mcp callers <id>     # Who calls this symbol?
-npx remem-mcp impact <id>      # Blast radius analysis
-npx remem-mcp help all         # Full list of 40+ subcommands
+npx remem-mcp status           # health + hooks + DB + CodeGraph
+npx remem-mcp viewer           # web UI at localhost:7331
+npx remem-mcp errors           # error dashboard
+npx remem-mcp recent [N]       # recent captures
+npx remem-mcp help all         # full list of 40+ subcommands
 ```
 
 ---
@@ -191,10 +172,16 @@ All settings have defaults. Config file is optional: `~/.config/remem-mcp/config
 |---|---|---|
 | DB path | `REMEM_DB_PATH` | `~/.local/share/remem-mcp/memory.db` |
 | Cross-project memory | `REMEM_GLOBAL_SESSION_KEY` | _(unset)_ |
+| Unified flow (F1+F2+F3) | `REMEM_FLOW` | _(unset, set to `full`)_ |
 | Suppress hook feedback | `REMEM_QUIET` | _(unset, set to `1`)_ |
-| LLM API key (optional) | `REMEM_LLM_API_KEY` | _(unset)_ |
 
 **Team sharing** — `npx remem-mcp sync-export` writes `.remem-mcp/memory-export.jsonl`. Commit it to git. Team members get the same memory on `git pull`.
+
+**Per-repo capture exclusions** — Drop a `.remem.toml` in any project root:
+```toml
+[capture]
+ignore_paths = ["node_modules", "dist", ".git", "*.min.js"]
+```
 
 ---
 
@@ -208,7 +195,6 @@ All settings have defaults. Config file is optional: `~/.config/remem-mcp/config
 | **LongMemEval** (ICLR 2025) | **96** | 94.4 | — |
 
 ```bash
-bash scripts/bench-all.sh           # Full: AMB + LoCoMo + PersonaMem (~5 min)
 bash scripts/bench-all.sh --quick   # AMB only (~2 min)
 ```
 
@@ -216,11 +202,11 @@ bash scripts/bench-all.sh --quick   # AMB only (~2 min)
 
 ## Architecture
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for full system diagrams, schema, and performance benchmarks.
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for full system diagrams, schema, and performance details.
 
 ## Credits
 
-Core based on [TencentDB Agent Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) (MIT, Tencent 2026). CodeGraph call resolution adapted from Codebase-Memory (arXiv:2603.27277). Recall boost (decay, authority tiers, entity recall, memory links) adapted from [ai-memory](https://github.com/akitaonrails/ai-memory) by Akita On Rails.
+Core based on [TencentDB Agent Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) (MIT, Tencent 2026). CodeGraph call resolution adapted from Codebase-Memory (arXiv:2603.27277). Recall boost adapted from [ai-memory](https://github.com/akitaonrails/ai-memory) by Akita On Rails. Contextual retrieval from [Anthropic](https://www.anthropic.com/news/contextual-retrieval) (2024).
 
 ## License
 

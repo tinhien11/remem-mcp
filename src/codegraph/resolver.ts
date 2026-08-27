@@ -142,6 +142,7 @@ export function resolveCall(
   callerFilePath: string,
   registry: FunctionRegistry,
   importMap: ImportMap,
+  fuzzyEnabled = true,
 ): ResolutionResult {
   // Strategy 1: Import map (0.95)
   // Split callee into prefix.suffix; look up prefix in file's import map
@@ -236,10 +237,12 @@ export function resolveCall(
   }
 
   // Strategy 6: Fuzzy (0.30-0.40)
-  // String similarity — last resort
-  const fuzzyMatch = fuzzyLookup(calleeName, registry);
-  if (fuzzyMatch) {
-    return { calleeId: fuzzyMatch.id, confidence: 0.35, strategy: "fuzzy" };
+  // String similarity — last resort. Skip when registry is large (O(n) per call).
+  if (fuzzyEnabled) {
+    const fuzzyMatch = fuzzyLookup(calleeName, registry);
+    if (fuzzyMatch) {
+      return { calleeId: fuzzyMatch.id, confidence: 0.35, strategy: "fuzzy" };
+    }
   }
 
   return { calleeId: null, confidence: 0, strategy: "unresolved" };
@@ -321,11 +324,40 @@ export function resolveAllCalls(
     db.exec("CREATE INDEX IF NOT EXISTS idx_symbols_module ON symbols(module_path)");
   } catch {}
 
-  // Load all symbols into FunctionRegistry
-  const symbols = db
-    .prepare("SELECT id, name, kind, file_path, module_path, language, parent_id FROM symbols")
-    .all() as SymbolRow[];
+  // Load symbols into FunctionRegistry.
+  // When resolving a batch (callerIds provided), only load symbols matching
+  // the batch's languages — this avoids scanning 4800+ symbols from other
+  // repos/languages during fuzzy lookup (O(n) per call).
+  let symbols: SymbolRow[];
+  if (callerIds && callerIds.size > 0) {
+    // Determine languages of the caller symbols
+    const callerIdList = [...callerIds];
+    const batchLangs = new Set<string>();
+    for (let i = 0; i < callerIdList.length; i += 500) {
+      const chunk = callerIdList.slice(i, i + 500);
+      const placeholders = chunk.map(() => "?").join(",");
+      const rows = db
+        .prepare(`SELECT DISTINCT language FROM symbols WHERE id IN (${placeholders})`)
+        .all(...chunk) as { language: string }[];
+      for (const r of rows) batchLangs.add(r.language);
+    }
+    if (batchLangs.size > 0) {
+      const langPlaceholders = [...batchLangs].map(() => "?").join(",");
+      symbols = db
+        .prepare(`SELECT id, name, kind, file_path, module_path, language, parent_id FROM symbols WHERE language IN (${langPlaceholders})`)
+        .all(...batchLangs) as SymbolRow[];
+    } else {
+      symbols = db
+        .prepare("SELECT id, name, kind, file_path, module_path, language, parent_id FROM symbols")
+        .all() as SymbolRow[];
+    }
+  } else {
+    symbols = db
+      .prepare("SELECT id, name, kind, file_path, module_path, language, parent_id FROM symbols")
+      .all() as SymbolRow[];
+  }
   const registry = new FunctionRegistry(symbols);
+  const fuzzyEnabled = symbols.length <= 500;
 
   // Load all imports into ImportMap
   const imports = db
@@ -388,7 +420,7 @@ export function resolveAllCalls(
         continue;
       }
       const callerFile = callerFiles.get(call.caller_id) ?? "";
-      const result = resolveCall(call.callee_name, callerFile, registry, importMap);
+      const result = resolveCall(call.callee_name, callerFile, registry, importMap, fuzzyEnabled);
       if (result.calleeId) {
         updateStmt.run(result.calleeId, result.confidence, call.id);
         stats.resolved++;

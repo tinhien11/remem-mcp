@@ -21,6 +21,7 @@ import type {
   QueryOptions,
   ResolveResult,
   ScenarioEntry,
+  SearchFilters,
   SearchResult,
   SkillEntry,
   StorageBackend,
@@ -1579,7 +1580,7 @@ export class SQLiteBackend implements StorageBackend {
     // but not so large as to completely ignore semantic relevance.
     const recencyWeight = temporalIntent ? 0.5 : scaleBoost ? 0.8 : 0.3;
     const sorted = results
-      .map((r) => {
+      .map((r): SearchResult | null => {
         const row = rowMap.get(r.id);
         if (!row) return null;
         const ageMs = now - row.created_at;
