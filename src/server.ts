@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
@@ -976,6 +976,23 @@ const TOOLS: Tool[] = [
       required: ["repo_path"],
     },
   },
+  {
+    name: "codegraph_stats",
+    description:
+      "Return indexed CodeGraph statistics: total symbols, calls, resolved calls, " +
+      "imports, and file counts. Optionally scoped to a repo_path. " +
+      "Use this to check indexing coverage before searching.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo_path: {
+          type: "string",
+          description: "Optional: scope stats to this repository root path.",
+        },
+        team_id: { type: "string", description: "The team ID for isolation." },
+      },
+    },
+  },
   // ─── Wiki tools ───
   {
     name: "wiki_ingest",
@@ -1606,6 +1623,8 @@ export function createServer(opts: ServerOptions): Server {
         return handleCodegraphList(args, opts);
       case "codegraph_detect_changes":
         return handleCodegraphDetectChanges(args, opts);
+      case "codegraph_stats":
+        return handleCodegraphStats(args, opts);
       case "wiki_ingest":
         return handleWikiIngest(args, opts);
       case "wiki_search":
@@ -4915,6 +4934,75 @@ function handleCodegraphDetectChanges(
       }
     } else {
       lines.push(`  No callers found (leaf node).`);
+    }
+  }
+
+  return {
+    content: [{ type: "text", text: lines.join("\n") }],
+  };
+}
+
+function handleCodegraphStats(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): { content: Array<{ type: "text"; text: string }>; isError?: boolean } {
+  const repoPath = (args.repo_path as string) ?? undefined;
+  const teamId = (args.team_id as string) ?? undefined;
+  const db = getDb(opts);
+
+  const repoClause = repoPath ? "AND repo_path IS ?" : "";
+  const repoParams = repoPath ? [repoPath] : [];
+  const teamClause = teamId !== undefined ? "AND team_id IS ?" : "";
+  const teamParams = teamId !== undefined ? [teamId] : [];
+  const filter = `${repoClause} ${teamClause}`.trim();
+
+  const symbolCount = db
+    .prepare(`SELECT COUNT(*) as c FROM symbols WHERE 1=1 ${filter}`)
+    .get(...repoParams, ...teamParams) as { c: number };
+
+  const callCount = db
+    .prepare(
+      `SELECT COUNT(*) as c FROM calls AS c
+       JOIN symbols AS caller ON caller.id = c.caller_id
+       WHERE 1=1 ${filter}`,
+    )
+    .get(...repoParams, ...teamParams) as { c: number };
+
+  const resolvedCount = db
+    .prepare(
+      `SELECT COUNT(*) as c FROM calls AS c
+       JOIN symbols AS caller ON caller.id = c.caller_id
+       WHERE c.callee_id IS NOT NULL ${filter}`,
+    )
+    .get(...repoParams, ...teamParams) as { c: number };
+
+  const importCount = db
+    .prepare(`SELECT COUNT(*) as c FROM imports WHERE 1=1 ${filter}`)
+    .get(...repoParams, ...teamParams) as { c: number };
+
+  const fileCount = db
+    .prepare(`SELECT COUNT(DISTINCT file_path) as c FROM symbols WHERE 1=1 ${filter}`)
+    .get(...repoParams, ...teamParams) as { c: number };
+
+  const byKind = db
+    .prepare(
+      `SELECT kind, COUNT(*) as c FROM symbols WHERE 1=1 ${filter} GROUP BY kind ORDER BY c DESC`,
+    )
+    .all(...repoParams, ...teamParams) as Array<{ kind: string; c: number }>;
+
+  const lines: string[] = [
+    `CodeGraph Statistics${repoPath ? ` (repo: ${repoPath})` : ""}`,
+    `  files:    ${fileCount.c}`,
+    `  symbols:  ${symbolCount.c}`,
+    `  calls:    ${callCount.c} (${resolvedCount.c} resolved, ${callCount.c - resolvedCount.c} unresolved)`,
+    `  imports:  ${importCount.c}`,
+    "",
+  ];
+
+  if (byKind.length > 0) {
+    lines.push("By kind:");
+    for (const k of byKind) {
+      lines.push(`  ${k.kind.padEnd(12)} ${k.c}`);
     }
   }
 

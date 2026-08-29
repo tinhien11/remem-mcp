@@ -2338,11 +2338,7 @@ export function hookPreToolUse(dbPath: string): void {
       }
 
       // Only inject for lint/build/test/typecheck commands
-      const isRelevantCommand =
-        /^(npm|npx|yarn|pnpm|biome|eslint|tsc|cargo|make|pytest|vitest|jest)\b/.test(command) ||
-        /\b(lint|test|build|typecheck|check|format)\b/.test(command);
-
-      if (!isRelevantCommand) {
+      if (!isRelevantBuildCommand(command) && !isDecisionLearningCommand(command)) {
         // Still output F1/F3/danger context blocks even for non-relevant commands
         if (contextBlocks.length > 0) {
           process.stdout.write(JSON.stringify({
@@ -2428,6 +2424,7 @@ export function hookPreToolUse(dbPath: string): void {
         inherited: boolean;
         rollbackPlan: string | null;
         autoNotes: string[];
+        failedCommand: string;
       }[] = [];
       try {
         const rDb = new Database(dbPath, { readonly: true });
@@ -2462,6 +2459,7 @@ export function hookPreToolUse(dbPath: string): void {
             inherited: r.session_key !== sessionKey,
             rollbackPlan: m.rollback_plan ?? null,
             autoNotes: m.auto_notes ?? [],
+            failedCommand: m.command ?? "",
           };
         });
 
@@ -2500,6 +2498,7 @@ export function hookPreToolUse(dbPath: string): void {
               inherited: true,
               rollbackPlan: m.rollback_plan ?? null,
               autoNotes: m.auto_notes ?? [],
+              failedCommand: m.command ?? "",
             });
           }
         }
@@ -2508,7 +2507,15 @@ export function hookPreToolUse(dbPath: string): void {
         // non-fatal — fixes are bonus context
       }
 
-      if (errors.length === 0 && resolvedFixes.length === 0) {
+      const relevantErrors = errors.filter((err) => {
+        const meta = err.metadata ? JSON.parse(err.metadata) : {};
+        return isErrorRelevantToCommand(command, meta);
+      });
+      // Proven fixes are deliberately less aggressive than unresolved-error
+      // filtering: a resolved lint fix can still be useful while fixing build.
+      const relevantFixes = resolvedFixes;
+
+      if (relevantErrors.length === 0 && relevantFixes.length === 0) {
         // [Moat 2: Decision Learning] Even with no errors, inject past decisions
         // for relevant commands (npm install, git commit, etc.)
         try {
@@ -2636,7 +2643,7 @@ export function hookPreToolUse(dbPath: string): void {
       }
 
       // [Feature 6] Stale detection: check if file paths in error still exist
-      const validErrors = errors.filter((err) => {
+      const validErrors = relevantErrors.filter((err) => {
         const meta = err.metadata ? JSON.parse(err.metadata) : {};
         const filesInError = extractFilePaths(err.content);
         if (filesInError.length === 0) return true; // No file refs = still valid
@@ -2644,7 +2651,7 @@ export function hookPreToolUse(dbPath: string): void {
         return filesInError.some((f) => existsSync(join(cwd, f)));
       });
 
-      if (validErrors.length === 0 && resolvedFixes.length === 0) {
+      if (validErrors.length === 0 && relevantFixes.length === 0) {
         logToFile("PreToolUse: all past errors are stale and no proven fixes");
         process.stdout.write(JSON.stringify({}));
         return;
@@ -2710,12 +2717,12 @@ export function hookPreToolUse(dbPath: string): void {
       // [Cross-Project Fix Inheritance] Show inherited tag for fixes from other projects
       // [Fix Provenance Chain] Show provenance tag
       // [Fix Rollback Plan] Show rollback plan if available
-      if (resolvedFixes.length > 0) {
+      if (relevantFixes.length > 0) {
         lines.push("");
         lines.push("Proven fixes from past resolved errors:");
         const stalenessDays = Number(process.env.REMEM_FIX_STALENESS_DAYS ?? 180);
         const stalenessMs = stalenessDays * 86400000;
-        for (const fix of resolvedFixes) {
+        for (const fix of relevantFixes) {
           const fixAgeMs = Date.now() - new Date(fix.resolvedAt).getTime();
           const isStale = fixAgeMs > stalenessMs;
           const staleTag = isStale ? " [STALE — verify before applying]" : "";
@@ -3064,6 +3071,131 @@ function isNoiseCommand(command: string): boolean {
   // git diff --exit-code with exit 1 = "there are differences" — expected
   if (/git\s+diff\s+.*--exit-code/.test(lower)) return true;
   return false;
+}
+
+export type CommandIntent =
+  | "build"
+  | "check"
+  | "format"
+  | "lint"
+  | "test"
+  | "typecheck";
+
+const COMMAND_INTENTS: Record<string, CommandIntent> = {
+  biome: "check",
+  build: "build",
+  cargo: "build",
+  check: "check",
+  eslint: "lint",
+  format: "format",
+  jest: "test",
+  lint: "lint",
+  make: "build",
+  mvn: "build",
+  mypy: "typecheck",
+  pytest: "test",
+  ruff: "lint",
+  tsc: "typecheck",
+  typecheck: "typecheck",
+  vitest: "test",
+};
+
+/**
+ * Identify the action being run instead of scanning the whole command string.
+ * A path argument such as `src/test` must not make an unrelated command look
+ * like a build/test command.
+ */
+export function getCommandIntent(command: string): CommandIntent | null {
+  for (const segment of command.split(/&&|\|\||[;|]/)) {
+    let part = segment.trim();
+    if (!part) continue;
+
+    // Strip leading environment assignments (`FOO=1 npm test`).
+    while (/^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*)\s+/.test(part)) {
+      part = part.replace(/^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*)\s+/, "");
+    }
+
+    const tokens = part.split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) continue;
+    while (tokens[0] === "sudo" || tokens[0] === "time") tokens.shift();
+    const executable = (tokens[0] ?? "").split("/").pop() ?? "";
+
+    if (["cd", "pushd", "popd"].includes(executable)) continue;
+
+    if (["npm", "pnpm", "yarn"].includes(executable)) {
+      const args = tokens.slice(1);
+      const runAt = args.findIndex((arg) => arg === "run" || arg === "exec");
+      const action = runAt >= 0 ? args[runAt + 1] : args.find((arg) => !arg.startsWith("-"));
+      if (action && COMMAND_INTENTS[action]) return COMMAND_INTENTS[action];
+      continue;
+    }
+
+    if (executable === "python" && tokens[1] === "-m") {
+      const module = (tokens[2] ?? "").split("/").pop() ?? "";
+      if (COMMAND_INTENTS[module]) return COMMAND_INTENTS[module];
+      continue;
+    }
+
+    if (COMMAND_INTENTS[executable]) return COMMAND_INTENTS[executable];
+
+    // Multi-command tools expose the action as their first argument.
+    if (["cargo", "dotnet", "go", "gradle", "mvn"].includes(executable)) {
+      const action = (tokens[1] ?? "").toLowerCase();
+      if (action === "test") return "test";
+      if (action === "fmt") return "format";
+      if (["build", "vet", "clippy"].includes(action)) return "check";
+    }
+  }
+
+  return null;
+}
+
+/** Whether a command is a build/validation command for error memory injection. */
+export function isRelevantBuildCommand(command: string): boolean {
+  return getCommandIntent(command) !== null;
+}
+
+/** Commands whose historical decisions are useful (dependency and commit choices). */
+export function isDecisionLearningCommand(command: string): boolean {
+  return (
+    /\b(?:npm|pnpm|yarn)\s+(?:install|i|add)\b/.test(command) ||
+    /\b(?:pip|uv)\s+install\b/.test(command) ||
+    /\bcargo\s+add\b/.test(command) ||
+    /\bgit\s+commit\b/.test(command)
+  );
+}
+
+/** Best-effort relevance check so stale errors do not attach to every command. */
+export function isErrorRelevantToCommand(
+  command: string,
+  meta: { command?: unknown; error_type?: unknown },
+): boolean {
+  const intent = getCommandIntent(command);
+  if (!intent) return false;
+
+  const failedCommand = typeof meta.command === "string" ? meta.command : "";
+  if (failedCommand) {
+    if (getCommandIntent(failedCommand) === intent) return true;
+
+    const genericWords = new Set([
+      "and", "error", "failed", "false", "npm", "npx", "pnpm", "run", "the", "true", "yarn",
+    ]);
+    const words = (text: string) =>
+      new Set(
+        text.toLowerCase().split(/[^a-z0-9@/_-]+/).filter(
+          (word) => word.length >= 3 && !genericWords.has(word),
+        ),
+      );
+    const currentWords = words(command);
+    const failedWords = words(failedCommand);
+    for (const word of currentWords) {
+      if (failedWords.has(word)) return true;
+    }
+    return false;
+  }
+
+  const errorType = typeof meta.error_type === "string" ? meta.error_type.toLowerCase() : "";
+  return !errorType || errorType === intent || intent === "check";
 }
 
 /**

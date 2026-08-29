@@ -31,6 +31,75 @@ function hookCommand(subcommand: string): string {
   return `npx --prefer-offline -y remem-mcp ${subcommand}`;
 }
 
+const CODEX_HOOK_SUBCOMMANDS = [
+  "hook-recall",
+  "hook-pre-tool-use",
+  "hook-post-tool-use",
+  "hook-post-compaction",
+  "hook-user-prompt",
+  "hook-stop",
+  "hook-session-end",
+];
+
+/**
+ * Codex may rewrite config.toml and remove comments, so marker comments are not
+ * a reliable installation record. Detect the hook commands themselves.
+ */
+function hasCodexRememHooks(content: string): boolean {
+  return CODEX_HOOK_SUBCOMMANDS.some((subcommand) => content.includes(` ${subcommand}"`));
+}
+
+/** Remove remem-mcp hook blocks, including marker-less TOML written by Codex. */
+export function removeCodexHooksFromToml(content: string): string {
+  const lines = content.split(/\r?\n/);
+  const output: string[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const match = lines[index].match(/^\[\[hooks\.([A-Za-z]+)\]\]\s*$/);
+    if (!match) {
+      output.push(lines[index]);
+      index++;
+      continue;
+    }
+
+    const event = match[1];
+    const nestedPrefix = `[[hooks.${event}.hooks]]`;
+    let end = index + 1;
+    while (end < lines.length) {
+      const line = lines[end];
+      if (line.startsWith(nestedPrefix)) {
+        end++;
+        continue;
+      }
+      if (/^\[./.test(line)) break;
+      end++;
+    }
+
+    const block = lines.slice(index, end);
+    if (CODEX_HOOK_SUBCOMMANDS.some((subcommand) => block.includes(` ${subcommand}"`))) {
+      // Remove comments immediately attached to this generated block.
+      while (
+        output.length > 0 &&
+        (output[output.length - 1].trim() === "" ||
+          (/^\s*#/.test(output[output.length - 1]) &&
+            output[output.length - 1].includes("remem-mcp")))
+      ) {
+        output.pop();
+      }
+    } else {
+      output.push(...block);
+    }
+
+    index = end;
+  }
+
+  return output
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trimEnd();
+}
+
 /** Hooks configuration for Devin CLI and Codex CLI.
  *  Note: Devin CLI does NOT support PreCompact — only PostCompaction. */
 const HOOKS_CONFIG = {
@@ -242,7 +311,7 @@ function installCodexHooks(): boolean {
   let content = readFileSync(configPath, "utf-8");
 
   // Check if remem-mcp hooks are already installed
-  if (content.includes(">>> remem-mcp SessionStart >>>")) {
+  if (hasCodexRememHooks(content)) {
     console.log(`  Codex CLI: Hooks already installed in ${configPath}`);
     return true;
   }
@@ -431,9 +500,9 @@ export async function uninstallHooks(): Promise<void> {
   const codexPath = join(homedir(), ".codex", "config.toml");
   if (existsSync(codexPath)) {
     let content = readFileSync(codexPath, "utf-8");
-    if (content.includes(">>> remem-mcp")) {
-      // Remove all remem-mcp TOML blocks (between >>> remem-mcp ... >>> and <<< remem-mcp ... <<<)
-      content = content.replace(/\n?# >>> remem-mcp[\s\S]*?# <<< remem-mcp[^<]*<<<\n?/g, "\n");
+    const cleaned = removeCodexHooksFromToml(content);
+    if (cleaned !== content) {
+      content = cleaned;
       writeFileSync(codexPath, content.trimEnd() + "\n", "utf-8");
       console.log(`  Codex CLI: Hooks removed from ${codexPath}`);
       removed++;

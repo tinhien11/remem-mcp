@@ -146,8 +146,13 @@ describeOrSkip("Smoke test: full server over stdio", () => {
     expect(toolNames).toContain("session_end");
     expect(toolNames).toContain("session_checkpoint");
     expect(toolNames).toContain("health");
+    expect(toolNames).toContain("canvas_get");
+    expect(toolNames).toContain("ref_read");
     expect(toolNames).toContain("feedback");
-    expect(toolNames.length).toBe(46);
+    expect(toolNames).toContain("codegraph_stats");
+    expect(toolNames).toContain("skill_create");
+    expect(toolNames).toContain("skill_archive");
+    expect(toolNames.length).toBe(47);
   });
 
   it("captures a decision", async () => {
