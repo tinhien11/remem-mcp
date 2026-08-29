@@ -20,15 +20,19 @@ import { dirname, join } from "node:path";
  * Fall back to npx --prefer-offline (uses cache, avoids re-download).
  */
 function hookCommand(subcommand: string): string {
+  const globalKey = process.env.REMEM_GLOBAL_SESSION_KEY;
+  const globalEnvPrefix = globalKey
+    ? `env REMEM_GLOBAL_SESSION_KEY='${globalKey.replaceAll("'", `'\\''`)}' `
+    : "";
   try {
     const binPath = execFileSync("which", ["remem-mcp"], { encoding: "utf-8" }).trim();
     if (binPath && existsSync(binPath)) {
-      return `${binPath} ${subcommand}`;
+      return `${globalEnvPrefix}${binPath} ${subcommand}`;
     }
   } catch {
     // Binary not found — fall back to npx
   }
-  return `npx --prefer-offline -y remem-mcp ${subcommand}`;
+  return `${globalEnvPrefix}npx --prefer-offline -y remem-mcp ${subcommand}`;
 }
 
 const CODEX_HOOK_SUBCOMMANDS = [

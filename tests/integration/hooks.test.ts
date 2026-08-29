@@ -107,6 +107,50 @@ describe("Integration: hook-recall", () => {
     expect(parsed).toEqual({});
   });
 
+  it("injects global captures only when the global session key is configured", () => {
+    makeDb(dbPath, []);
+
+    const Database = require("better-sqlite3");
+    const db = new Database(dbPath);
+    db.prepare(
+      "INSERT INTO captures (id, session_key, agent_id, type, content, tags, created_at, metadata, trust_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'candidate')",
+    ).run(
+      "global-1",
+      "global",
+      "test-agent",
+      "decision",
+      "Use shared release checklist",
+      "[]",
+      Date.now(),
+      null,
+    );
+    db.close();
+
+    const stdin = JSON.stringify({
+      hook_event_name: "SessionStart",
+      session_id: "test-session-123",
+      cwd: join(tmpDir, "missing-project"),
+    });
+
+    const withoutGlobal = JSON.parse(
+      runHook("hook-recall", stdin, {
+        REMEM_DB_PATH: dbPath,
+        REMEM_GLOBAL_SESSION_KEY: "",
+      }),
+    );
+    expect(withoutGlobal).toEqual({});
+
+    const withGlobal = JSON.parse(
+      runHook("hook-recall", stdin, {
+        REMEM_DB_PATH: dbPath,
+        REMEM_GLOBAL_SESSION_KEY: "global",
+      }),
+    );
+    expect(withGlobal.hookSpecificOutput.additionalContext).toContain(
+      "Use shared release checklist",
+    );
+  });
+
   it("outputs empty JSON on invalid stdin", () => {
     makeDb(dbPath, []);
 
