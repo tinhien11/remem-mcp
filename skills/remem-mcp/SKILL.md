@@ -8,7 +8,7 @@ You have a long-term memory server via MCP. Use the tools automatically — do n
 ## Tools
 
 **Core:** `recall` `capture` `search` `feedback` `forget` `resolve` `handoff` `adr` `update` `consolidate` `scenario_create` `persona_update`
-**CodeGraph:** `codegraph_search` (auto-indexes on first use) `codegraph_callers` `codegraph_callees` `codegraph_impact` `codegraph_list` `codegraph_detect_changes` (git diff → affected symbols)
+**CodeGraph:** `codegraph_index` (run once per session; idempotent) `codegraph_search` `codegraph_callers` `codegraph_callees` `codegraph_impact` `codegraph_list` `codegraph_stats` `codegraph_detect_changes` (git diff → affected symbols)
 **Wiki:** `wiki_ingest` `wiki_search` `wiki_get` `wiki_outdated`
 **Canvas (F1):** `canvas_get` (Mermaid graph for session) `ref_read` (drill down to raw tool output by node_id)
 **Skills (F3):** `skill_create` (manual skill with auto-versioning) `skill_archive` (force always-inject) `skill_get` `skill_list` `skill_search`
@@ -77,7 +77,7 @@ persona_update({ "trait": "output_style", "value": "concise" })
 
 ## Rule 5: Use CodeGraph instead of grep
 
-For function/class/method definitions, call `codegraph_search` — NOT grep. Auto-indexes `src/` on first use.
+Before code navigation on a non-trivial task, call `codegraph_index({ path: "src" })`. It is idempotent and incrementally updates changed files. Then use `codegraph_search` — NOT grep — for function/class/method definitions.
 
 ```
 codegraph_search({ "query": "handleCapture" })

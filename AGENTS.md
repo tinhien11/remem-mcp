@@ -10,10 +10,12 @@ You have a long-term memory server (`remem-mcp` MCP). Always prefer it over grep
 3. Use results to inform your answer — don't repeat what recall already gave you
 
 ### Before searching code
-1. Call `search` or `recall` first — it searches Memory + CodeGraph + Wiki in one call
-2. Only use grep/glob if recall returns nothing relevant
+1. For non-trivial code work, call `codegraph_index({ path: "src" })` once per session. It is idempotent and incrementally updates changed files.
+2. Call `search` or `recall` first — it searches Memory + CodeGraph + Wiki in one call
+3. Use `codegraph_search` for function/class/method symbols; reserve grep/glob for strings, config values, and file names
 
 ### For code navigation
+- Prefer `codegraph_search` over grep; it understands function/class/method structure
 - Use `search` to find symbols (faster than grep, understands function/class/method structure)
 - Use CodeGraph data from recall results for callers/callees/impact analysis
 - Only read files directly when you know the exact path
