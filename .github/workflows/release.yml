@@ -37,7 +37,13 @@ jobs:
           REMEM_DB_PATH: /tmp/remem-test/memory.db
 
       - name: Publish to npm (Trusted Publishing / OIDC)
-        run: npm publish --provenance --access public
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if npm view "remem-mcp@${VERSION}" version >/dev/null 2>&1; then
+            echo "remem-mcp@${VERSION} already published; skipping npm publish"
+          else
+            npm publish --provenance --access public
+          fi
 
   # Publish Docker image to ghcr.io
   docker:
