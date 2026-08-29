@@ -224,8 +224,8 @@ const TOOLS: Tool[] = [
       "Store a decision, a learning, or a task outcome to memory. " +
       "Call this tool after you complete a non-trivial task, make a decision, or fix a bug with a known root cause. " +
       "You can capture a single text string, or a list of role-based conversation messages. " +
-      "To store cross-project knowledge (rules, conventions, learnings reusable across projects), " +
-      'pass session_key="global" or auto_global=true — these appear in every project\'s recall automatically.',
+      "Captures are project-local by default. Write to global memory ONLY when the user explicitly asks to remember " +
+      'something across projects/globally; then pass session_key="global".',
     inputSchema: {
       type: "object",
       properties: {
@@ -266,7 +266,7 @@ const TOOLS: Tool[] = [
           type: "string",
           description:
             "The session key. The default is hash(cwd). Use 'global' to store cross-project knowledge " +
-            "(rules, conventions, learnings) that should appear in every project's recall.",
+            "(rules, conventions, learnings), but ONLY when the user explicitly asks to save it globally.",
         },
         metadata: { type: "object", description: "Optional metadata." },
         verified: {
@@ -295,8 +295,8 @@ const TOOLS: Tool[] = [
           type: "boolean",
           default: false,
           description:
-            "Set to true to auto-classify: generic rules/learnings go to global, project-specific content stays in project. " +
-            "Only applies when session_key is not explicitly set. Requires REMEM_GLOBAL_SESSION_KEY to be configured.",
+            "Compatibility option for explicit global routing. Prefer session_key='global' and use this only when the " +
+            "user explicitly asks for cross-project classification. Requires REMEM_GLOBAL_SESSION_KEY.",
         },
         atoms: {
           type: "array",

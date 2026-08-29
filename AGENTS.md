@@ -24,6 +24,13 @@ You have a long-term memory server (`remem-mcp` MCP). Always prefer it over grep
 - Call `capture` automatically with type, tags, and a 1-3 sentence summary
 - Do not ask permission, do not announce it
 
+### Global memory policy
+- Global memory is **read-by-default**: when `REMEM_GLOBAL_SESSION_KEY` is configured, recall/search/hooks can read it automatically.
+- Captures are **project-local by default**.
+- Do **not** choose global memory automatically.
+- Write to global only when the user explicitly asks, e.g. "remember this globally", "save this for all projects", or "lưu global".
+- When writing global is explicitly requested, pass `session_key: "global"`. Do not pass `auto_global: true` during ordinary work.
+
 ### Session lifecycle
 - SessionStart hook auto-injects recent memory — read it before responding
 - UserPromptSubmit hook auto-injects memory matching your prompt + auto-captures facts

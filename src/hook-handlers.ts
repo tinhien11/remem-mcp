@@ -485,25 +485,27 @@ export function hookRecall(dbPath: string): void {
         WHERE type IN ('decision', 'learning', 'task') AND deleted_at IS NULL AND trust_state != 'rejected'
       `;
 
-      const rows: {
+      type RecallRow = {
         id: string;
         type: string;
         content: string;
         tags: string | null;
         created_at: number;
-      }[] = [];
+        scope?: "global" | "project";
+      };
+      const rows: RecallRow[] = [];
 
       // If REMEM_GLOBAL_SESSION_KEY is set, include global memory first
       const globalKey = process.env.REMEM_GLOBAL_SESSION_KEY;
       if (globalKey) {
         const globalErrors = db
           .prepare(`${errorSql} AND session_key = ? ORDER BY created_at DESC LIMIT 3`)
-          .all(globalKey) as typeof rows;
-        rows.push(...globalErrors);
+          .all(globalKey) as Omit<RecallRow, "scope">[];
+        rows.push(...globalErrors.map((row) => ({ ...row, scope: "global" as const })));
         const globalOthers = db
           .prepare(`${otherSql} AND session_key = ? ORDER BY created_at DESC LIMIT 3`)
-          .all(globalKey) as typeof rows;
-        rows.push(...globalOthers);
+          .all(globalKey) as Omit<RecallRow, "scope">[];
+        rows.push(...globalOthers.map((row) => ({ ...row, scope: "global" as const })));
       }
 
       if (sessionKey) {
@@ -541,8 +543,29 @@ export function hookRecall(dbPath: string): void {
         return;
       }
 
-      // Build context text
-      const lines: string[] = ["[remem-mcp] Recent project memory:"];
+      // Build context text. Keep global and project scopes visibly separate so
+      // agents know the former is reusable context, not this project's history.
+      const globalRows = rows.filter((row) => row.scope === "global");
+      const projectRows = rows.filter((row) => row.scope !== "global");
+      const lines: string[] = [];
+      const appendMemoryRows = (
+        header: string,
+        scopedRows: RecallRow[],
+      ): void => {
+        if (scopedRows.length === 0) return;
+        if (lines.length > 0) lines.push("");
+        lines.push(header);
+        for (const row of scopedRows) {
+          const date = new Date(row.created_at).toISOString().split("T")[0];
+          const tags = safeParseTags(row.tags);
+          const tagStr = tags.length > 0 ? ` [${tags.join(", ")}]` : "";
+          // Truncate content to 200 chars for context injection
+          const content = row.content.length > 200 ? `${row.content.slice(0, 200)}...` : row.content;
+          lines.push(`- (${row.type}${tagStr}) ${date}: ${content}`);
+        }
+      };
+      appendMemoryRows("[remem-mcp] Global memory (read automatically):", globalRows);
+      appendMemoryRows("[remem-mcp] Project memory:", projectRows);
       for (const row of rows) {
         const date = new Date(row.created_at).toISOString().split("T")[0];
         const tags = safeParseTags(row.tags);
@@ -602,6 +625,9 @@ export function hookRecall(dbPath: string): void {
       lines.push("Use these memories to inform your work. Call recall() for more details.");
       lines.push(
         "After completing non-trivial work, call capture() to save a 1-3 sentence summary.",
+      );
+      lines.push(
+        'Captures are project-local by default. Save to global only when the user explicitly asks (e.g. "remember this globally").',
       );
 
       const context = lines.join("\n");
@@ -867,6 +893,7 @@ export function hookUserPromptSubmit(dbPath: string): void {
             content: string;
             tags: string | null;
             created_at: number;
+            scope?: "global";
           }[] = [];
           try {
             rows = db.prepare(sql).all(ftsQuery, sessionKey) as typeof rows;
@@ -880,7 +907,12 @@ export function hookUserPromptSubmit(dbPath: string): void {
             try {
               const globalRows = db.prepare(sql).all(ftsQuery, globalKey) as typeof rows;
               const seen = new Set(rows.map((r) => r.id));
-              rows.push(...globalRows.filter((r) => !seen.has(r.id)).slice(0, 2));
+              rows.push(
+                ...globalRows
+                  .filter((r) => !seen.has(r.id))
+                  .slice(0, 2)
+                  .map((r) => ({ ...r, scope: "global" as const })),
+              );
             } catch {
               // Non-fatal
             }
@@ -891,7 +923,8 @@ export function hookUserPromptSubmit(dbPath: string): void {
             for (const row of rows.slice(0, 5)) {
               const date = new Date(row.created_at).toISOString().split("T")[0];
               const tags = safeParseTags(row.tags);
-              const tagStr = tags.length > 0 ? ` [${tags.join(", ")}]` : "";
+              const globalTag = row.scope === "global" ? " [global]" : "";
+              const tagStr = tags.length > 0 ? ` [${tags.join(", ")}]` : globalTag;
               const content =
                 row.content.length > 200 ? `${row.content.slice(0, 200)}...` : row.content;
               lines.push(`- (${row.type}${tagStr}) ${date}: ${content}`);
@@ -899,6 +932,9 @@ export function hookUserPromptSubmit(dbPath: string): void {
             lines.push("");
             lines.push(
               "This is BM25-only (fast, shallow). MUST call recall() for hybrid search (BM25 + vector) with more results and filters.",
+            );
+            lines.push(
+              'Global entries are read-only context. Save to global only when the user explicitly asks.',
             );
             recallContext = lines.join("\n");
             logToFile(

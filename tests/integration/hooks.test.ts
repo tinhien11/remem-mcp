@@ -149,6 +149,12 @@ describe("Integration: hook-recall", () => {
     expect(withGlobal.hookSpecificOutput.additionalContext).toContain(
       "Use shared release checklist",
     );
+    expect(withGlobal.hookSpecificOutput.additionalContext).toContain(
+      "Global memory (read automatically)",
+    );
+    expect(withGlobal.hookSpecificOutput.additionalContext).toContain(
+      "Save to global only when the user explicitly asks",
+    );
   });
 
   it("outputs empty JSON on invalid stdin", () => {

@@ -175,6 +175,8 @@ All settings have defaults. Config file is optional: `~/.config/remem-mcp/config
 | Unified flow (F1+F2+F3) | `REMEM_FLOW` | _(unset, set to `full`)_ |
 | Suppress hook feedback | `REMEM_QUIET` | _(unset, set to `1`)_ |
 
+**Global memory policy** — set `REMEM_GLOBAL_SESSION_KEY` to *read* cross-project memory automatically. Captures stay project-local unless the user explicitly asks to save globally; then use `session_key: "global"`. Do not auto-classify ordinary captures into global.
+
 **Team sharing** — `npx remem-mcp sync-export` writes `.remem-mcp/memory-export.jsonl`. Commit it to git. Team members get the same memory on `git pull`.
 
 **Per-repo capture exclusions** — Drop a `.remem.toml` in any project root:

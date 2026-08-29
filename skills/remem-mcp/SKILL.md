@@ -101,7 +101,9 @@ Use grep only for: string literals, config values, file names.
 
 ## Global + project memory
 
-Set `REMEM_GLOBAL_SESSION_KEY=global` to enable cross-project memory. `recall`/`search` search both. Pass `auto_global=true` to `capture` for auto-classification (generic → global, file paths → project).
+Set `REMEM_GLOBAL_SESSION_KEY=global` to enable cross-project **reading**. `recall`/`search` and hooks can read global memory automatically.
+
+Writing is different: `capture` is project-local by default. Use `session_key: "global"` **only after the user explicitly asks** to remember something globally or across projects. Do not use `auto_global: true` during ordinary work.
 
 ## Unified Flow (F1 + F2 + F3)
 
