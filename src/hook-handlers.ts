@@ -592,10 +592,14 @@ export function hookRecall(dbPath: string): void {
       }
 
       // Inject L2 scenarios (high-signal summaries, ~100 tokens)
+      // Scoped to the current session_key — legacy NULL rows are excluded so
+      // scenarios from one project never leak into another project's context.
       try {
         const scenarios = db
-          .prepare("SELECT summary FROM scenarios ORDER BY created_at DESC LIMIT 3")
-          .all() as { summary: string }[];
+          .prepare(
+            "SELECT summary FROM scenarios WHERE session_key = ? ORDER BY created_at DESC LIMIT 3",
+          )
+          .all(sessionKey) as { summary: string }[];
         if (scenarios.length > 0) {
           lines.push("");
           lines.push(`## Scenarios (L2)`);
@@ -946,10 +950,14 @@ export function hookUserPromptSubmit(dbPath: string): void {
       }
 
       // Inject L2 scenarios (high-signal summaries, ~100 tokens)
+      // Scoped to the current session_key — legacy NULL rows are excluded so
+      // scenarios from one project never leak into another project's context.
       try {
         const scenarios = db
-          .prepare("SELECT summary FROM scenarios ORDER BY created_at DESC LIMIT 3")
-          .all() as { summary: string }[];
+          .prepare(
+            "SELECT summary FROM scenarios WHERE session_key = ? ORDER BY created_at DESC LIMIT 3",
+          )
+          .all(sessionKey) as { summary: string }[];
         if (scenarios.length > 0) {
           const scenarioLines = scenarios.map((s) => `- ${s.summary}`);
           if (recallContext) {
@@ -3992,14 +4000,21 @@ function ensureSchema(db: Database.Database): void {
     id TEXT PRIMARY KEY,
     atom_ids TEXT NOT NULL,
     summary TEXT,
+    persona_tags TEXT,
     created_at INTEGER NOT NULL,
-    team_id TEXT
+    team_id TEXT,
+    agent_id TEXT,
+    user_id TEXT,
+    session_key TEXT
   )`);
   db.exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_captures_session ON captures(session_key)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_captures_type ON captures(type)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_errors_session ON error_patterns(session_key)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_atoms_capture ON atoms(capture_id)`);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_scenarios_session ON scenarios(session_key, created_at DESC)`,
+  );
 }
 
 /**

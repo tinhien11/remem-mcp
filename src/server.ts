@@ -739,6 +739,11 @@ const TOOLS: Tool[] = [
           items: { type: "string" },
           description: "Optional tags for categorization (e.g., ['database', 'migration']).",
         },
+        session_key: {
+          type: "string",
+          description:
+            "The session key. Defaults to hash(cwd) so the scenario is scoped to the current project.",
+        },
         ...TENANT_PARAMS,
       },
       required: ["atom_ids", "summary"],
@@ -4338,6 +4343,7 @@ async function handleScenarioConsolidate(
   const personaTags = args.persona_tags as string[] | undefined;
   const { teamId, userId, taskId } = extractTenant(args);
   const agentId = (args.agent_id as string) ?? detectAgentId();
+  const sessionKey = (args.session_key as string) ?? defaultSessionKey();
 
   if (!atomIds || atomIds.length === 0) {
     return { content: [{ type: "text", text: "Error: atom_ids is required." }], isError: true };
@@ -4365,6 +4371,7 @@ async function handleScenarioConsolidate(
     teamId,
     agentId,
     userId,
+    sessionKey,
   };
 
   try {
