@@ -1,5 +1,12 @@
+import { createHash } from "node:crypto";
 import { SQLiteBackend } from "../storage/sqlite.js";
 import { generateId } from "../utils/ulid.js";
+
+/** Default session key: hash(cwd), matching the MCP server and hooks. */
+function cliSessionKey(): string {
+  if (process.env.REMEM_SESSION_KEY) return process.env.REMEM_SESSION_KEY;
+  return createHash("sha256").update(process.cwd()).digest("hex").slice(0, 16);
+}
 
 /**
  * consolidate CLI command: create an L2 scenario from atom IDs.
@@ -70,6 +77,7 @@ export async function consolidateCommand(
           summary: summary.slice(0, 300),
           personaTags: [topic],
           createdAt: Date.now(),
+          sessionKey: cliSessionKey(),
         });
         console.log(`  [${topic}] ${groupAtoms.length} atoms → ${id}`);
         count++;
@@ -103,6 +111,7 @@ export async function consolidateCommand(
       summary,
       personaTags: tags,
       createdAt: Date.now(),
+      sessionKey: cliSessionKey(),
     });
     console.log(`Consolidated ${atomIds.length} atoms into scenario ${id}.`);
   } finally {

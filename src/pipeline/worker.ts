@@ -27,6 +27,8 @@ export interface WorkerOptions {
   /** Team/user scope. Default: "default" */
   teamId?: string;
   userId?: string;
+  /** Session key to stamp on created scenarios (hash(cwd)). Default: none (NULL). */
+  sessionKey?: string;
 }
 
 export interface WorkerResult {
@@ -146,6 +148,7 @@ export async function runPipelineWorker(
         summary: summary.slice(0, 300),
         personaTags: [topic],
         createdAt: Date.now(),
+        sessionKey: opts.sessionKey,
       });
       result.scenariosCreated++;
     }

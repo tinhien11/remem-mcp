@@ -157,6 +157,8 @@ export interface ScenarioEntry {
   teamId?: string;
   agentId?: string;
   userId?: string;
+  /** Project session key (hash(cwd)). Scopes scenario injection to its project. */
+  sessionKey?: string;
 }
 
 /** L3 persona. One per team/agent/user. */
@@ -313,6 +315,7 @@ export interface StorageBackend {
     teamId?: string;
     agentId?: string;
     userId?: string;
+    sessionKey?: string;
     limit?: number;
     offset?: number;
   }): Promise<ScenarioEntry[]>;

@@ -153,7 +153,7 @@ export function stripQueryProperNouns(query: string): string {
 }
 
 /** Current schema version. */
-const CURRENT_SCHEMA_VERSION = 13;
+const CURRENT_SCHEMA_VERSION = 14;
 
 /**
  * Evergreen tags: captures with any of these tags are exempt from temporal
@@ -488,6 +488,15 @@ export class SQLiteBackend implements StorageBackend {
         this.writeSchemaVersion(13);
       })();
     }
+    if (currentVersion < 14) {
+      migrationsRan = true;
+      this.backupDatabase(dbPath, 13);
+      this.db.transaction(() => {
+        this.runSchema(); // adds session_key column + idx_scenarios_session
+        this.migrateV13ToV14();
+        this.writeSchemaVersion(14);
+      })();
+    }
     this.rebuildFtsIfNeeded(migrationsRan);
   }
 
@@ -606,6 +615,7 @@ export class SQLiteBackend implements StorageBackend {
     addColumnIfMissing("scenarios", "team_id", "TEXT");
     addColumnIfMissing("scenarios", "agent_id", "TEXT");
     addColumnIfMissing("scenarios", "user_id", "TEXT");
+    addColumnIfMissing("scenarios", "session_key", "TEXT");
 
     // Create new tables (idempotent — schema.sql also has them, but run here for migration path
     // before schema.sql so that index creation in schema.sql doesn't fail)
@@ -838,6 +848,23 @@ export class SQLiteBackend implements StorageBackend {
       this.db.exec("ALTER TABLE memory_links ADD COLUMN weight REAL NOT NULL DEFAULT 1.0");
     }
     console.error("[remem-mcp] Migrated schema v12 → v13 (Hebbian link weights)");
+  }
+
+  /**
+   * v13 → v14: Add session_key column to scenarios so L2 scenario injection in
+   * hooks can be scoped to the current project (hash(cwd)). Legacy rows keep
+   * NULL session_key and are excluded from hook injection (no cross-project leak).
+   */
+  private migrateV13ToV14(): void {
+    const cols = this.db.prepare("PRAGMA table_info(scenarios)").all() as { name: string }[];
+    const colNames = new Set(cols.map((c) => c.name));
+    if (!colNames.has("session_key")) {
+      this.db.exec("ALTER TABLE scenarios ADD COLUMN session_key TEXT");
+    }
+    this.db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_scenarios_session ON scenarios (session_key, created_at DESC)",
+    );
+    console.error("[remem-mcp] Migrated schema v13 → v14 (scenario session_key scoping)");
   }
 
   async put(entry: CaptureEntry): Promise<void> {
@@ -2062,7 +2089,7 @@ export class SQLiteBackend implements StorageBackend {
   async putScenario(scenario: ScenarioEntry): Promise<void> {
     this.db
       .prepare(
-        "INSERT INTO scenarios (id, atom_ids, summary, persona_tags, created_at, team_id, agent_id, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO scenarios (id, atom_ids, summary, persona_tags, created_at, team_id, agent_id, user_id, session_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         scenario.id,
@@ -2073,6 +2100,7 @@ export class SQLiteBackend implements StorageBackend {
         scenario.teamId ?? null,
         scenario.agentId ?? null,
         scenario.userId ?? null,
+        scenario.sessionKey ?? null,
       );
   }
 
@@ -2080,6 +2108,7 @@ export class SQLiteBackend implements StorageBackend {
     teamId?: string;
     agentId?: string;
     userId?: string;
+    sessionKey?: string;
     limit?: number;
     offset?: number;
   }): Promise<ScenarioEntry[]> {
@@ -2097,6 +2126,10 @@ export class SQLiteBackend implements StorageBackend {
       sql += " AND user_id = ?";
       params.push(opts.userId);
     }
+    if (opts.sessionKey) {
+      sql += " AND session_key = ?";
+      params.push(opts.sessionKey);
+    }
     sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
     params.push(opts.limit ?? 20, opts.offset ?? 0);
     const rows = this.db.prepare(sql).all(...params) as ScenarioDbRow[];
@@ -2109,6 +2142,7 @@ export class SQLiteBackend implements StorageBackend {
       teamId: r.team_id ?? undefined,
       agentId: r.agent_id ?? undefined,
       userId: r.user_id ?? undefined,
+      sessionKey: r.session_key ?? undefined,
     }));
   }
 
@@ -2126,6 +2160,7 @@ export class SQLiteBackend implements StorageBackend {
       teamId: row.team_id ?? undefined,
       agentId: row.agent_id ?? undefined,
       userId: row.user_id ?? undefined,
+      sessionKey: row.session_key ?? undefined,
     };
   }
 
@@ -2939,6 +2974,7 @@ interface ScenarioDbRow {
   team_id: string | null;
   agent_id: string | null;
   user_id: string | null;
+  session_key: string | null;
 }
 
 interface PersonaDbRow {

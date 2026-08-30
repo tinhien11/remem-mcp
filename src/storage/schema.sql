@@ -117,7 +117,8 @@ CREATE TABLE IF NOT EXISTS scenarios (
   created_at   INTEGER NOT NULL,
   team_id      TEXT,
   agent_id     TEXT,
-  user_id     TEXT
+  user_id      TEXT,
+  session_key  TEXT
 );
 
 -- v10: Entity index for entity-assisted recall.
@@ -382,6 +383,7 @@ CREATE INDEX IF NOT EXISTS idx_atoms_capture ON atoms (capture_id);
 CREATE INDEX IF NOT EXISTS idx_atoms_team ON atoms (team_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_capture ON messages (capture_id, seq);
 CREATE INDEX IF NOT EXISTS idx_scenarios_team ON scenarios (team_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_scenarios_session ON scenarios (session_key, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log (ts DESC);
 CREATE INDEX IF NOT EXISTS idx_knowledge_team ON knowledge (team_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_skills_team ON skills (team_id, updated_at DESC);
