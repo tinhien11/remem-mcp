@@ -1489,13 +1489,6 @@ To install the skill (Devin CLI only):
   // Load the configuration
   const config = loadConfig();
 
-  // Auto-import team artifact if it exists in the project root
-  try {
-    importArtifact(config.dbPath, process.cwd());
-  } catch (err) {
-    console.error(`[remem-mcp] Auto-import failed: ${err}`);
-  }
-
   // Initialize the storage backend
   if (config.storage !== "sqlite") {
     console.error(
@@ -1503,6 +1496,16 @@ To install the skill (Devin CLI only):
     );
   }
   const storage = new SQLiteBackend(config.dbPath);
+
+  // Auto-import team artifact AFTER storage backend construction so DB migrations
+  // have run first. importArtifact calls ensureSchema() which executes the full
+  // schema.sql (including indexes on columns added by migrations). If this runs
+  // before SQLiteBackend migrates, CREATE INDEX fails on missing columns.
+  try {
+    importArtifact(config.dbPath, process.cwd());
+  } catch (err) {
+    console.error(`[remem-mcp] Auto-import failed: ${err}`);
+  }
 
   // Initialize the embedder
   const embedder = new LocalEmbedder();
