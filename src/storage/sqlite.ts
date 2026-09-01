@@ -492,8 +492,13 @@ export class SQLiteBackend implements StorageBackend {
       migrationsRan = true;
       this.backupDatabase(dbPath, 13);
       this.db.transaction(() => {
-        this.runSchema(); // adds session_key column + idx_scenarios_session
+        // migrateV13ToV14 must run BEFORE runSchema: it adds the session_key
+        // column to the existing scenarios table via ALTER TABLE. runSchema's
+        // CREATE TABLE IF NOT EXISTS is a no-op on the existing table, and its
+        // CREATE INDEX idx_scenarios_session references session_key — so the
+        // column must exist before runSchema tries to create that index.
         this.migrateV13ToV14();
+        this.runSchema();
         this.writeSchemaVersion(14);
       })();
     }
