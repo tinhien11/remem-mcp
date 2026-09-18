@@ -14,6 +14,9 @@ export default defineConfig({
     env: {
       REMEM_ENABLE_ADVANCED: "1",
     },
+    // Heavy storage tests (1000 sequential puts) exceed the 5s default on
+    // slower CI runners — release workflow failed on v0.7.6 for this.
+    testTimeout: 30_000,
     // Run integration tests sequentially — they share resources
     // (dist/index.js binary, ~/.claude/settings.json, real DB)
     fileParallelism: false,
