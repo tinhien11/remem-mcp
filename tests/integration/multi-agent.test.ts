@@ -103,8 +103,9 @@ describe("Regression: Claude Code hooks", () => {
     expect(settings.hooks).toBeDefined();
     expect(settings.hooks.SessionStart).toBeDefined();
     expect(settings.hooks.SessionStart[0].hooks[0].command).toContain("hook-recall");
-    expect(settings.hooks.Stop).toBeDefined();
-    expect(settings.hooks.Stop[0].hooks[0].command).toContain("hook-stop");
+    // Session-end capture uses SessionEnd (Stop was dropped as redundant — see 565d902)
+    expect(settings.hooks.SessionEnd).toBeDefined();
+    expect(settings.hooks.SessionEnd[0].hooks[0].command).toContain("hook-session-end");
     // Preserves existing config
     expect(settings.model).toBe("test");
   });
@@ -260,9 +261,10 @@ describe("Regression: Codex CLI hooks (TOML)", () => {
     expect(content).toContain('model = "gpt-5.5"');
     // Adds remem-mcp hooks
     expect(content).toContain("remem-mcp SessionStart");
-    expect(content).toContain("remem-mcp Stop");
+    // Session-end capture uses SessionEnd (Stop was dropped as redundant — see 565d902)
+    expect(content).toContain("remem-mcp SessionEnd");
     expect(content).toContain("hook-recall");
-    expect(content).toContain("hook-stop");
+    expect(content).toContain("hook-session-end");
     expect(content).toContain('matcher = "startup|resume|clear|compact"');
   });
 

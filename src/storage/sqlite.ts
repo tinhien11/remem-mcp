@@ -2362,8 +2362,8 @@ export class SQLiteBackend implements StorageBackend {
     // Try session_key-scoped persona first, fall back to legacy NULL session_key
     if (sessionKey) {
       const scopedRow = this.db
-        .prepare("SELECT * FROM persona WHERE team_id = ? AND user_id = ? AND session_key = ? ORDER BY updated_at DESC LIMIT 1")
-        .get(teamId, userId, sessionKey) as PersonaDbRow | undefined;
+        .prepare("SELECT * FROM persona WHERE team_id = ? AND agent_id = ? AND user_id = ? AND session_key = ? ORDER BY updated_at DESC LIMIT 1")
+        .get(teamId, agentId, userId, sessionKey) as PersonaDbRow | undefined;
       if (scopedRow) {
         return {
           teamId: scopedRow.team_id,
@@ -2406,13 +2406,16 @@ export class SQLiteBackend implements StorageBackend {
         )
         .run(teamId, agentId, userId, content, Date.now(), sessionKey);
     } else {
-      this.db
-        .prepare(
-          `INSERT INTO persona (team_id, agent_id, user_id, content, updated_at)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(team_id, agent_id, user_id, session_key) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
-        )
-        .run(teamId, agentId, userId, content, Date.now());
+      // NULL session_key never conflicts in the PK (NULLs are distinct in
+      // SQLite), so upsert the legacy row via delete-then-insert.
+      this.db.transaction(() => {
+        this.db
+          .prepare("DELETE FROM persona WHERE team_id = ? AND agent_id = ? AND user_id = ? AND (session_key IS NULL OR session_key = '')")
+          .run(teamId, agentId, userId);
+        this.db
+          .prepare("INSERT INTO persona (team_id, agent_id, user_id, content, updated_at) VALUES (?, ?, ?, ?, ?)")
+          .run(teamId, agentId, userId, content, Date.now());
+      })();
     }
   }
 
